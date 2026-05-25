@@ -1,0 +1,37 @@
+[package]
+name = "bible-show-pro"
+version = "1.1.0"
+description = "Bible Show Pro - Church presentation platform"
+authors = ["Bible Show Pro"]
+edition = "2021"
+default-run = "bible-show-pro"
+
+[lib]
+name = "bible_show_pro_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "import_bibles"
+path = "src/bin/import_bibles.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+regex = "1"
+once_cell = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread", "time", "sync"] }
+oximedia-ndi = "0.1.7"
+xcap = "0.0.14"
+parking_lot = "0.12.5"
+bytes = "1.11.1"
+image = "0.25.10"

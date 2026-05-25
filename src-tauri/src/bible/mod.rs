@@ -1,0 +1,11 @@
+pub mod books;
+pub mod catalog;
+pub mod convert;
+pub mod import;
+pub mod install;
+pub mod parser;
+pub mod search;
+pub mod search_query;
+pub use parser::ParsedReference;
+pub use search::{SearchResult, VerseResult};
+pub use search_query::SearchOptions;
