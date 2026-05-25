@@ -24,6 +24,7 @@ const sourceLabels = {
   service: "Service plan",
   media: "Media",
   song: "Song lyrics",
+  transcription: "Live listen",
 } as const;
 
 interface LiveControlsPanelProps {

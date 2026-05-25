@@ -44,5 +44,11 @@ export async function refreshPreviewBeforeGoLive(source: PreviewSource): Promise
     const { useThemeStore } = await import("@/stores/themeStore");
     const item = useMediaStore.getState().selectedItem();
     if (item) await previewMediaItem(item, useThemeStore.getState().activeTheme);
+    return;
+  }
+
+  if (source === "transcription") {
+    // Preview is already staged from Live Listen suggestion cards.
+    return;
   }
 }

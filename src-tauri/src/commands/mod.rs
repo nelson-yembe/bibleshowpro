@@ -10,6 +10,7 @@ use tauri::{AppHandle, Manager, State};
 pub mod bible;
 pub mod songs;
 pub mod ndi;
+pub mod transcription;
 
 #[derive(Serialize)]
 pub struct InitResponse {

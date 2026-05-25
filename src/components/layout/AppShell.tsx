@@ -5,7 +5,7 @@ import { LiveControlsPanel } from "@/components/presentation/LiveControlsPanel";
 import { useLiveKeyboard } from "@/hooks/useLiveKeyboard";
 import { useLiveDisplayStore } from "@/stores/liveDisplayStore";
 
-const LIVE_DOCK_ROUTES = ["/", "/bible", "/service", "/media", "/songs"];
+const LIVE_DOCK_ROUTES = ["/", "/bible", "/service", "/media", "/songs", "/listen"];
 
 export function AppShell() {
   const { pathname } = useLocation();

@@ -30,7 +30,7 @@ import type { ServiceItem, ThemeConfig, VerseResult, DisplayInfo } from "@/lib/t
 import { api } from "@/lib/tauri";
 import { syncNdiPreview, useNdiStore } from "@/stores/ndiStore";
 
-export type PreviewSource = "bible" | "service" | "media" | "song" | null;
+export type PreviewSource = "bible" | "service" | "media" | "song" | "transcription" | null;
 
 interface PresentationState extends PresentationSnapshot {
   outputOpen: boolean;

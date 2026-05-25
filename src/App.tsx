@@ -8,6 +8,7 @@ import { ThemeEditorPage } from "@/modules/themes/ThemeEditorPage";
 import { MediaLibraryPage } from "@/modules/media/MediaLibraryPage";
 import { SongsPage } from "@/modules/songs/SongsPage";
 import { SettingsPage } from "@/modules/settings/SettingsPage";
+import { LiveListenPage } from "@/modules/transcription/LiveListenPage";
 import { BibleSetupPrompt } from "@/modules/settings/BibleSetupPrompt";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useEffect } from "react";
@@ -53,6 +54,7 @@ export default function App() {
             <Route element={<AppShell />}>
               <Route index element={<DashboardPage />} />
               <Route path="bible" element={<BibleSearchPage />} />
+              <Route path="listen" element={<LiveListenPage />} />
               <Route path="service" element={<ServiceBuilderPage />} />
               <Route path="present" element={<LivePresentationPage />} />
               <Route path="themes" element={<ThemeEditorPage />} />

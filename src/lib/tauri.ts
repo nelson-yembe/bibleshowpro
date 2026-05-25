@@ -286,4 +286,18 @@ export const api = {
     ),
   markSongUsed: (id: string) => tauriInvoke<void>("mark_song_used", { id }),
   exportSongsLibrary: () => tauriInvoke<string>("export_songs_library"),
+
+  detectScriptureInText: (text: string) =>
+    tauriInvoke<import("@/lib/transcription/types").ParsedReferenceMatch[]>("detect_scripture_in_text", { text }),
+  listTranscriptionSessions: (limit?: number) =>
+    tauriInvoke<import("@/lib/transcription/types").TranscriptionSessionSummary[]>(
+      "list_transcription_sessions",
+      { limit },
+    ),
+  getTranscriptionSession: (id: string) =>
+    tauriInvoke<import("@/lib/transcription/types").TranscriptionSessionDetail>("get_transcription_session", { id }),
+  saveTranscriptionSession: (input: Record<string, unknown>) =>
+    tauriInvoke<string>("save_transcription_session", { input }),
+  deleteTranscriptionSession: (id: string) =>
+    tauriInvoke<void>("delete_transcription_session", { id }),
 };

@@ -14,6 +14,7 @@ const sourceLabels = {
   service: "Service",
   media: "Media",
   song: "Song",
+  transcription: "Listen",
 } as const;
 
 export function StatusBar() {

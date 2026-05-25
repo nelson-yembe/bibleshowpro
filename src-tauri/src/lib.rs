@@ -7,6 +7,7 @@ pub mod ndi;
 pub mod output;
 pub mod service;
 pub mod songs;
+pub mod transcription;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -136,6 +137,11 @@ pub fn run() {
             commands::songs::import_song_lyrics,
             commands::songs::mark_song_used,
             commands::songs::export_songs_library,
+            commands::transcription::detect_scripture_in_text,
+            commands::transcription::list_transcription_sessions,
+            commands::transcription::get_transcription_session,
+            commands::transcription::save_transcription_session,
+            commands::transcription::delete_transcription_session,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

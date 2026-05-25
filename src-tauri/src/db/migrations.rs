@@ -70,6 +70,49 @@ CREATE INDEX IF NOT EXISTS idx_lyric_slides_song ON lyric_slides (song_id, slide
 CREATE INDEX IF NOT EXISTS idx_songs_last_used ON songs (last_used_at DESC);
 ";
 
+const TRANSCRIPTION_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS transcription_sessions (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  service_plan_id TEXT REFERENCES service_plans(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  model_id TEXT NOT NULL DEFAULT 'web-speech',
+  audio_device_id TEXT,
+  started_at TEXT NOT NULL DEFAULT (datetime('now')),
+  ended_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS transcript_segments (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES transcription_sessions(id) ON DELETE CASCADE,
+  text TEXT NOT NULL,
+  is_final INTEGER NOT NULL DEFAULT 1,
+  offset_ms INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS scripture_detections (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES transcription_sessions(id) ON DELETE CASCADE,
+  transcript_segment_id TEXT REFERENCES transcript_segments(id) ON DELETE SET NULL,
+  detected_phrase TEXT NOT NULL,
+  suggested_reference TEXT NOT NULL,
+  translation_id TEXT,
+  confidence REAL NOT NULL DEFAULT 0,
+  detection_type TEXT NOT NULL DEFAULT 'explicit',
+  status TEXT NOT NULL DEFAULT 'pending',
+  verse_preview TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  sent_to_preview_at TEXT,
+  sent_live_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_transcript_segments_session
+  ON transcript_segments (session_id, offset_ms);
+CREATE INDEX IF NOT EXISTS idx_scripture_detections_session
+  ON scripture_detections (session_id, created_at);
+";
+
 /// Runs schema migrations. Returns `true` when the FTS index should be rebuilt
 /// in the background (never block app startup on a full repopulate).
 pub fn run_migrations(conn: &Connection) -> Result<bool, String> {
@@ -154,6 +197,16 @@ pub fn run_migrations(conn: &Connection) -> Result<bool, String> {
         .map_err(|e| e.to_string())?;
         conn.execute(
             "INSERT INTO schema_migrations (version) VALUES (6)",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    if current < 7 {
+        conn.execute_batch(TRANSCRIPTION_SCHEMA)
+            .map_err(|e| e.to_string())?;
+        conn.execute(
+            "INSERT INTO schema_migrations (version) VALUES (7)",
             [],
         )
         .map_err(|e| e.to_string())?;
