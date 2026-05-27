@@ -5,7 +5,20 @@ import {
   clearReferenceDedupeCache,
   detectScriptureFromText,
 } from "@/lib/transcription/referenceDetect";
-import { presentDetectedScripture, previewDetectedScripture } from "@/lib/transcriptionLive";
+import {
+  previewDetectedScripture,
+  presentVerseSession,
+  reloadVerseSessionTranslation,
+} from "@/lib/transcriptionLive";
+import { isTranscriptionOnAir } from "@/lib/transcription/transcriptionLiveFollow";
+import {
+  createVerseSessionFromSuggestion,
+  stepVerseSession,
+  type ActiveVerseSession,
+  sessionProgressLabel,
+} from "@/lib/transcription/verseSession";
+import { parseVoiceCommands, isLikelyVoiceCommand } from "@/lib/transcription/voiceCommands";
+import { preprocessTranscriptForDetection } from "@/lib/transcription/transcriptPreprocess";
 import {
   AudioLevelMonitor,
   listAudioInputDevices,
@@ -20,21 +33,16 @@ import {
   type ConfidenceLevel,
 } from "@/lib/transcription/types";
 import { useBibleStore } from "@/stores/bibleStore";
+import { usePresentationStore } from "@/stores/presentationStore";
 
 const SESSION_STORAGE_KEY = "bsp-transcription-session";
 const PARTIAL_SCAN_MS = 700;
 
-interface PersistedSession {
-  sessionId: string | null;
-  startedAt: number | null;
+interface PersistedPreferences {
   modelId: string;
   audioDeviceId: string | null;
-  segments: TranscriptSegment[];
-  suggestions: ScriptureSuggestion[];
   paraphraseEnabled: boolean;
   suggestionsMuted: boolean;
-  autoPreviewHigh: boolean;
-  autoProject: boolean;
   previewLayout: "fullscreen" | "lower_third";
   minConfidence: ConfidenceLevel;
 }
@@ -48,6 +56,8 @@ interface TranscriptionState {
   segments: TranscriptSegment[];
   suggestions: ScriptureSuggestion[];
   selectedSuggestionId: string | null;
+  verseSession: ActiveVerseSession | null;
+  lastVoiceAction: string | null;
   models: TranscriptionModel[];
   modelId: string;
   audioDevices: MediaDeviceInfo[];
@@ -56,8 +66,6 @@ interface TranscriptionState {
   audioWarning: string | null;
   paraphraseEnabled: boolean;
   suggestionsMuted: boolean;
-  autoPreviewHigh: boolean;
-  autoProject: boolean;
   previewLayout: "fullscreen" | "lower_third";
   minConfidence: ConfidenceLevel;
   lastScanAt: string | null;
@@ -71,11 +79,12 @@ interface TranscriptionState {
   setAudioDeviceId: (id: string | null) => void;
   setParaphraseEnabled: (enabled: boolean) => void;
   setSuggestionsMuted: (muted: boolean) => void;
-  setAutoPreviewHigh: (enabled: boolean) => void;
-  setAutoProject: (enabled: boolean) => void;
   setPreviewLayout: (layout: "fullscreen" | "lower_third") => void;
   setMinConfidence: (level: ConfidenceLevel) => void;
   setSelectedSuggestion: (id: string | null) => void;
+  previewSuggestion: (suggestion: ScriptureSuggestion) => Promise<void>;
+  stepActiveVerse: (delta: number) => Promise<boolean>;
+  switchActiveTranslation: (translationId: string) => Promise<boolean>;
   startListening: () => Promise<void>;
   pauseListening: () => void;
   resumeListening: () => void;
@@ -87,58 +96,82 @@ interface TranscriptionState {
   ignoreSuggestion: (id: string) => void;
   markSuggestionStatus: (id: string, status: ScriptureSuggestion["status"]) => void;
   tickElapsed: () => void;
-  restorePersistedSession: () => void;
+  resetListeningWorkspace: () => void;
 }
 
 let engine: WebSpeechTranscriptionEngine | null = null;
 let levelMonitor: AudioLevelMonitor | null = null;
 let segmentCounter = 0;
 let partialScanTimer: number | undefined;
+let lastReportedAudioLevel = 0;
+let lastClippingWarning = false;
 
-function loadPersistedSession(): PersistedSession | null {
+function loadPersistedPreferences(): PersistedPreferences | null {
   try {
     const raw = localStorage.getItem(SESSION_STORAGE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as PersistedSession;
+    const parsed = JSON.parse(raw) as Partial<PersistedPreferences>;
+    if (!parsed.modelId) return null;
+    return {
+      modelId: parsed.modelId,
+      audioDeviceId: parsed.audioDeviceId ?? null,
+      paraphraseEnabled: parsed.paraphraseEnabled ?? false,
+      suggestionsMuted: parsed.suggestionsMuted ?? false,
+      previewLayout: parsed.previewLayout ?? "fullscreen",
+      minConfidence: parsed.minConfidence ?? "low",
+    };
   } catch {
     return null;
   }
 }
 
-function persistSession(state: Pick<
+function persistPreferences(state: Pick<
   TranscriptionState,
-  | "sessionId"
-  | "startedAt"
   | "modelId"
   | "audioDeviceId"
-  | "segments"
-  | "suggestions"
   | "paraphraseEnabled"
   | "suggestionsMuted"
-  | "autoPreviewHigh"
-  | "autoProject"
   | "previewLayout"
   | "minConfidence"
 >) {
-  const payload: PersistedSession = {
-    sessionId: state.sessionId,
-    startedAt: state.startedAt,
+  const payload: PersistedPreferences = {
     modelId: state.modelId,
     audioDeviceId: state.audioDeviceId,
-    segments: state.segments,
-    suggestions: state.suggestions,
     paraphraseEnabled: state.paraphraseEnabled,
     suggestionsMuted: state.suggestionsMuted,
-    autoPreviewHigh: state.autoPreviewHigh,
-    autoProject: state.autoProject,
     previewLayout: state.previewLayout,
     minConfidence: state.minConfidence,
   };
   localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
 }
 
-function clearPersistedSession() {
-  localStorage.removeItem(SESSION_STORAGE_KEY);
+function resetWorkspaceState(): Pick<
+  TranscriptionState,
+  | "sessionId"
+  | "startedAt"
+  | "elapsedMs"
+  | "partialText"
+  | "segments"
+  | "suggestions"
+  | "selectedSuggestionId"
+  | "verseSession"
+  | "lastVoiceAction"
+  | "lastScanAt"
+  | "error"
+> {
+  return {
+    sessionId: null,
+    startedAt: null,
+    elapsedMs: 0,
+    partialText: "",
+    segments: [],
+    suggestions: [],
+    selectedSuggestionId: null,
+    verseSession: null,
+    lastVoiceAction: null,
+    lastScanAt: null,
+    error: null,
+  };
 }
 
 function timestampNow() {
@@ -174,12 +207,45 @@ async function mergeDetections(
   segmentId: string | undefined,
   get: () => TranscriptionState,
   set: (partial: Partial<TranscriptionState> | ((s: TranscriptionState) => Partial<TranscriptionState>)) => void,
+  options?: { allowRepeatReference?: boolean },
 ) {
   if (detected.length === 0) return;
 
   const state = get();
   const filtered = detected.filter((d) => passesConfidenceFilter(d.confidenceLevel, state.minConfidence));
   if (filtered.length === 0) return;
+
+  const repeat = options?.allowRepeatReference
+    ? filtered.find((d) =>
+        state.suggestions.some(
+          (s) => s.status !== "ignored" && s.reference.toLowerCase() === d.reference.toLowerCase(),
+        ),
+      )
+    : undefined;
+
+  if (repeat) {
+    const existing = state.suggestions.find(
+      (s) => s.status !== "ignored" && s.reference.toLowerCase() === repeat.reference.toLowerCase(),
+    );
+    if (existing) {
+      const refreshed: ScriptureSuggestion = {
+        ...existing,
+        verses: repeat.verses,
+        versePreview: repeat.versePreview,
+        detectedPhrase: repeat.detectedPhrase,
+        translationAbbr: repeat.translationAbbr,
+      };
+      set((s) => ({
+        suggestions: s.suggestions.map((item) => (item.id === existing.id ? refreshed : item)),
+        selectedSuggestionId: existing.id,
+      }));
+      const onAir = isTranscriptionOnAir();
+      const session = await previewDetectedScripture(refreshed, state.previewLayout);
+      set({ verseSession: session, lastVoiceAction: null });
+      get().markSuggestionStatus(existing.id, onAir ? "live" : "preview");
+      return;
+    }
+  }
 
   const newSuggestions: ScriptureSuggestion[] = filtered.map((d) => ({
     ...d,
@@ -197,21 +263,83 @@ async function mergeDetections(
     selectedSuggestionId: newSuggestions[0]?.id ?? s.selectedSuggestionId,
   }));
 
-  if (state.autoProject) {
-    const top = newSuggestions.find((s) => s.detectionType === "explicit") ?? newSuggestions[0];
-    if (top) {
-      await presentDetectedScripture(top, state.previewLayout);
-      get().markSuggestionStatus(top.id, "live");
+  const top = newSuggestions.find((s) => s.detectionType === "explicit") ?? newSuggestions[0];
+  if (top) {
+    const onAir = isTranscriptionOnAir();
+    const session = await previewDetectedScripture(top, state.previewLayout);
+    set({ verseSession: session, lastVoiceAction: null });
+    get().markSuggestionStatus(top.id, onAir ? "live" : "preview");
+  }
+}
+
+function resolveActiveVerseSession(state: TranscriptionState): ActiveVerseSession | null {
+  if (state.verseSession) return state.verseSession;
+  const latest = state.suggestions.find(
+    (s) => s.status !== "ignored" && s.verses.length > 0,
+  );
+  if (!latest) return null;
+  return createVerseSessionFromSuggestion(latest);
+}
+
+async function processVoiceCommands(
+  text: string,
+  get: () => TranscriptionState,
+  set: (partial: Partial<TranscriptionState> | ((s: TranscriptionState) => Partial<TranscriptionState>)) => void,
+): Promise<boolean> {
+  const cleaned = preprocessTranscriptForDetection(text);
+  if (cleaned.length < 3) return false;
+
+  const bible = useBibleStore.getState();
+  const cmd = parseVoiceCommands(cleaned, bible.translations);
+  if (cmd.type === "none") return false;
+
+  const state = get();
+
+  if (cmd.type === "next_verse" || cmd.type === "prev_verse") {
+    const session = resolveActiveVerseSession(state);
+    if (!session) {
+      set({ lastVoiceAction: "No active passage — cite a scripture first." });
+      return true;
     }
-  } else if (state.autoPreviewHigh) {
-    const top = newSuggestions.find((s) => s.confidenceLevel === "high");
-    if (top) {
-      await previewDetectedScripture(top, state.previewLayout);
-      get().markSuggestionStatus(top.id, "preview");
+    const delta = cmd.type === "next_verse" ? 1 : -1;
+    const next = stepVerseSession(session, delta);
+    if (!next) {
+      set({
+        lastVoiceAction:
+          delta > 0 ? "Already at the last verse." : "Already at the first verse.",
+      });
+      return true;
     }
+    set({ verseSession: next, lastVoiceAction: sessionProgressLabel(next) });
+    await presentVerseSession(next, state.previewLayout, isTranscriptionOnAir());
+    return true;
   }
 
-  persistSession(get());
+  if (cmd.type === "switch_translation") {
+    if (bible.translations.length === 0) {
+      set({ lastVoiceAction: "No Bible translations installed." });
+      return true;
+    }
+    bible.setTranslation(cmd.translation.id);
+    const session = resolveActiveVerseSession(state);
+    if (session) {
+      const updated = await reloadVerseSessionTranslation(session, cmd.translation.id);
+      if (updated) {
+        set({
+          verseSession: updated,
+          lastVoiceAction: `Switched to ${cmd.translation.abbreviation} · ${sessionProgressLabel(updated)}`,
+        });
+        await presentVerseSession(updated, state.previewLayout, isTranscriptionOnAir());
+      } else {
+        set({ lastVoiceAction: `Could not load ${cmd.translation.abbreviation} for this passage.` });
+      }
+    } else {
+      set({ lastVoiceAction: `Translation set to ${cmd.translation.abbreviation}.` });
+    }
+    return true;
+  }
+
+  return false;
 }
 
 async function runSegmentScan(
@@ -220,20 +348,28 @@ async function runSegmentScan(
   text: string,
   segmentId?: string,
 ) {
-  if (get().suggestionsMuted || text.trim().length < 3) return;
+  const cleaned = preprocessTranscriptForDetection(text);
+  if (get().suggestionsMuted || cleaned.length < 3) return;
+
+  if (await processVoiceCommands(cleaned, get, set)) return;
+  if (isLikelyVoiceCommand(cleaned)) return;
 
   const translationId = resolveTranslationId();
-  if (!translationId) return;
+  if (!translationId) {
+    set({ error: "No Bible translation loaded — install a Bible version in Settings." });
+    return;
+  }
 
   const existingReferences = get()
     .suggestions.filter((s) => s.status !== "ignored")
     .map((s) => s.reference);
 
-  const detected = await detectScriptureFromText(text.trim(), translationId, {
+  const detected = await detectScriptureFromText(cleaned, translationId, {
     paraphraseEnabled: get().paraphraseEnabled,
     existingReferences,
+    allowRepeatReference: true,
   });
-  await mergeDetections(detected, segmentId, get, set);
+  await mergeDetections(detected, segmentId, get, set, { allowRepeatReference: true });
 }
 
 async function runContextScan(
@@ -242,6 +378,9 @@ async function runContextScan(
   segmentId?: string,
 ) {
   if (get().suggestionsMuted) return;
+
+  const partial = preprocessTranscriptForDetection(get().partialText);
+  if (partial.length >= 3 && (await processVoiceCommands(partial, get, set))) return;
 
   const translationId = resolveTranslationId();
   if (!translationId) {
@@ -287,6 +426,8 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
   segments: [],
   suggestions: [],
   selectedSuggestionId: null,
+  verseSession: null,
+  lastVoiceAction: null,
   models: TRANSCRIPTION_MODELS,
   modelId: TRANSCRIPTION_MODELS[0]?.id ?? "web-speech",
   audioDevices: [],
@@ -295,8 +436,6 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
   audioWarning: null,
   paraphraseEnabled: false,
   suggestionsMuted: false,
-  autoPreviewHigh: false,
-  autoProject: true,
   previewLayout: "fullscreen",
   minConfidence: "low",
   lastScanAt: null,
@@ -310,7 +449,13 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
     if (!bible.selectedTranslationId) {
       await bible.loadTranslations();
     }
-    get().restorePersistedSession();
+    const prefs = loadPersistedPreferences();
+    set({
+      ...resetWorkspaceState(),
+      status: "idle",
+      ...(prefs ?? {}),
+    });
+    if (prefs) persistPreferences(get());
   },
 
   refreshAudioDevices: async () => {
@@ -325,34 +470,69 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
     }
   },
 
-  setModelId: (id) => set({ modelId: id }),
-  setAudioDeviceId: (id) => set({ audioDeviceId: id }),
+  setModelId: (id) => {
+    set({ modelId: id });
+    persistPreferences(get());
+  },
+  setAudioDeviceId: (id) => {
+    set({ audioDeviceId: id });
+    persistPreferences(get());
+  },
   setParaphraseEnabled: (enabled) => {
     set({ paraphraseEnabled: enabled });
-    persistSession(get());
+    persistPreferences(get());
   },
   setSuggestionsMuted: (muted) => set({ suggestionsMuted: muted }),
-  setAutoPreviewHigh: (enabled) => {
-    set({ autoPreviewHigh: enabled });
-    persistSession(get());
-  },
-  setAutoProject: (enabled) => {
-    set({ autoProject: enabled });
-    persistSession(get());
-  },
   setPreviewLayout: (layout) => {
     set({ previewLayout: layout });
-    persistSession(get());
+    persistPreferences(get());
   },
   setMinConfidence: (level) => {
     set({ minConfidence: level });
-    persistSession(get());
+    persistPreferences(get());
   },
   setSelectedSuggestion: (id) => set({ selectedSuggestionId: id }),
+
+  previewSuggestion: async (suggestion) => {
+    const onAir = isTranscriptionOnAir();
+    const session = await previewDetectedScripture(suggestion, get().previewLayout);
+    set({ verseSession: session, selectedSuggestionId: suggestion.id, lastVoiceAction: null });
+    get().markSuggestionStatus(suggestion.id, onAir ? "live" : "preview");
+  },
+
+  stepActiveVerse: async (delta) => {
+    const session = get().verseSession;
+    if (!session) return false;
+    const next = stepVerseSession(session, delta);
+    if (!next) return false;
+    set({ verseSession: next, lastVoiceAction: sessionProgressLabel(next) });
+    await presentVerseSession(next, get().previewLayout, isTranscriptionOnAir());
+    return true;
+  },
+
+  switchActiveTranslation: async (translationId) => {
+    const session = get().verseSession;
+    useBibleStore.getState().setTranslation(translationId);
+    if (!session) return true;
+    const updated = await reloadVerseSessionTranslation(session, translationId);
+    if (!updated) return false;
+    set({ verseSession: updated, lastVoiceAction: sessionProgressLabel(updated) });
+    await presentVerseSession(updated, get().previewLayout, isTranscriptionOnAir());
+    return true;
+  },
 
   startListening: async () => {
     const state = get();
     if (state.status === "listening") return;
+
+    const bible = useBibleStore.getState();
+    if (bible.translations.length === 0) {
+      await bible.loadTranslations();
+    }
+    if (!resolveTranslationId()) {
+      set({ error: "No Bible translation loaded — install a Bible version in Settings." });
+      return;
+    }
 
     if (!engine) engine = new WebSpeechTranscriptionEngine();
     if (!levelMonitor) levelMonitor = new AudioLevelMonitor();
@@ -364,8 +544,16 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
     }
 
     clearReferenceDedupeCache();
-    const sessionId = state.sessionId ?? crypto.randomUUID();
-    const startedAt = state.startedAt ?? Date.now();
+
+    const freshSession = state.status !== "paused" && state.status !== "stopped";
+    if (freshSession) {
+      set({ ...resetWorkspaceState(), status: "idle" });
+    }
+
+    const sessionId = freshSession ? crypto.randomUUID() : (get().sessionId ?? crypto.randomUUID());
+    const startedAt = freshSession ? Date.now() : (get().startedAt ?? Date.now());
+    lastReportedAudioLevel = 0;
+    lastClippingWarning = false;
 
     set({
       status: "listening",
@@ -377,10 +565,17 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
 
     try {
       await levelMonitor.start(state.audioDeviceId, (level) => {
-        let audioWarning: string | null = null;
-        if (level < 0.02) audioWarning = "Input silent — check microphone or mixer.";
-        else if (level > 0.95) audioWarning = "Input clipping — lower gain.";
-        set({ audioLevel: level, audioWarning });
+        const clipping = level > 0.95;
+        const levelChanged = Math.abs(level - lastReportedAudioLevel) >= 0.02;
+        const clippingChanged = clipping !== lastClippingWarning;
+        if (!levelChanged && !clippingChanged) return;
+
+        lastReportedAudioLevel = level;
+        lastClippingWarning = clipping;
+        set({
+          audioLevel: level,
+          audioWarning: clipping ? "Input clipping — lower gain." : null,
+        });
       });
     } catch (err) {
       set({
@@ -394,6 +589,10 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
       {
         onPartial: (text) => {
           set({ partialText: text });
+          const cleaned = preprocessTranscriptForDetection(text);
+          if (isLikelyVoiceCommand(cleaned)) {
+            void processVoiceCommands(cleaned, get, set);
+          }
           schedulePartialScan(get, set);
         },
         onFinal: async (text) => {
@@ -415,7 +614,6 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
           await runSegmentScan(get, set, text, segment.id);
           await runContextScan(get, set, segment.id);
           set({ status: "listening" });
-          persistSession(get());
         },
         onStatus: (status) => {
           if (status === "reconnecting") set({ status: "reconnecting" });
@@ -428,8 +626,6 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
       },
       { modelId: state.modelId },
     );
-
-    persistSession(get());
   },
 
   pauseListening: () => {
@@ -447,8 +643,9 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
     engine?.stop();
     void levelMonitor?.stop();
     window.clearTimeout(partialScanTimer);
+    lastReportedAudioLevel = 0;
+    lastClippingWarning = false;
     set({ status: "stopped", partialText: "", audioLevel: 0, audioWarning: null });
-    persistSession(get());
   },
 
   rescanTranscript: async () => {
@@ -536,7 +733,8 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
         })),
       });
       set({ sessionId: id, saving: false, status: "idle" });
-      clearPersistedSession();
+      get().resetListeningWorkspace();
+      persistPreferences(get());
       return id;
     } catch (err) {
       set({
@@ -550,22 +748,8 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
   discardSession: () => {
     engine?.stop();
     void levelMonitor?.stop();
-    window.clearTimeout(partialScanTimer);
-    clearPersistedSession();
-    clearReferenceDedupeCache();
-    set({
-      status: "idle",
-      sessionId: null,
-      startedAt: null,
-      elapsedMs: 0,
-      partialText: "",
-      segments: [],
-      suggestions: [],
-      selectedSuggestionId: null,
-      audioLevel: 0,
-      audioWarning: null,
-      error: null,
-    });
+    get().resetListeningWorkspace();
+    set({ status: "idle", audioLevel: 0, audioWarning: null });
   },
 
   ignoreSuggestion: (id) => {
@@ -575,14 +759,12 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
       ),
       selectedSuggestionId: s.selectedSuggestionId === id ? null : s.selectedSuggestionId,
     }));
-    persistSession(get());
   },
 
   markSuggestionStatus: (id, status) => {
     set((s) => ({
       suggestions: s.suggestions.map((item) => (item.id === id ? { ...item, status } : item)),
     }));
-    persistSession(get());
   },
 
   tickElapsed: () => {
@@ -591,24 +773,13 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
     set({ elapsedMs: Date.now() - startedAt });
   },
 
-  restorePersistedSession: () => {
-    const saved = loadPersistedSession();
-    if (!saved) return;
-    set({
-      sessionId: saved.sessionId,
-      startedAt: saved.startedAt,
-      modelId: saved.modelId,
-      audioDeviceId: saved.audioDeviceId,
-      segments: saved.segments,
-      suggestions: saved.suggestions,
-      paraphraseEnabled: saved.paraphraseEnabled,
-      suggestionsMuted: saved.suggestionsMuted,
-      autoPreviewHigh: saved.autoPreviewHigh ?? false,
-      autoProject: saved.autoProject ?? true,
-      previewLayout: saved.previewLayout ?? "fullscreen",
-      minConfidence: saved.minConfidence ?? "low",
-      status: "stopped",
-      elapsedMs: saved.startedAt ? Date.now() - saved.startedAt : 0,
-    });
+  resetListeningWorkspace: () => {
+    window.clearTimeout(partialScanTimer);
+    clearReferenceDedupeCache();
+    const presentation = usePresentationStore.getState();
+    if (presentation.previewSource === "transcription") {
+      presentation.clearPreview();
+    }
+    set(resetWorkspaceState());
   },
 }));

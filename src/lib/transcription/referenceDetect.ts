@@ -1,4 +1,7 @@
 import { api } from "@/lib/tauri";
+import { formatTranscriptWithTimestamps } from "@/lib/transcription/transcriptFormat";
+import { isLikelyVoiceCommand } from "@/lib/transcription/voiceCommands";
+import { preprocessTranscriptForDetection } from "@/lib/transcription/transcriptPreprocess";
 import {
   confidenceLevel,
   type ConfidenceLevel,
@@ -27,8 +30,8 @@ export function buildDetectionContext(
   partialText = "",
   limit = CONTEXT_SEGMENT_LIMIT,
 ): string {
-  const recent = segments.slice(-limit).map((s) => s.text.trim()).filter(Boolean);
-  const parts = [...recent, partialText.trim()].filter(Boolean);
+  const recent = segments.slice(-limit).map((s) => preprocessTranscriptForDetection(s.text)).filter(Boolean);
+  const parts = [...recent, preprocessTranscriptForDetection(partialText)].filter(Boolean);
   return parts.join(" ").replace(/\s+/g, " ").trim();
 }
 
@@ -38,10 +41,12 @@ export async function detectScriptureFromText(
   options?: {
     paraphraseEnabled?: boolean;
     existingReferences?: string[];
+    allowRepeatReference?: boolean;
   },
 ): Promise<Omit<ScriptureSuggestion, "id" | "segmentId" | "status" | "createdAt">[]> {
-  const trimmed = text.trim();
+  const trimmed = preprocessTranscriptForDetection(text.trim());
   if (trimmed.length < 4) return [];
+  if (isLikelyVoiceCommand(trimmed)) return [];
 
   const existing = new Set((options?.existingReferences ?? []).map((r) => r.toLowerCase()));
   let matches: ParsedReferenceMatch[] = [];
@@ -59,9 +64,9 @@ export async function detectScriptureFromText(
   const suggestions: Omit<ScriptureSuggestion, "id" | "segmentId" | "status" | "createdAt">[] = [];
 
   for (const match of matches) {
-    if (existing.has(match.normalized_reference.toLowerCase())) continue;
+    if (!options?.allowRepeatReference && existing.has(match.normalized_reference.toLowerCase())) continue;
     const built = await buildSuggestionFromMatch(match, trimmed, translationId);
-    if (built && !shouldSkipReference(built.reference)) {
+    if (built && (options?.allowRepeatReference || !shouldSkipReference(built.reference))) {
       suggestions.push(built);
     }
   }
@@ -79,16 +84,17 @@ export async function detectScriptureFromText(
 
 /** Fallback when the native command is unavailable or returns nothing. */
 function clientSideDetect(text: string): ParsedReferenceMatch[] {
+  const cleaned = preprocessTranscriptForDetection(text);
   const patterns = [
-    /(?:\b(?:turn(?:\s+with\s+me)?\s+to|read(?:ing)?(?:\s+from)?|in|from)\s+)?((?:[1-3]|first|second|third)\s+)?[a-z]+(?:\s+of\s+[a-z]+)?\.?\s+\d+\s*:\s*\d+(?:\s*(?:-|through|to)\s*\d+)?/gi,
-    /(?:\b(?:turn(?:\s+with\s+me)?\s+to|read(?:ing)?(?:\s+from)?|in|from)\s+)?((?:[1-3]|first|second|third)\s+)?[a-z]+(?:\s+of\s+[a-z]+)?\.?\s+\d+\s+\d+(?:\s*(?:-|through|to)\s*\d+)?/gi,
-    /((?:[1-3]|first|second|third)\s+)?[a-z]+(?:\s+of\s+[a-z]+)?\s+chapter\s+\d+\s+(?:verse|verses)\s+\d+/gi,
-    /((?:[1-3]|first|second|third)\s+)?[a-z]+(?:\s+of\s+[a-z]+)?\.?\s+\d+\s+(?:verse|verses)\s+\d+/gi,
+    /(?:\b(?:turn(?:\s+with\s+me)?\s+to|read(?:ing)?(?:\s+from)?|in|from|scripture|bible)\s+)?((?:[1-3]|first|second|third)\s+)?[a-z]+(?:\s+(?:of\s+)?[a-z]+)?\.?\s+\d+\s*:\s*\d+(?:\s*(?:-|through|to)\s*\d+)?/gi,
+    /(?:\b(?:turn(?:\s+with\s+me)?\s+to|read(?:ing)?(?:\s+from)?|in|from|scripture|bible)\s+)?((?:[1-3]|first|second|third)\s+)?[a-z]+(?:\s+(?:of\s+)?[a-z]+)?\.?\s+\d+\s+\d+(?:\s*(?:-|through|to)\s*\d+)?/gi,
+    /((?:[1-3]|first|second|third)\s+)?[a-z]+(?:\s+(?:of\s+)?[a-z]+)?\s*,?\s*chapter\s+\d+(?:\s*(?:-|through|to)\s*\d+)?(?:\s*,?\s*(?:verse|verses)\s+\d+(?:\s*(?:-|through|to)\s*\d+)?)?/gi,
+    /((?:[1-3]|first|second|third)\s+)?[a-z]+(?:\s+(?:of\s+)?[a-z]+)?\.?\s+\d+\s+(?:verse|verses)\s+\d+/gi,
   ];
 
   const hits: ParsedReferenceMatch[] = [];
   for (const pattern of patterns) {
-    for (const match of text.matchAll(pattern)) {
+    for (const match of cleaned.matchAll(pattern)) {
       const raw = match[0].trim();
       const normalized = raw
         .replace(/\s+chapter\s+/i, " ")
@@ -209,10 +215,7 @@ async function detectParaphrase(
 }
 
 export function exportTranscriptText(segments: { text: string; isFinal: boolean; timestamp: string }[]): string {
-  return segments
-    .filter((s) => s.isFinal)
-    .map((s) => `[${s.timestamp}] ${s.text}`)
-    .join("\n");
+  return formatTranscriptWithTimestamps(segments);
 }
 
 export function exportScriptureList(

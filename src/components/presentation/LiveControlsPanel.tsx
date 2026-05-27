@@ -88,7 +88,6 @@ export function LiveControlsPanel({ displayOptions }: LiveControlsPanelProps) {
   const isOnAir = liveFollow && program && !isBlackout;
   const isSongLive = previewSource === "song" && songSlides.length > 0;
   const programLabel = formatProgramLabel(program);
-  const previewLabel = formatProgramLabel(preview);
   const externalDisplays = displays.filter((display) => !display.is_primary);
 
   const buttons: ControlButton[] = [
@@ -137,25 +136,15 @@ export function LiveControlsPanel({ displayOptions }: LiveControlsPanelProps) {
           )}
         </div>
 
-        <div className="mb-3 overflow-hidden rounded-lg border border-[var(--color-border-light)] bg-black">
-          <p className="border-b border-[var(--color-border-light)] px-2 py-1 text-[9px] uppercase tracking-wider text-[var(--color-subtle)]">
-            Preview
-            {previewSource ? ` · ${sourceLabels[previewSource]}` : ""}
-          </p>
-          <div className="h-[120px]">
-            <SceneRenderer scene={preview} compact displayOptions={displayOptions} label="Nothing queued" />
-          </div>
-          <p className="truncate px-2 py-1 text-[10px] text-[var(--color-muted-foreground)]">{previewLabel}</p>
-        </div>
-
         <div className="overflow-hidden rounded-lg border-2 border-red-900/40 bg-black">
           <p className="border-b border-red-900/30 px-2 py-1 text-[9px] uppercase tracking-wider text-red-300/80">
-            Program
+            Live
+            {previewSource ? ` · ${sourceLabels[previewSource]}` : ""}
           </p>
-          <div className="h-[120px]">
-            <SceneRenderer scene={program} compact displayOptions={displayOptions} label="Program empty" />
+          <div className="h-[200px]">
+            <SceneRenderer scene={program} compact displayOptions={displayOptions} label="Logo / standby" />
           </div>
-          <p className="truncate px-2 py-1 text-[10px] text-[var(--color-muted-foreground)]">{programLabel}</p>
+          <p className="truncate px-2 py-1.5 text-[10px] text-[var(--color-muted-foreground)]">{programLabel}</p>
         </div>
 
         {handlers?.label && (
@@ -191,11 +180,14 @@ export function LiveControlsPanel({ displayOptions }: LiveControlsPanelProps) {
       </div>
 
       <div className="flex flex-col gap-3 p-4">
-        <button type="button" className="go-live-btn" onClick={() => void goLive()}>
+        <button type="button" className="go-live-btn" onClick={() => void goLive()} disabled={!preview}>
           <Zap className="h-4 w-4 fill-current" />
           GO LIVE
           <span className="ml-auto rounded bg-black/25 px-2 py-0.5 text-[10px] font-normal tracking-wide">SPACE</span>
         </button>
+        <p className="text-center text-[10px] text-[var(--color-subtle)]">
+          {preview ? "Send preview to projection" : "Stage content in the center panel first"}
+        </p>
 
         <div className="grid grid-cols-4 gap-2">
           {buttons.map((btn) => (

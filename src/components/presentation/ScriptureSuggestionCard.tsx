@@ -8,7 +8,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { previewDetectedScripture, queueDetectedScripture } from "@/lib/transcriptionLive";
+import { queueDetectedScripture } from "@/lib/transcriptionLive";
 import type { ConfidenceLevel, ScriptureSuggestion } from "@/lib/transcription/types";
 import { useTranscriptionStore } from "@/stores/transcriptionStore";
 import { useNavigate } from "react-router-dom";
@@ -37,8 +37,8 @@ interface ScriptureSuggestionCardProps {
 
 export function ScriptureSuggestionCard({ suggestion, selected, onSelect }: ScriptureSuggestionCardProps) {
   const navigate = useNavigate();
+  const previewSuggestion = useTranscriptionStore((s) => s.previewSuggestion);
   const markStatus = useTranscriptionStore((s) => s.markSuggestionStatus);
-  const previewLayout = useTranscriptionStore((s) => s.previewLayout);
   const ignore = useTranscriptionStore((s) => s.ignoreSuggestion);
   const [busy, setBusy] = useState(false);
   const [showAlternatives, setShowAlternatives] = useState(false);
@@ -49,8 +49,7 @@ export function ScriptureSuggestionCard({ suggestion, selected, onSelect }: Scri
     setBusy(true);
     try {
       onSelect?.();
-      await previewDetectedScripture(suggestion, previewLayout);
-      markStatus(suggestion.id, "preview");
+      await previewSuggestion(suggestion);
     } finally {
       setBusy(false);
     }
@@ -90,8 +89,7 @@ export function ScriptureSuggestionCard({ suggestion, selected, onSelect }: Scri
         confidenceLevel: "medium",
         detectionType: "explicit",
       };
-      await previewDetectedScripture(alt, previewLayout);
-      markStatus(suggestion.id, "preview");
+      await previewSuggestion(alt);
     } finally {
       setBusy(false);
     }

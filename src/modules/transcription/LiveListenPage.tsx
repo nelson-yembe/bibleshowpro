@@ -6,6 +6,7 @@ import {
 import { TopBar } from "@/components/layout/TopBar";
 import { cn } from "@/lib/utils";
 import { exportScriptureList, exportTranscriptText } from "@/lib/transcription/referenceDetect";
+import { formatTranscriptProse } from "@/lib/transcription/transcriptFormat";
 import { formatElapsed, TRANSCRIPTION_MODELS, type ConfidenceLevel } from "@/lib/transcription/types";
 import { useTranscriptionStore } from "@/stores/transcriptionStore";
 import { useBibleStore } from "@/stores/bibleStore";
@@ -53,8 +54,6 @@ export function LiveListenPage() {
     audioLevel,
     audioWarning,
     paraphraseEnabled,
-    autoPreviewHigh,
-    autoProject,
     minConfidence,
     lastScanAt,
     scanning,
@@ -66,8 +65,6 @@ export function LiveListenPage() {
     setModelId,
     setAudioDeviceId,
     setParaphraseEnabled,
-    setAutoPreviewHigh,
-    setAutoProject,
     setMinConfidence,
     setSelectedSuggestion,
     startListening,
@@ -92,11 +89,16 @@ export function LiveListenPage() {
 
   const model = models.find((m) => m.id === modelId) ?? models[0];
   const activeSuggestions = suggestions.filter((s) => s.status !== "ignored");
-  const filteredSegments = useMemo(() => {
+  const transcriptProse = useMemo(
+    () => formatTranscriptProse(segments, partialText),
+    [segments, partialText],
+  );
+
+  const filteredProse = useMemo(() => {
     const q = transcriptSearch.trim().toLowerCase();
-    if (!q) return segments;
-    return segments.filter((s) => s.text.toLowerCase().includes(q));
-  }, [segments, transcriptSearch]);
+    if (!q) return transcriptProse;
+    return transcriptProse.toLowerCase().includes(q) ? transcriptProse : "";
+  }, [transcriptProse, transcriptSearch]);
 
   const handleStart = () => {
     if (status === "paused") {
@@ -245,29 +247,22 @@ export function LiveListenPage() {
                 />
               </div>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-3">
-              {segments.length === 0 && !partialText && (
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              {!transcriptProse && !isListening && (
                 <p className="text-[12px] leading-relaxed text-[var(--color-subtle)]">
-                  Transcript appears here. Scripture references are scanned across recent phrases — try saying
-                  “Romans 8 28” or “John chapter 3 verse 16”.
+                  Transcript appears here as continuous sentences. Scripture references are detected automatically — try
+                  saying “Romans 8 28” or “John chapter 3 verse 16”.
                 </p>
               )}
-              <div className="space-y-2">
-                {filteredSegments.map((seg) => (
-                  <p key={seg.id} className="text-[13px] leading-relaxed text-[var(--color-foreground)]">
-                    <span className="mr-2 text-[10px] tabular-nums text-[var(--color-subtle)]">{seg.timestamp}</span>
-                    {seg.hasDetection && (
-                      <span className="mr-1.5 rounded bg-emerald-500/15 px-1 py-0.5 text-[9px] uppercase text-emerald-300">
-                        Scripture
-                      </span>
-                    )}
-                    {seg.text}
-                  </p>
-                ))}
-                {partialText && (
-                  <p className="text-[13px] italic leading-relaxed text-[var(--color-muted-foreground)]">{partialText}</p>
-                )}
-              </div>
+              {filteredProse ? (
+                <p className="whitespace-pre-wrap text-[14px] leading-[1.75] text-[var(--color-foreground)]">
+                  {filteredProse}
+                </p>
+              ) : transcriptSearch.trim() ? (
+                <p className="text-[12px] text-[var(--color-subtle)]">No transcript matches your search.</p>
+              ) : isListening ? (
+                <p className="text-[13px] italic text-[var(--color-muted-foreground)]">Listening…</p>
+              ) : null}
             </div>
           </section>
 
@@ -308,19 +303,9 @@ export function LiveListenPage() {
             </div>
             <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-[var(--color-muted-foreground)]">
               <label className="flex items-center gap-1.5">
-                <input type="checkbox" checked={autoProject} onChange={(e) => setAutoProject(e.target.checked)} />
-                Auto project (preview + live)
-              </label>
-              <label className="flex items-center gap-1.5">
                 <input type="checkbox" checked={paraphraseEnabled} onChange={(e) => setParaphraseEnabled(e.target.checked)} />
-                Paraphrase
+                Paraphrase matching
               </label>
-              {!autoProject && (
-                <label className="flex items-center gap-1.5">
-                  <input type="checkbox" checked={autoPreviewHigh} onChange={(e) => setAutoPreviewHigh(e.target.checked)} />
-                  Auto-preview high only
-                </label>
-              )}
             </div>
             <label className="mt-2 block">
               <span className="mb-1 block text-[10px] uppercase tracking-wide text-[var(--color-subtle)]">Min confidence</span>
@@ -334,7 +319,9 @@ export function LiveListenPage() {
                 <option value="high">High only</option>
               </select>
             </label>
-            {audioWarning && <p className="mt-2 text-[10px] text-amber-400">{audioWarning}</p>}
+            {audioWarning === "Input clipping — lower gain." && (
+              <p className="mt-2 text-[10px] text-amber-400">{audioWarning}</p>
+            )}
             <p className="mt-2 inline-flex items-center gap-1 text-[10px] text-[var(--color-subtle)]">
               {model?.requiresInternet ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
               {model?.requiresInternet ? "Internet required" : "Local preferred"}

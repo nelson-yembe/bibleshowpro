@@ -36,7 +36,7 @@ describe("preview/program", () => {
     const withPreview = setPreview(initial, scene);
     const live = takeProgram(withPreview);
     expect(live.program?.content.reference).toBe("John 3:16");
-    expect(live.preview).toBeNull();
+    expect(live.preview?.content.reference).toBe("John 3:16");
   });
 
   it("supports undo", () => {

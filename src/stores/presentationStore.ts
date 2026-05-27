@@ -54,6 +54,7 @@ interface PresentationState extends PresentationSnapshot {
   enqueue: (scene: Scene) => void;
   undo: () => void;
   clear: () => void;
+  clearPreview: () => void;
   blackout: () => Promise<void>;
   showLogo: () => Promise<void>;
   freeze: () => void;
@@ -245,6 +246,12 @@ export const usePresentationStore = create<PresentationState>((set, get) => ({
     set(cleared);
     syncOutput(cleared);
     void syncKeepAwake(false);
+  },
+
+  clearPreview: () => {
+    const next = setPreview(get(), null);
+    persistSnapshot(next);
+    set({ ...next, previewSource: null });
   },
 
   blackout: async () => {

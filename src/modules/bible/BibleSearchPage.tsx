@@ -835,10 +835,10 @@ export function BibleSearchPage() {
             ) : (
               <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
                 <StagingPreview
-                  scene={preview ?? program}
+                  scene={preview}
                   displayOptions={displayOptions}
                   themeOverride={isLowerThirdMode ? { lowerThird: effectiveLowerThird } : undefined}
-                  label="Preview a passage"
+                  label="Preview a passage — GO LIVE on the right panel"
                   innerRef={previewRef}
                   onContextMenu={handlePreviewContextMenu}
                   isBlackout={isBlackout}

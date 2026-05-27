@@ -45,10 +45,11 @@ export function setPreview(snapshot: PresentationSnapshot, scene: Scene | null):
 
 export function takeProgram(snapshot: PresentationSnapshot): PresentationSnapshot {
   if (!snapshot.preview || snapshot.frozen) return snapshot;
+  const staged = snapshot.preview;
   const next = {
     ...snapshot,
-    program: snapshot.preview,
-    preview: snapshot.queue[0] ?? null,
+    program: staged,
+    preview: snapshot.queue[0] ?? staged,
     queue: snapshot.queue.slice(1),
     history: snapshot.program ? [snapshot.program, ...snapshot.history].slice(0, 20) : snapshot.history,
   };
