@@ -12,6 +12,19 @@ export async function lookupVerseInTranslation(
   return match ?? null;
 }
 
+/** Resolve primary and compare verses for the selected translation pair. */
+export async function lookupVersePairInTranslations(
+  verse: VerseResult,
+  primaryTranslationId: string,
+  secondaryTranslationId: string,
+): Promise<{ primary: VerseResult | null; secondary: VerseResult | null }> {
+  const [primary, secondary] = await Promise.all([
+    lookupVerseInTranslation(verse, primaryTranslationId),
+    lookupVerseInTranslation(verse, secondaryTranslationId),
+  ]);
+  return { primary, secondary };
+}
+
 export function formatComparisonBody(verse: VerseResult, showVerseNumbers: boolean): string {
   return showVerseNumbers ? `[${verse.verse}] ${verse.text}` : verse.text;
 }

@@ -301,6 +301,9 @@ export function LiveListenPage() {
                 </select>
               </label>
             </div>
+            <p className="mt-1 text-[10px] text-[var(--color-subtle)]">
+              Live transcription uses your system default microphone. Use Refresh mics after plugging in hardware.
+            </p>
             <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-[var(--color-muted-foreground)]">
               <label className="flex items-center gap-1.5">
                 <input type="checkbox" checked={paraphraseEnabled} onChange={(e) => setParaphraseEnabled(e.target.checked)} />
@@ -392,7 +395,7 @@ export function LiveListenPage() {
               <button type="button" onClick={exportReferences} className="control-btn text-[11px]">
                 Export scriptures
               </button>
-              <button type="button" onClick={() => void refreshAudioDevices()} className="control-btn text-[11px]">
+              <button type="button" onClick={() => void refreshAudioDevices(true)} className="control-btn text-[11px]">
                 Refresh mics
               </button>
               <button type="button" disabled={scanning} onClick={() => void rescanTranscript()} className="control-btn text-[11px]">

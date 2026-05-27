@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import { api, type BibleSearchOptions, type SearchResult, type TranslationInfo, type VerseResult } from "@/lib/tauri";
 
+const SELECTED_TRANSLATIONS_KEY = "bsp-selected-translations";
+
 interface BibleState {
   translations: TranslationInfo[];
   selectedTranslationId?: string;
@@ -22,9 +24,49 @@ interface BibleState {
   search: (query?: string, searchOptions?: BibleSearchOptions) => Promise<boolean>;
   loadChapterForVerse: (verse: VerseResult) => Promise<number>;
   loadChapterByReference: (bookName: string, chapter: number, verse?: number) => Promise<VerseResult | null>;
+  reloadActiveChapterForPrimary: () => Promise<VerseResult | null>;
   setActiveVerseIndex: (index: number) => void;
   getActiveVerse: () => VerseResult | null;
   addToHistory: (reference: string) => void;
+}
+
+function loadPersistedTranslationIds(): string[] {
+  try {
+    const raw = localStorage.getItem(SELECTED_TRANSLATIONS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistTranslationIds(ids: string[]) {
+  localStorage.setItem(SELECTED_TRANSLATIONS_KEY, JSON.stringify(ids.slice(0, 2)));
+}
+
+function resolveSelectedTranslationIds(
+  translations: TranslationInfo[],
+  persistedIds: string[],
+): string[] {
+  const validIds = new Set(translations.map((t) => t.id));
+  const validPersisted = persistedIds.filter((id) => validIds.has(id)).slice(0, 2);
+  if (validPersisted.length > 0) return validPersisted;
+
+  const defaultId = translations.find((t) => t.is_default)?.id ?? translations[0]?.id;
+  return defaultId ? [defaultId] : [];
+}
+
+function applyTranslationSelection(
+  set: (partial: Partial<BibleState>) => void,
+  ids: string[],
+) {
+  const next = ids.slice(0, 2);
+  persistTranslationIds(next);
+  set({
+    selectedTranslationIds: next,
+    selectedTranslationId: next[0],
+  });
 }
 
 async function fetchChapterVerses(bookName: string, chapter: number, translationId?: string) {
@@ -54,46 +96,64 @@ export const useBibleStore = create<BibleState>((set, get) => ({
 
   loadTranslations: async () => {
     const translations = await api.getTranslations();
-    const defaultId = translations.find((t) => t.is_default)?.id ?? translations[0]?.id;
+    const selectedTranslationIds = resolveSelectedTranslationIds(
+      translations,
+      loadPersistedTranslationIds(),
+    );
     set({
       translations,
-      selectedTranslationId: defaultId,
-      selectedTranslationIds: defaultId ? [defaultId] : [],
+      selectedTranslationIds,
+      selectedTranslationId: selectedTranslationIds[0],
     });
   },
 
   setQuery: (query) => set({ query }),
 
-  setTranslation: (id) =>
-    set({
-      selectedTranslationId: id,
-      selectedTranslationIds: [id],
-    }),
-
-  toggleTranslationSelection: (id) => {
-    const { selectedTranslationIds } = get();
+  setTranslation: (id) => {
+    const { selectedTranslationIds, selectedTranslationId } = get();
     const current =
       selectedTranslationIds.length > 0
         ? selectedTranslationIds
-        : get().selectedTranslationId
-          ? [get().selectedTranslationId!]
+        : selectedTranslationId
+          ? [selectedTranslationId]
+          : [];
+
+    const comparePartner = current.find((x) => x !== id);
+    const next =
+      comparePartner && comparePartner !== id ? [id, comparePartner] : [id];
+    applyTranslationSelection(set, next);
+  },
+
+  toggleTranslationSelection: (id) => {
+    const { selectedTranslationIds, selectedTranslationId } = get();
+    const current =
+      selectedTranslationIds.length > 0
+        ? [...selectedTranslationIds]
+        : selectedTranslationId
+          ? [selectedTranslationId]
           : [];
 
     if (current.includes(id)) {
       if (current.length <= 1) return;
-      const next = current.filter((x) => x !== id);
-      set({ selectedTranslationIds: next, selectedTranslationId: next[0] });
+      applyTranslationSelection(
+        set,
+        current.filter((x) => x !== id),
+      );
       return;
     }
 
-    if (current.length < 2) {
-      const next = [...current, id];
-      set({ selectedTranslationIds: next, selectedTranslationId: next[0] });
+    if (current.length === 0) {
+      applyTranslationSelection(set, [id]);
       return;
     }
 
-    const next = [current[0], id];
-    set({ selectedTranslationIds: next, selectedTranslationId: next[0] });
+    if (current.length === 1) {
+      applyTranslationSelection(set, [current[0], id]);
+      return;
+    }
+
+    // Two selected — keep the compare slot, replace it with the new pick (e.g. KJV+AMP → AMP+NIV).
+    applyTranslationSelection(set, [current[1], id]);
   },
 
   loadChapterForVerse: async (verse) => {
@@ -132,6 +192,13 @@ export const useBibleStore = create<BibleState>((set, get) => ({
       lastError: null,
     });
     return verses[activeVerseIndex] ?? verses[0] ?? null;
+  },
+
+  reloadActiveChapterForPrimary: async () => {
+    const { chapterVerses, activeVerseIndex } = get();
+    const active = chapterVerses[activeVerseIndex];
+    if (!active) return null;
+    return get().loadChapterByReference(active.book_name, active.chapter, active.verse);
   },
 
   setActiveVerseIndex: (index) => {

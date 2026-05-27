@@ -1,6 +1,6 @@
 [package]
 name = "bible-show-pro"
-version = "1.1.0"
+version = "1.2.0"
 description = "Bible Show Pro - Church presentation platform"
 authors = ["Bible Show Pro"]
 edition = "2021"

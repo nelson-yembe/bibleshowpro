@@ -20,10 +20,12 @@ import {
 import { parseVoiceCommands, isLikelyVoiceCommand } from "@/lib/transcription/voiceCommands";
 import { preprocessTranscriptForDetection } from "@/lib/transcription/transcriptPreprocess";
 import {
-  AudioLevelMonitor,
+  ensureMicrophoneAccess,
   listAudioInputDevices,
+  pickValidAudioDeviceId,
   WebSpeechTranscriptionEngine,
 } from "@/lib/transcription/webSpeechProvider";
+import { isSpeechRecognitionSupported } from "@/lib/transcription/speechTypes";
 import {
   TRANSCRIPTION_MODELS,
   type ListeningStatus,
@@ -72,9 +74,10 @@ interface TranscriptionState {
   scanning: boolean;
   error: string | null;
   saving: boolean;
+  speechSupported: boolean;
 
   init: () => Promise<void>;
-  refreshAudioDevices: () => Promise<void>;
+  refreshAudioDevices: (requestPermission?: boolean) => Promise<void>;
   setModelId: (id: string) => void;
   setAudioDeviceId: (id: string | null) => void;
   setParaphraseEnabled: (enabled: boolean) => void;
@@ -100,11 +103,9 @@ interface TranscriptionState {
 }
 
 let engine: WebSpeechTranscriptionEngine | null = null;
-let levelMonitor: AudioLevelMonitor | null = null;
 let segmentCounter = 0;
 let partialScanTimer: number | undefined;
 let lastReportedAudioLevel = 0;
-let lastClippingWarning = false;
 
 function loadPersistedPreferences(): PersistedPreferences | null {
   try {
@@ -442,31 +443,55 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
   scanning: false,
   error: null,
   saving: false,
+  speechSupported: isSpeechRecognitionSupported(),
 
   init: async () => {
-    await get().refreshAudioDevices();
+    const speechSupported = isSpeechRecognitionSupported();
+    const existing = get();
+    const preserveSession =
+      existing.status === "listening" ||
+      existing.status === "paused" ||
+      existing.status === "processing" ||
+      existing.status === "reconnecting" ||
+      existing.status === "stopped" ||
+      existing.segments.length > 0 ||
+      Boolean(existing.sessionId);
+
+    await get().refreshAudioDevices(false);
     const bible = useBibleStore.getState();
     if (!bible.selectedTranslationId) {
       await bible.loadTranslations();
     }
     const prefs = loadPersistedPreferences();
     set({
-      ...resetWorkspaceState(),
-      status: "idle",
+      ...(preserveSession ? {} : resetWorkspaceState()),
+      status: preserveSession ? existing.status : "idle",
+      speechSupported,
       ...(prefs ?? {}),
     });
+    if (!speechSupported) {
+      set({
+        error:
+          "Speech recognition is unavailable in this window. Use the installed Bible Show Pro app (not the browser preview) and ensure microphone access is allowed.",
+        status: "unavailable",
+      });
+    }
     if (prefs) persistPreferences(get());
   },
 
-  refreshAudioDevices: async () => {
+  refreshAudioDevices: async (requestPermission = true) => {
     try {
-      const devices = await listAudioInputDevices();
-      set({ audioDevices: devices });
-      if (!get().audioDeviceId && devices[0]?.deviceId) {
-        set({ audioDeviceId: devices[0].deviceId });
+      if (requestPermission) {
+        await ensureMicrophoneAccess();
       }
-    } catch {
-      set({ audioDevices: [], audioWarning: "Microphone access unavailable." });
+      const devices = await listAudioInputDevices();
+      const audioDeviceId = pickValidAudioDeviceId(devices, get().audioDeviceId);
+      set({ audioDevices: devices, audioDeviceId, audioWarning: null });
+    } catch (err) {
+      set({
+        audioDevices: [],
+        audioWarning: err instanceof Error ? err.message : "Microphone access unavailable.",
+      });
     }
   },
 
@@ -525,17 +550,23 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
     const state = get();
     if (state.status === "listening") return;
 
+    if (!engine) engine = new WebSpeechTranscriptionEngine();
+
+    if (!engine.isSupported()) {
+      set({
+        error:
+          "Speech recognition is not supported here. Run the installed Bible Show Pro desktop app with microphone permission enabled.",
+        status: "unavailable",
+        speechSupported: false,
+      });
+      return;
+    }
+
     const bible = useBibleStore.getState();
     if (bible.translations.length === 0) {
       await bible.loadTranslations();
     }
-    if (!resolveTranslationId()) {
-      set({ error: "No Bible translation loaded — install a Bible version in Settings." });
-      return;
-    }
-
-    if (!engine) engine = new WebSpeechTranscriptionEngine();
-    if (!levelMonitor) levelMonitor = new AudioLevelMonitor();
+    const hasBible = Boolean(resolveTranslationId());
 
     const model = state.models.find((m) => m.id === state.modelId) ?? state.models[0];
     if (model?.requiresInternet && !navigator.onLine) {
@@ -543,47 +574,41 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
       return;
     }
 
+    try {
+      await ensureMicrophoneAccess();
+      const devices = await listAudioInputDevices();
+      const audioDeviceId = pickValidAudioDeviceId(devices, state.audioDeviceId);
+      set({ audioDevices: devices, audioDeviceId });
+      persistPreferences(get());
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : "Could not access microphone.",
+        status: "unavailable",
+      });
+      return;
+    }
+
     clearReferenceDedupeCache();
 
     const freshSession = state.status !== "paused" && state.status !== "stopped";
     if (freshSession) {
-      set({ ...resetWorkspaceState(), status: "idle" });
+      set({ ...resetWorkspaceState(), status: "idle", speechSupported: true });
     }
 
     const sessionId = freshSession ? crypto.randomUUID() : (get().sessionId ?? crypto.randomUUID());
     const startedAt = freshSession ? Date.now() : (get().startedAt ?? Date.now());
     lastReportedAudioLevel = 0;
-    lastClippingWarning = false;
 
     set({
       status: "listening",
       sessionId,
       startedAt,
-      error: null,
+      error: hasBible
+        ? null
+        : "Listening — install a Bible translation in Settings to enable scripture detection.",
       partialText: "",
+      speechSupported: true,
     });
-
-    try {
-      await levelMonitor.start(state.audioDeviceId, (level) => {
-        const clipping = level > 0.95;
-        const levelChanged = Math.abs(level - lastReportedAudioLevel) >= 0.02;
-        const clippingChanged = clipping !== lastClippingWarning;
-        if (!levelChanged && !clippingChanged) return;
-
-        lastReportedAudioLevel = level;
-        lastClippingWarning = clipping;
-        set({
-          audioLevel: level,
-          audioWarning: clipping ? "Input clipping — lower gain." : null,
-        });
-      });
-    } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Could not access audio input.",
-        status: "unavailable",
-      });
-      return;
-    }
 
     engine.start(
       {
@@ -611,8 +636,10 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
             status: "processing",
           }));
 
-          await runSegmentScan(get, set, text, segment.id);
-          await runContextScan(get, set, segment.id);
+          if (resolveTranslationId()) {
+            await runSegmentScan(get, set, text, segment.id);
+            await runContextScan(get, set, segment.id);
+          }
           set({ status: "listening" });
         },
         onStatus: (status) => {
@@ -622,7 +649,13 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
           else if (status === "stopped") set({ status: "stopped" });
           else if (status === "unavailable") set({ status: "unavailable" });
         },
-        onError: (message) => set({ error: message }),
+        onError: (message) => set({ error: message, status: "unavailable" }),
+        onAudioActivity: (level) => {
+          const levelChanged = Math.abs(level - lastReportedAudioLevel) >= 0.02;
+          if (!levelChanged) return;
+          lastReportedAudioLevel = level;
+          set({ audioLevel: level });
+        },
       },
       { modelId: state.modelId },
     );
@@ -641,10 +674,8 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
 
   stopListening: () => {
     engine?.stop();
-    void levelMonitor?.stop();
     window.clearTimeout(partialScanTimer);
     lastReportedAudioLevel = 0;
-    lastClippingWarning = false;
     set({ status: "stopped", partialText: "", audioLevel: 0, audioWarning: null });
   },
 
@@ -747,7 +778,6 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
 
   discardSession: () => {
     engine?.stop();
-    void levelMonitor?.stop();
     get().resetListeningWorkspace();
     set({ status: "idle", audioLevel: 0, audioWarning: null });
   },

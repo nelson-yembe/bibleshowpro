@@ -36,7 +36,7 @@ import { useServiceStore } from "@/stores/serviceStore";
 import { useThemeStore } from "@/stores/themeStore";
 import type { CatalogEntryView, VerseResult } from "@/lib/tauri";
 import { BIBLE_BOOKS, chapterOptions, verseOptions } from "@/lib/bibleBooks";
-import { lookupVerseInTranslation } from "@/lib/bibleCompare";
+import { lookupVerseInTranslation, lookupVersePairInTranslations } from "@/lib/bibleCompare";
 import { useBibleVersionsStore } from "@/stores/bibleVersionsStore";
 import type { VerseLayout } from "@/engine/scene";
 
@@ -47,7 +47,7 @@ const viewTabs = [
   { value: "reader", label: "Reader" },
 ];
 
-const MAX_TRANSLATION_PILLS = 6;
+const MIN_INSTALLED_VERSES = 1000;
 
 export function BibleSearchPage() {
   const bible = useBibleStore();
@@ -152,13 +152,20 @@ export function BibleSearchPage() {
             : [];
 
       if (ids.length >= 2) {
-        const secondary = await lookupVerseInTranslation(verse, ids[1]);
-        if (secondary) {
-          showVerseComparison(verse, secondary, effectiveTheme, layout);
+        const { primary, secondary } = await lookupVersePairInTranslations(verse, ids[0], ids[1]);
+        if (primary && secondary) {
+          showVerseComparison(primary, secondary, effectiveTheme, layout);
+          return;
+        }
+        if (primary) {
+          showVerses([primary], effectiveTheme, layout);
           return;
         }
       }
-      showVerses([verse], effectiveTheme, layout);
+
+      const primaryId = ids[0];
+      const resolved = primaryId ? await lookupVerseInTranslation(verse, primaryId) : verse;
+      showVerses([resolved ?? verse], effectiveTheme, layout);
     },
     [showVerses, showVerseComparison, effectiveTheme, verseLayout],
   );
@@ -175,14 +182,25 @@ export function BibleSearchPage() {
   }, [viewMode, effectiveTheme, themeRevision, presentActiveVerse]);
 
   useEffect(() => {
-    const active = useBibleStore.getState().getActiveVerse();
-    if (active) void presentActiveVerse(active);
+    const refreshForTranslations = async () => {
+      const store = useBibleStore.getState();
+      if (store.chapterVerses.length > 0) {
+        await store.reloadActiveChapterForPrimary();
+      }
+      const active = useBibleStore.getState().getActiveVerse();
+      if (active) await presentActiveVerse(active);
+    };
+    void refreshForTranslations();
   }, [selectedTranslationIds.join(","), presentActiveVerse]);
 
   useEffect(() => {
     void useBibleStore.getState().loadTranslations();
     void loadCatalog();
   }, [loadCatalog]);
+
+  useEffect(() => {
+    void loadCatalog();
+  }, [bible.translations.length, loadCatalog]);
 
   useEffect(() => {
     const maxCh = chapters.length;
@@ -264,66 +282,53 @@ export function BibleSearchPage() {
   const secondaryTranslationId = selectedTranslationIds[1];
   const isDualTranslation = selectedTranslationIds.length >= 2;
 
-  const availableAbbrs = useMemo(
-    () =>
-      new Set(
-        bible.translations
-          .filter((t) => {
-            const cat = catalog.find((c) => c.id === t.id);
-            return !cat || cat.verse_count >= 1000;
-          })
-          .map((t) => t.abbreviation.toUpperCase()),
-      ),
-    [bible.translations, catalog],
-  );
+  const installedTranslations = useMemo((): CatalogEntryView[] => {
+    const fromCatalog = catalog.filter(
+      (entry) => entry.installed && entry.verse_count >= MIN_INSTALLED_VERSES,
+    );
+    if (fromCatalog.length > 0) return fromCatalog;
+
+    return bible.translations.map((t) => ({
+      id: t.id,
+      abbreviation: t.abbreviation,
+      name: t.name,
+      language: t.language,
+      copyright: "",
+      license: "",
+      source_format: "",
+      is_default: t.is_default,
+      installed: true,
+      verse_count: 1,
+      install_method: "download",
+    }));
+  }, [catalog, bible.translations]);
 
   const translationPills = useMemo((): CatalogEntryView[] => {
-    const all: CatalogEntryView[] =
-      catalog.length > 0
-        ? catalog
-        : bible.translations.map((t) => ({
-            id: t.id,
-            abbreviation: t.abbreviation,
-            name: t.name,
-            language: t.language,
-            copyright: "",
-            license: "",
-            source_format: "",
-            is_default: t.is_default,
-            installed: true,
-            verse_count: 1,
-            install_method: "download",
-          }));
-
-    const picked = new Set<string>();
+    const byId = new Map(installedTranslations.map((entry) => [entry.id, entry]));
     const visible: CatalogEntryView[] = [];
+    const picked = new Set<string>();
 
-    const add = (entry: CatalogEntryView) => {
-      if (visible.length >= MAX_TRANSLATION_PILLS || picked.has(entry.id)) return;
+    const add = (entry: CatalogEntryView | undefined) => {
+      if (!entry || picked.has(entry.id)) return;
       picked.add(entry.id);
       visible.push(entry);
     };
 
     for (const id of selectedTranslationIds) {
-      const entry = all.find((e) => e.id === id);
-      if (entry) add(entry);
+      add(byId.get(id));
     }
 
-    for (const entry of all) {
-      if (availableAbbrs.has(entry.abbreviation.toUpperCase())) add(entry);
-    }
-
-    for (const entry of all) {
+    const remaining = [...installedTranslations].sort((a, b) =>
+      a.abbreviation.localeCompare(b.abbreviation),
+    );
+    for (const entry of remaining) {
       add(entry);
     }
 
     return visible;
-  }, [catalog, bible.translations, selectedTranslationIds, availableAbbrs]);
+  }, [installedTranslations, selectedTranslationIds]);
 
-  const hasMoreTranslations = useMemo(() => {
-    const total = catalog.length > 0 ? catalog.length : bible.translations.length;
-    return total > MAX_TRANSLATION_PILLS;
-  }, [catalog.length, bible.translations.length]);
+  const availableVersionsCount = installedTranslations.length;
 
   const searchOptions = useMemo(
     () => ({ exactPhrase, matchAllWords }),
@@ -620,13 +625,18 @@ export function BibleSearchPage() {
           </div>
 
           <div className="border-b border-[var(--color-border)] p-3">
-            <p className="section-label mb-2">Translation</p>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="section-label">Translation</p>
+              <span className="text-[10px] text-[var(--color-subtle)]">
+                {availableVersionsCount} version{availableVersionsCount === 1 ? "" : "s"}
+              </span>
+            </div>
             <p className="mb-2 text-[10px] leading-snug text-[var(--color-subtle)]">
-              Select up to 2 for side-by-side display.
+              Select up to 2 for side-by-side display. Click a selected pill again to remove it. Picking a
+              third version replaces the compare slot (e.g. KJV+AMP then NIV → AMP+NIV).
             </p>
             <div className="flex flex-wrap gap-1">
               {translationPills.map((entry) => {
-                const available = availableAbbrs.has(entry.abbreviation.toUpperCase());
                 const slot = selectedTranslationIds.indexOf(entry.id);
                 const active = slot >= 0;
                 const slotLabel = slot === 0 ? "1" : slot === 1 ? "2" : null;
@@ -634,17 +644,10 @@ export function BibleSearchPage() {
                   <Pill
                     key={entry.id}
                     active={active}
-                    onClick={() => available && toggleTranslationPill(entry.id)}
-                    className={cn(
-                      !available && "cursor-not-allowed opacity-40",
-                      active && slot === 1 && "ring-1 ring-[var(--color-primary)]/50",
-                    )}
+                    onClick={() => toggleTranslationPill(entry.id)}
+                    className={cn(active && slot === 1 && "ring-1 ring-[var(--color-primary)]/50")}
                     title={
-                      available
-                        ? `${entry.name}${slotLabel ? ` (${slotLabel === "1" ? "primary" : "compare"})` : ""}`
-                        : entry.install_method === "import"
-                          ? `${entry.abbreviation} — import in Settings`
-                          : `${entry.abbreviation} — download in Settings`
+                      `${entry.name}${slotLabel ? ` (${slotLabel === "1" ? "primary" : "compare"})` : ""}`
                     }
                   >
                     {slotLabel ? `${entry.abbreviation} ${slotLabel}` : entry.abbreviation}
@@ -652,10 +655,9 @@ export function BibleSearchPage() {
                 );
               })}
             </div>
-            {hasMoreTranslations && (
+            {availableVersionsCount === 0 && (
               <p className="mt-2 text-[10px] text-[var(--color-subtle)]">
-                Showing {MAX_TRANSLATION_PILLS} of {catalog.length || bible.translations.length}. Manage all
-                translations in Settings.
+                No Bible versions installed yet. Download or import one in Settings.
               </p>
             )}
           </div>
