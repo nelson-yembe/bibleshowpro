@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { useLiveNavigationStore } from "@/stores/liveNavigationStore";
 import { usePresentationStore } from "@/stores/presentationStore";
 import { useSongStore } from "@/stores/songStore";
+import { useTranscriptionStore } from "@/stores/transcriptionStore";
 
 type ControlAction = "clear" | "undo" | "blackout" | "logo" | "freeze";
 
@@ -86,6 +87,8 @@ export function LiveControlsPanel({ displayOptions }: LiveControlsPanelProps) {
 
   const isBlackout = program?.type === "blackout";
   const isOnAir = liveFollow && program && !isBlackout;
+  const autoGoLive = useTranscriptionStore((s) => s.autoGoLive);
+  const transcriptionAutoLive = previewSource === "transcription" && autoGoLive;
   const isSongLive = previewSource === "song" && songSlides.length > 0;
   const programLabel = formatProgramLabel(program);
   const externalDisplays = displays.filter((display) => !display.is_primary);
@@ -180,13 +183,22 @@ export function LiveControlsPanel({ displayOptions }: LiveControlsPanelProps) {
       </div>
 
       <div className="flex flex-col gap-3 p-4">
-        <button type="button" className="go-live-btn" onClick={() => void goLive()} disabled={!preview}>
+        <button
+          type="button"
+          className="go-live-btn"
+          onClick={() => void goLive()}
+          disabled={!preview || transcriptionAutoLive}
+        >
           <Zap className="h-4 w-4 fill-current" />
           GO LIVE
           <span className="ml-auto rounded bg-black/25 px-2 py-0.5 text-[10px] font-normal tracking-wide">SPACE</span>
         </button>
         <p className="text-center text-[10px] text-[var(--color-subtle)]">
-          {preview ? "Send preview to projection" : "Stage content in the center panel first"}
+          {transcriptionAutoLive
+            ? "Auto live is on — Live Listen sends scripture directly to projection"
+            : preview
+              ? "Send preview to projection"
+              : "Stage content in the center panel first"}
         </p>
 
         <div className="grid grid-cols-4 gap-2">

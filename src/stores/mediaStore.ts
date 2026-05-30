@@ -150,9 +150,7 @@ export const useMediaStore = create<MediaState>((set, get) => ({
     if (!item) return;
 
     const service = useServiceStore.getState();
-    if (!service.activePlan) {
-      await service.createPlan("Quick service");
-    }
+    await service.ensureActivePlan();
 
     const itemType = item.media_type === "audio" ? "announcement" : item.media_type;
     await service.addItem(itemType, item.name, serviceItemContentFromMedia(item));

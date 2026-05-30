@@ -79,6 +79,14 @@ export async function detectScriptureFromText(
     }
   }
 
+  if (suggestions.length === 0) {
+    const quoted = await detectQuoteFromText(trimmed, translationId);
+    for (const item of quoted) {
+      if (existing.has(item.reference.toLowerCase())) continue;
+      if (!shouldSkipReference(item.reference)) suggestions.push(item);
+    }
+  }
+
   return suggestions;
 }
 
@@ -185,25 +193,60 @@ async function detectParaphrase(
   text: string,
   translationId: string,
 ): Promise<Omit<ScriptureSuggestion, "id" | "segmentId" | "status" | "createdAt">[]> {
-  const quoteMatch = text.match(/(?:says|said|reads?|tells us)\s+(.{12,120})/i);
-  const phrase = (quoteMatch?.[1] ?? text).replace(/[.!?]+$/, "").trim();
+  const phrase = extractQuotablePhrase(text);
+  return searchQuotePhrase(phrase, text, translationId, "paraphrase", 0.45);
+}
+
+function extractQuotablePhrase(text: string): string {
+  const cleaned = text.replace(/[.!?]+$/, "").trim();
+  const quoteMatch = cleaned.match(
+    /(?:says|said|reads?|reading|tells us|it is written|scripture says|the lord says)\s+(.+)/i,
+  );
+  let phrase = (quoteMatch?.[1] ?? cleaned)
+    .replace(/^["'“”]+|["'“”]+$/g, "")
+    .trim();
+  const words = phrase.split(/\s+/).filter(Boolean);
+  if (words.length > 18) {
+    phrase = words.slice(-18).join(" ");
+  }
+  return phrase;
+}
+
+async function detectQuoteFromText(
+  text: string,
+  translationId: string,
+): Promise<Omit<ScriptureSuggestion, "id" | "segmentId" | "status" | "createdAt">[]> {
+  const phrase = extractQuotablePhrase(text);
+  if (phrase.split(/\s+/).length < 4) return [];
+  return searchQuotePhrase(phrase, text, translationId, "quote", 0.52);
+}
+
+async function searchQuotePhrase(
+  phrase: string,
+  detectedPhrase: string,
+  translationId: string,
+  detectionType: DetectionType,
+  baseConfidence: number,
+): Promise<Omit<ScriptureSuggestion, "id" | "segmentId" | "status" | "createdAt">[]> {
   if (phrase.length < 12) return [];
 
   try {
     const search = await api.searchBible(phrase, translationId, { exactPhrase: false, matchAllWords: false });
     if (search.verses.length === 0) return [];
 
-    const top = search.verses[0];
-    const confidence = 0.45;
+    const top = search.verses[0]!;
+    const overlap = wordOverlapScore(phrase, top.text);
+    const confidence = Math.min(0.92, baseConfidence + overlap * 0.35);
+
     return [
       {
-        detectedPhrase: text,
+        detectedPhrase,
         reference: top.reference,
         translationId,
         translationAbbr: top.translation_abbr,
         confidence,
         confidenceLevel: confidenceLevel(confidence) as ConfidenceLevel,
-        detectionType: "paraphrase",
+        detectionType,
         versePreview: top.text,
         verses: search.verses.slice(0, 3),
         alternatives: search.suggestions.slice(0, 3),
@@ -212,6 +255,25 @@ async function detectParaphrase(
   } catch {
     return [];
   }
+}
+
+function wordOverlapScore(phrase: string, verseText: string): number {
+  const normalize = (value: string) =>
+    value
+      .toLowerCase()
+      .replace(/[^\w\s]/g, " ")
+      .split(/\s+/)
+      .filter((word) => word.length > 2);
+
+  const phraseWords = new Set(normalize(phrase));
+  const verseWords = new Set(normalize(verseText));
+  if (phraseWords.size === 0 || verseWords.size === 0) return 0;
+
+  let hits = 0;
+  for (const word of phraseWords) {
+    if (verseWords.has(word)) hits += 1;
+  }
+  return hits / phraseWords.size;
 }
 
 export function exportTranscriptText(segments: { text: string; isFinal: boolean; timestamp: string }[]): string {

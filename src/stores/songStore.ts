@@ -371,7 +371,7 @@ export const useSongStore = create<SongState>((set, get) => ({
     const song = get().activeSong;
     if (!song) return;
     const service = useServiceStore.getState();
-    if (!service.activePlan) await service.createPlan("Quick service");
+    await service.ensureActivePlan();
     await service.addItem("song", song.title, serviceItemContentFromSong(song.id, get().slideIndex));
   },
 

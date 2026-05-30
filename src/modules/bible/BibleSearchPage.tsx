@@ -54,7 +54,7 @@ export function BibleSearchPage() {
   const catalog = useBibleVersionsStore((s) => s.catalog);
   const loadCatalog = useBibleVersionsStore((s) => s.loadCatalog);
   const { showVerses, showVerseComparison, preview, program, liveFollow } = usePresentationStore();
-  const { activePlan, addItem, createPlan } = useServiceStore();
+  const { activePlan, addItem, ensureActivePlan } = useServiceStore();
   const activeTheme = useThemeStore((s) => s.activeTheme);
   const themeRevision = useThemeStore((s) => s.themeRevision);
   const applyThemeLive = useThemeStore((s) => s.applyThemeLive);
@@ -514,16 +514,14 @@ export function BibleSearchPage() {
 
   const addToService = useCallback(
     async (reference: string, verses?: VerseResult[]) => {
-      if (!useServiceStore.getState().activePlan) {
-        await createPlan("Quick service");
-      }
+      await ensureActivePlan();
       await addItem(
         "scripture",
         reference,
         JSON.stringify({ reference, verses: verses ?? [] }),
       );
     },
-    [addItem, createPlan],
+    [addItem, ensureActivePlan],
   );
 
   return (

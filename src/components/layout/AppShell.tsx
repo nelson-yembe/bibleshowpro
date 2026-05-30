@@ -1,6 +1,7 @@
 import { Outlet, useLocation } from "react-router-dom";
 import { IconRail } from "@/components/layout/IconRail";
 import { StatusBar } from "@/components/layout/StatusBar";
+import { AppToast } from "@/components/ui/AppToast";
 import { LiveControlsPanel } from "@/components/presentation/LiveControlsPanel";
 import { useLiveKeyboard } from "@/hooks/useLiveKeyboard";
 import { useLiveDisplayStore } from "@/stores/liveDisplayStore";
@@ -28,6 +29,7 @@ export function AppShell() {
         </div>
         <StatusBar />
       </div>
+      <AppToast />
     </div>
   );
 }

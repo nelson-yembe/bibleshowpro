@@ -20,6 +20,7 @@ import {
   BookOpen,
   GripVertical,
   Image,
+  ListPlus,
   Megaphone,
   Mic,
   Monitor,
@@ -31,12 +32,19 @@ import {
   Video,
 } from "lucide-react";
 import { TopBar } from "@/components/layout/TopBar";
+import { MediaPickerModal } from "@/components/service/MediaPickerModal";
+import { ServiceItemEditor } from "@/components/service/ServiceItemEditor";
+import { SongPickerModal } from "@/components/service/SongPickerModal";
 import { StatusBadge } from "@/components/ui/pill";
-import { useServiceStore } from "@/stores/serviceStore";
-import { usePresentationStore } from "@/stores/presentationStore";
+import { defaultContentForType, stringifyServiceItemContent } from "@/lib/serviceItemContent";
+import { SERVICE_TEMPLATES } from "@/lib/serviceTemplates";
+import { serviceItemContentFromMedia } from "@/lib/mediaLive";
+import { serviceItemContentFromSong } from "@/lib/songLive";
+import type { MediaRecord, ServiceItem } from "@/lib/tauri";
 import { useLiveNavigationStore } from "@/stores/liveNavigationStore";
+import { usePresentationStore } from "@/stores/presentationStore";
+import { useServiceStore } from "@/stores/serviceStore";
 import { useThemeStore } from "@/stores/themeStore";
-import type { ServiceItem } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 
 const addItems = [
@@ -64,6 +72,12 @@ const itemColors: Record<string, string> = {
   blackout: "bg-gray-700",
   blank: "bg-gray-600",
 };
+
+type PickerState =
+  | { mode: "song"; replaceItemId?: string }
+  | { mode: "video"; replaceItemId?: string }
+  | { mode: "image"; replaceItemId?: string }
+  | null;
 
 function SortableRow({
   item,
@@ -141,6 +155,9 @@ export function ServiceBuilderPage() {
 
   const [scriptureRef, setScriptureRef] = useState("Romans 8:28-30");
   const [newTitle, setNewTitle] = useState("Sunday Morning Service");
+  const [bulkScripture, setBulkScripture] = useState("");
+  const [picker, setPicker] = useState<PickerState>(null);
+  const [importing, setImporting] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -207,20 +224,58 @@ export function ServiceBuilderPage() {
   };
 
   const handleAddItem = async (type: string, label: string) => {
-    if (!store.activePlan) await store.createPlan(newTitle);
+    if (type === "song") {
+      setPicker({ mode: "song" });
+      return;
+    }
+    if (type === "video") {
+      setPicker({ mode: "video" });
+      return;
+    }
+    if (type === "image") {
+      setPicker({ mode: "image" });
+      return;
+    }
     if (type === "scripture") {
-      await store.addItem(type, scriptureRef, JSON.stringify({ reference: scriptureRef }));
-    } else {
-      await store.addItem(type, label);
+      await store.addItem(type, scriptureRef, stringifyServiceItemContent({ reference: scriptureRef }), {
+        notify: false,
+      });
+      return;
+    }
+    const content = defaultContentForType(type);
+    await store.addItem(type, label, stringifyServiceItemContent(content), { notify: false });
+  };
+
+  const handleBulkImport = async () => {
+    if (!bulkScripture.trim()) return;
+    setImporting(true);
+    try {
+      const count = await store.importScriptureList(bulkScripture);
+      if (count > 0) setBulkScripture("");
+    } finally {
+      setImporting(false);
     }
   };
 
-  const saveScriptureRef = () => {
-    if (!selectedItem || selectedItem.item_type !== "scripture") return;
-    void store.updateItem(selectedItem.id, {
-      title: scriptureRef,
-      contentJson: JSON.stringify({ reference: scriptureRef }),
-    });
+  const handleSongPick = async (song: { id: string; title: string }) => {
+    if (picker?.replaceItemId) {
+      await store.updateItem(picker.replaceItemId, {
+        title: song.title,
+        contentJson: serviceItemContentFromSong(song.id, 0),
+      });
+      return;
+    }
+    await store.addItem("song", song.title, serviceItemContentFromSong(song.id, 0), { notify: false });
+  };
+
+  const handleMediaPick = async (item: MediaRecord) => {
+    const itemType = item.media_type === "video" ? "video" : "image";
+    const contentJson = serviceItemContentFromMedia(item);
+    if (picker?.replaceItemId) {
+      await store.updateItem(picker.replaceItemId, { title: item.name, contentJson });
+      return;
+    }
+    await store.addItem(itemType, item.name, contentJson, { notify: false });
   };
 
   const isLive = liveFollow && program && !isBlackout;
@@ -262,18 +317,50 @@ export function ServiceBuilderPage() {
                 </button>
               ))}
             </div>
+            {addItems.some((entry) => entry.type === "scripture") && (
+              <div className="mt-2">
+                <p className="section-label mb-1">Scripture reference</p>
+                <input
+                  value={scriptureRef}
+                  onChange={(e) => setScriptureRef(e.target.value)}
+                  className="h-7 w-full rounded border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 text-[11px]"
+                  placeholder="Romans 8:28"
+                />
+              </div>
+            )}
+          </div>
+          <div className="border-t border-[var(--color-border)] p-3">
+            <p className="section-label mb-2 flex items-center gap-1">
+              <ListPlus className="h-3 w-3" />
+              Bulk scripture import
+            </p>
+            <textarea
+              value={bulkScripture}
+              onChange={(e) => setBulkScripture(e.target.value)}
+              rows={4}
+              placeholder={"One reference per line:\nPsalm 23\nJohn 3:16\nRomans 8:28-30"}
+              className="w-full rounded border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 py-1.5 text-[10px]"
+            />
+            <button
+              type="button"
+              disabled={!bulkScripture.trim() || importing}
+              onClick={() => void handleBulkImport()}
+              className="mt-1.5 w-full rounded bg-[var(--color-primary)] py-1.5 text-[10px] font-semibold text-white disabled:opacity-50"
+            >
+              {importing ? "Importing…" : "Import list"}
+            </button>
           </div>
           <div className="border-t border-[var(--color-border)] p-3">
             <p className="section-label mb-2">Templates</p>
-            {["Sunday AM", "Midweek", "Funeral", "Youth"].map((t) => (
+            {SERVICE_TEMPLATES.map((template) => (
               <button
-                key={t}
+                key={template.id}
                 type="button"
-                onClick={() => void store.createPlan(t)}
+                onClick={() => void store.createPlanFromTemplate(template.id)}
                 className="mb-1 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-[var(--color-muted-foreground)] hover:bg-[var(--color-panel)]"
               >
                 <Calendar className="h-3 w-3" />
-                {t}
+                {template.title}
               </button>
             ))}
           </div>
@@ -325,7 +412,9 @@ export function ServiceBuilderPage() {
                       Item {itemIndex + 1} of {store.activePlan.items.length}
                     </span>
                   )}
-                  <span className="text-[var(--color-muted-foreground)]">Double-click a row to go live</span>
+                  <span className="text-[var(--color-muted-foreground)]">
+                    {liveFollow ? "On air — selecting updates program" : "Double-click a row to go live"}
+                  </span>
                 </div>
               </div>
 
@@ -360,45 +449,11 @@ export function ServiceBuilderPage() {
 
               {selectedItem && (
                 <div className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <Field label="Title">
-                      <input
-                        key={selectedItem.id}
-                        defaultValue={selectedItem.title}
-                        onBlur={(e) => {
-                          if (e.target.value !== selectedItem.title) {
-                            void store.updateItem(selectedItem.id, { title: e.target.value });
-                          }
-                        }}
-                        className="h-8 w-full rounded-md border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 text-xs"
-                      />
-                    </Field>
-                    {selectedItem.item_type === "scripture" && (
-                      <Field label="Reference">
-                        <input
-                          value={scriptureRef}
-                          onChange={(e) => setScriptureRef(e.target.value)}
-                          onBlur={saveScriptureRef}
-                          className="h-8 w-full rounded-md border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 text-xs"
-                        />
-                      </Field>
-                    )}
-                    <Field label="Operator note">
-                      <textarea
-                        key={`${selectedItem.id}-notes`}
-                        defaultValue={selectedItem.operator_notes ?? ""}
-                        onBlur={(e) => {
-                          const value = e.target.value;
-                          if (value !== (selectedItem.operator_notes ?? "")) {
-                            void store.updateItem(selectedItem.id, { operatorNotes: value });
-                          }
-                        }}
-                        rows={2}
-                        className="w-full rounded-md border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 py-1.5 text-xs"
-                        placeholder="Notes visible to operator only..."
-                      />
-                    </Field>
-                  </div>
+                  <ServiceItemEditor
+                    item={selectedItem}
+                    onPickSong={() => setPicker({ mode: "song", replaceItemId: selectedItem.id })}
+                    onPickMedia={(type) => setPicker({ mode: type, replaceItemId: selectedItem.id })}
+                  />
                 </div>
               )}
             </>
@@ -416,15 +471,24 @@ export function ServiceBuilderPage() {
           )}
         </main>
       </div>
-    </div>
-  );
-}
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <p className="section-label mb-1.5">{label}</p>
-      {children}
+      <SongPickerModal
+        open={picker?.mode === "song"}
+        onClose={() => setPicker(null)}
+        onSelect={(song) => void handleSongPick(song)}
+      />
+      <MediaPickerModal
+        open={picker?.mode === "video"}
+        mediaType="video"
+        onClose={() => setPicker(null)}
+        onSelect={(item) => void handleMediaPick(item)}
+      />
+      <MediaPickerModal
+        open={picker?.mode === "image"}
+        mediaType="image"
+        onClose={() => setPicker(null)}
+        onSelect={(item) => void handleMediaPick(item)}
+      />
     </div>
   );
 }

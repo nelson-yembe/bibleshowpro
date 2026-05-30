@@ -1,10 +1,17 @@
 import { create } from "zustand";
 import { previewServiceItem, presentServiceItem } from "@/lib/serviceLive";
+import {
+  defaultContentForType,
+  stringifyServiceItemContent,
+} from "@/lib/serviceItemContent";
+import { getServiceTemplate } from "@/lib/serviceTemplates";
 import { api, type ServiceItem, type ServicePlanDetail, type ServicePlanSummary } from "@/lib/tauri";
 import { usePresentationStore } from "@/stores/presentationStore";
+import { notifyServiceItemAdded } from "@/stores/toastStore";
 import { useThemeStore } from "@/stores/themeStore";
 
 const STORAGE_KEY = "bsp-service-context";
+const DEFAULT_PLAN_TITLE = "Quick service";
 
 interface ServiceContext {
   planId: string | null;
@@ -20,17 +27,19 @@ interface ServiceState {
   initialized: boolean;
   init: () => Promise<void>;
   loadPlans: () => Promise<void>;
+  ensureActivePlan: (title?: string) => Promise<ServicePlanDetail>;
   selectPlan: (id: string) => Promise<void>;
   selectItem: (id: string, options?: { preview?: boolean }) => Promise<void>;
   createPlan: (title: string) => Promise<void>;
+  createPlanFromTemplate: (templateId: string) => Promise<void>;
   duplicatePlan: (id: string) => Promise<void>;
   deletePlan: (id: string) => Promise<void>;
   updatePlanMeta: (args: { title?: string; serviceDate?: string; notes?: string; themeId?: string }) => Promise<void>;
-  addItem: (itemType: string, title: string, contentJson?: string) => Promise<void>;
+  addItem: (itemType: string, title: string, contentJson?: string, options?: { notify?: boolean; select?: boolean }) => Promise<ServiceItem | null>;
   updateItem: (id: string, patch: { title?: string; contentJson?: string; operatorNotes?: string }) => Promise<void>;
   removeItem: (id: string) => Promise<void>;
   reorderItems: (itemIds: string[]) => Promise<void>;
-  importScriptureList: (text: string) => Promise<void>;
+  importScriptureList: (text: string) => Promise<number>;
   previewActiveItem: () => Promise<void>;
   goLiveActiveItem: () => Promise<void>;
   nextItem: () => Promise<void>;
@@ -74,6 +83,11 @@ function resolveItemId(plan: ServicePlanDetail | null, preferredId: string | nul
   return plan.items[0]?.id ?? null;
 }
 
+function itemNumberFor(plan: ServicePlanDetail, itemId: string): number {
+  const index = plan.items.findIndex((item) => item.id === itemId);
+  return index >= 0 ? index + 1 : plan.items.length;
+}
+
 export const useServiceStore = create<ServiceState>((set, get) => ({
   plans: [],
   activePlan: null,
@@ -99,12 +113,31 @@ export const useServiceStore = create<ServiceState>((set, get) => ({
       }
     }
 
+    const plans = get().plans;
+    if (plans.length > 0) {
+      await get().selectPlan(plans[0]!.id);
+    }
+
     set({ initialized: true });
   },
 
   loadPlans: async () => {
     const plans = await api.listServicePlans();
     set({ plans });
+  },
+
+  ensureActivePlan: async (title = DEFAULT_PLAN_TITLE) => {
+    const existing = get().activePlan;
+    if (existing) return existing;
+
+    const plans = get().plans;
+    if (plans.length > 0) {
+      await get().selectPlan(plans[0]!.id);
+      return get().activePlan!;
+    }
+
+    await get().createPlan(title);
+    return get().activePlan!;
   },
 
   selectPlan: async (id) => {
@@ -125,7 +158,12 @@ export const useServiceStore = create<ServiceState>((set, get) => ({
     saveContext(plan.id, id);
     set({ activeItemId: id });
 
-    if (options.preview !== false) {
+    if (options.preview === false) return;
+
+    const liveFollow = usePresentationStore.getState().liveFollow;
+    if (liveFollow) {
+      await presentServiceItem(item, activeTheme());
+    } else {
       await previewServiceItem(item, activeTheme());
     }
   },
@@ -136,6 +174,33 @@ export const useServiceStore = create<ServiceState>((set, get) => ({
     syncPresentationPlanId(activePlan.id);
     saveContext(activePlan.id, null);
     set({ activePlan, activeItemId: null, dirty: false });
+  },
+
+  createPlanFromTemplate: async (templateId) => {
+    const template = getServiceTemplate(templateId);
+    if (!template) return;
+
+    const created = await api.createServicePlan(template.title);
+    for (const templateItem of template.items) {
+      const content = templateItem.content ?? defaultContentForType(templateItem.type);
+      await api.createServiceItem({
+        planId: created.id,
+        itemType: templateItem.type,
+        title: templateItem.title,
+        contentJson: stringifyServiceItemContent(content),
+      });
+    }
+
+    const activePlan = await api.getServicePlan(created.id);
+    const activeItemId = resolveItemId(activePlan, null);
+    await get().loadPlans();
+    syncPresentationPlanId(activePlan.id);
+    saveContext(activePlan.id, activeItemId);
+    set({ activePlan, activeItemId, dirty: false });
+
+    if (activeItemId) {
+      await get().selectItem(activeItemId);
+    }
   },
 
   duplicatePlan: async (id) => {
@@ -163,19 +228,33 @@ export const useServiceStore = create<ServiceState>((set, get) => ({
     set({ activePlan, dirty: false });
   },
 
-  addItem: async (itemType, title, contentJson = "{}") => {
-    const plan = get().activePlan;
-    if (!plan) return;
+  addItem: async (itemType, title, contentJson, options = {}) => {
+    const { notify = true, select = true } = options;
+    const plan = await get().ensureActivePlan();
 
     const created = await api.createServiceItem({
       planId: plan.id,
       itemType,
       title,
-      contentJson,
+      contentJson: contentJson ?? stringifyServiceItemContent(defaultContentForType(itemType)),
     });
+
     await get().selectPlan(plan.id);
-    await get().selectItem(created.id);
+
+    if (select) {
+      await get().selectItem(created.id);
+    }
+
     get().markDirty();
+
+    if (notify) {
+      const refreshed = get().activePlan;
+      if (refreshed) {
+        notifyServiceItemAdded(title, refreshed.title, itemNumberFor(refreshed, created.id));
+      }
+    }
+
+    return created;
   },
 
   updateItem: async (id, patch) => {
@@ -215,13 +294,19 @@ export const useServiceStore = create<ServiceState>((set, get) => ({
   },
 
   importScriptureList: async (text) => {
-    const plan = get().activePlan;
-    if (!plan) return;
+    const plan = await get().ensureActivePlan();
     const items = await api.importScriptureList(plan.id, text);
     await get().selectPlan(plan.id);
     if (items.length > 0) {
       await get().selectItem(items[items.length - 1]!.id);
+      notifyServiceItemAdded(
+        `${items.length} scriptures`,
+        get().activePlan?.title ?? plan.title,
+        itemNumberFor(get().activePlan ?? plan, items[items.length - 1]!.id),
+      );
     }
+    get().markDirty();
+    return items.length;
   },
 
   previewActiveItem: async () => {

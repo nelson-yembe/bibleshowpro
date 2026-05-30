@@ -1,6 +1,6 @@
 import { StagingPreview } from "@/components/presentation/StagingPreview";
 import { cn } from "@/lib/utils";
-import { sessionProgressLabel } from "@/lib/transcription/verseSession";
+import { canStepVerse, sessionProgressLabel } from "@/lib/transcription/verseSession";
 import { usePresentationStore } from "@/stores/presentationStore";
 import { useTranscriptionStore } from "@/stores/transcriptionStore";
 import { useThemeStore } from "@/stores/themeStore";
@@ -12,6 +12,7 @@ import {
   PanelBottom,
   Radio,
   RotateCcw,
+  Zap,
 } from "lucide-react";
 
 const sourceLabels = {
@@ -25,6 +26,7 @@ const sourceLabels = {
 export function ListenPreviewPanel() {
   const preview = usePresentationStore((s) => s.preview);
   const previewSource = usePresentationStore((s) => s.previewSource);
+  const liveFollow = usePresentationStore((s) => s.liveFollow);
 
   const previewLayout = useTranscriptionStore((s) => s.previewLayout);
   const setPreviewLayout = useTranscriptionStore((s) => s.setPreviewLayout);
@@ -34,12 +36,17 @@ export function ListenPreviewPanel() {
   const scanning = useTranscriptionStore((s) => s.scanning);
   const verseSession = useTranscriptionStore((s) => s.verseSession);
   const lastVoiceAction = useTranscriptionStore((s) => s.lastVoiceAction);
-  const previewSuggestion = useTranscriptionStore((s) => s.previewSuggestion);
+  const autoGoLive = useTranscriptionStore((s) => s.autoGoLive);
+  const setAutoGoLive = useTranscriptionStore((s) => s.setAutoGoLive);
   const stepActiveVerse = useTranscriptionStore((s) => s.stepActiveVerse);
+  const goLiveSelectedSuggestion = useTranscriptionStore((s) => s.goLiveSelectedSuggestion);
+  const previewSuggestion = useTranscriptionStore((s) => s.previewSuggestion);
   const clearPreview = usePresentationStore((s) => s.clearPreview);
 
   const activeTheme = useThemeStore((s) => s.activeTheme);
-  const selected = suggestions.find((s) => s.id === selectedSuggestionId) ?? suggestions.find((s) => s.status !== "ignored");
+  const selected =
+    suggestions.find((s) => s.id === selectedSuggestionId) ??
+    suggestions.find((s) => s.status !== "ignored");
 
   const progressLabel = verseSession
     ? sessionProgressLabel(verseSession)
@@ -47,8 +54,9 @@ export function ListenPreviewPanel() {
       ? `${selected.reference} · ${selected.translationAbbr}`
       : null;
 
-  const previewReference =
-    preview?.content.reference ?? preview?.content.title ?? null;
+  const previewReference = preview?.content.reference ?? preview?.content.title ?? null;
+  const isOnAir = liveFollow && previewSource === "transcription";
+  const canGoLive = !autoGoLive && Boolean(verseSession || selected);
 
   const refreshSelectedPreview = async () => {
     if (!selected) return;
@@ -68,6 +76,11 @@ export function ListenPreviewPanel() {
           {previewSource && (
             <span className="rounded-md border border-[var(--color-border-light)] px-2 py-0.5 text-[9px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
               {sourceLabels[previewSource]}
+            </span>
+          )}
+          {isOnAir && (
+            <span className="rounded-md bg-red-500/20 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-red-300">
+              On air
             </span>
           )}
           <div className="flex items-center gap-1 rounded-lg border border-[var(--color-border-light)] p-0.5">
@@ -106,42 +119,78 @@ export function ListenPreviewPanel() {
           scene={preview}
           themeOverride={activeTheme}
           label={
-            preview
-              ? "Ready — click GO LIVE on the right panel"
-              : selected
-                ? `${selected.reference} — loading preview…`
-                : "Preview a detected scripture"
+            autoGoLive
+              ? isOnAir
+                ? "Auto live — new detections go straight to projection"
+                : "Auto live enabled — detections will go live automatically"
+              : preview
+                ? isOnAir
+                  ? "On air — use Previous/Next to step verses in this passage"
+                  : "Staged in preview — click Go live to project"
+                : selected
+                  ? `${selected.reference} — loading preview…`
+                  : "Preview a detected scripture"
           }
           className="h-full min-h-[420px]"
         />
       </div>
 
       <div className="border-t border-[var(--color-border)] px-4 py-3">
-        {verseSession && verseSession.verses.length > 1 && (
+        {verseSession && (
           <div className="mb-3 flex items-center justify-between gap-2 rounded-lg border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 py-1.5">
             <button
               type="button"
-              disabled={verseSession.verseIndex <= 0}
+              disabled={!canStepVerse(verseSession, -1)}
               onClick={() => void stepActiveVerse(-1)}
-              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] text-[var(--color-foreground)] hover:bg-black/20 disabled:opacity-40"
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium text-[var(--color-foreground)] hover:bg-black/20 disabled:opacity-40"
             >
               <ChevronLeft className="h-3.5 w-3.5" />
-              Previous verse
+              Previous
             </button>
-            <p className="text-[10px] text-[var(--color-muted-foreground)]">
-              Verse {verseSession.verseIndex + 1} of {verseSession.verses.length}
+            <p className="text-center text-[10px] text-[var(--color-muted-foreground)]">
+              {sessionProgressLabel(verseSession)}
             </p>
             <button
               type="button"
-              disabled={verseSession.verseIndex >= verseSession.verses.length - 1}
+              disabled={!canStepVerse(verseSession, 1)}
               onClick={() => void stepActiveVerse(1)}
-              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] text-[var(--color-foreground)] hover:bg-black/20 disabled:opacity-40"
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium text-[var(--color-foreground)] hover:bg-black/20 disabled:opacity-40"
             >
-              Next verse
+              Next
               <ChevronRight className="h-3.5 w-3.5" />
             </button>
           </div>
         )}
+
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setAutoGoLive(!autoGoLive)}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[11px] font-semibold transition-colors",
+              autoGoLive
+                ? "border-emerald-500/50 bg-emerald-950/30 text-emerald-300"
+                : "border-[var(--color-border-light)] bg-[var(--color-panel)] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]",
+            )}
+          >
+            <Radio className="h-3.5 w-3.5" />
+            Auto
+          </button>
+          <button
+            type="button"
+            disabled={!canGoLive}
+            onClick={() => void goLiveSelectedSuggestion()}
+            className={cn(
+              "inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[11px] font-semibold transition-colors sm:flex-none",
+              !canGoLive
+                ? "cursor-not-allowed border border-[var(--color-border-light)] bg-[var(--color-panel)] text-[var(--color-subtle)] opacity-60"
+                : "bg-red-600 text-white hover:bg-red-500",
+            )}
+          >
+            <Zap className="h-3.5 w-3.5 fill-current" />
+            Go live
+          </button>
+        </div>
 
         <div className="flex flex-wrap gap-2">
           <button
@@ -168,7 +217,9 @@ export function ListenPreviewPanel() {
 
         <p className="mt-2 flex items-center gap-1.5 text-[10px] text-[var(--color-subtle)]">
           <Radio className="h-3 w-3" />
-          Detected scripture loads here first. Use GO LIVE on the right panel to project. Say “next verse” or “previous verse” to step.
+          {autoGoLive
+            ? "Auto on: detections go live immediately. Previous/Next steps through verses in the same chapter."
+            : "Auto off: detections stay in preview until you click Go live. Then Previous/Next moves verse 15 → 16 → 17 in the same chapter."}
         </p>
       </div>
     </section>

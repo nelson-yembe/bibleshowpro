@@ -9,6 +9,8 @@ import { exportScriptureList, exportTranscriptText } from "@/lib/transcription/r
 import { formatTranscriptProse } from "@/lib/transcription/transcriptFormat";
 import { formatElapsed, TRANSCRIPTION_MODELS, type ConfidenceLevel } from "@/lib/transcription/types";
 import { useTranscriptionStore } from "@/stores/transcriptionStore";
+import { canStepVerse } from "@/lib/transcription/verseSession";
+import { useLiveNavigationStore } from "@/stores/liveNavigationStore";
 import { useBibleStore } from "@/stores/bibleStore";
 import {
   Mic,
@@ -76,6 +78,8 @@ export function LiveListenPage() {
     saveSession,
     discardSession,
     tickElapsed,
+    stepActiveVerse,
+    verseSession,
   } = useTranscriptionStore();
 
   useEffect(() => {
@@ -89,6 +93,18 @@ export function LiveListenPage() {
 
   const model = models.find((m) => m.id === modelId) ?? models[0];
   const activeSuggestions = suggestions.filter((s) => s.status !== "ignored");
+
+  useEffect(() => {
+    useLiveNavigationStore.getState().register({
+      onPrev: () => void stepActiveVerse(-1),
+      onNext: () => void stepActiveVerse(1),
+      canPrev: verseSession ? canStepVerse(verseSession, -1) : false,
+      canNext: verseSession ? canStepVerse(verseSession, 1) : false,
+      label: "Live listen · verse step",
+    });
+    return () => useLiveNavigationStore.getState().unregister();
+  }, [stepActiveVerse, verseSession]);
+
   const transcriptProse = useMemo(
     () => formatTranscriptProse(segments, partialText),
     [segments, partialText],
@@ -250,8 +266,9 @@ export function LiveListenPage() {
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
               {!transcriptProse && !isListening && (
                 <p className="text-[12px] leading-relaxed text-[var(--color-subtle)]">
-                  Transcript appears here as continuous sentences. Scripture references are detected automatically — try
-                  saying “Romans 8 28” or “John chapter 3 verse 16”.
+                  Transcript appears here as continuous sentences. Say a reference like “Romans 8 28”, or read the
+                  verse aloud — e.g. “The Lord is my shepherd, I shall not want” — and the system will match it to
+                  Psalm 23.
                 </p>
               )}
               {filteredProse ? (
@@ -307,7 +324,7 @@ export function LiveListenPage() {
             <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-[var(--color-muted-foreground)]">
               <label className="flex items-center gap-1.5">
                 <input type="checkbox" checked={paraphraseEnabled} onChange={(e) => setParaphraseEnabled(e.target.checked)} />
-                Paraphrase matching
+                Extra quote matching
               </label>
             </div>
             <label className="mt-2 block">
@@ -371,7 +388,7 @@ export function LiveListenPage() {
                   <MicOff className="mb-2 h-8 w-8 opacity-40" />
                   <p className="text-sm">No scripture detected yet</p>
                   <p className="mt-1 max-w-xs text-[11px]">
-                    Say a reference like “Romans 8 28”, use manual lookup, or press Rescan in the preview panel.
+                    Say a reference, read verse text aloud, use manual lookup, or press Rescan in the preview panel.
                   </p>
                 </div>
               ) : (

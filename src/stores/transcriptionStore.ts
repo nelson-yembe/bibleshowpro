@@ -7,12 +7,14 @@ import {
 } from "@/lib/transcription/referenceDetect";
 import {
   previewDetectedScripture,
+  presentDetectedScripture,
   presentVerseSession,
   reloadVerseSessionTranslation,
+  shouldPresentVerseToProgram,
 } from "@/lib/transcriptionLive";
-import { isTranscriptionOnAir } from "@/lib/transcription/transcriptionLiveFollow";
 import {
   createVerseSessionFromSuggestion,
+  createExpandedVerseSessionFromSuggestion,
   stepVerseSession,
   type ActiveVerseSession,
   sessionProgressLabel,
@@ -47,6 +49,7 @@ interface PersistedPreferences {
   suggestionsMuted: boolean;
   previewLayout: "fullscreen" | "lower_third";
   minConfidence: ConfidenceLevel;
+  autoGoLive: boolean;
 }
 
 interface TranscriptionState {
@@ -70,6 +73,7 @@ interface TranscriptionState {
   suggestionsMuted: boolean;
   previewLayout: "fullscreen" | "lower_third";
   minConfidence: ConfidenceLevel;
+  autoGoLive: boolean;
   lastScanAt: string | null;
   scanning: boolean;
   error: string | null;
@@ -84,8 +88,10 @@ interface TranscriptionState {
   setSuggestionsMuted: (muted: boolean) => void;
   setPreviewLayout: (layout: "fullscreen" | "lower_third") => void;
   setMinConfidence: (level: ConfidenceLevel) => void;
+  setAutoGoLive: (enabled: boolean) => void;
   setSelectedSuggestion: (id: string | null) => void;
   previewSuggestion: (suggestion: ScriptureSuggestion) => Promise<void>;
+  goLiveSelectedSuggestion: () => Promise<void>;
   stepActiveVerse: (delta: number) => Promise<boolean>;
   switchActiveTranslation: (translationId: string) => Promise<boolean>;
   startListening: () => Promise<void>;
@@ -120,6 +126,7 @@ function loadPersistedPreferences(): PersistedPreferences | null {
       suggestionsMuted: parsed.suggestionsMuted ?? false,
       previewLayout: parsed.previewLayout ?? "fullscreen",
       minConfidence: parsed.minConfidence ?? "low",
+      autoGoLive: parsed.autoGoLive ?? false,
     };
   } catch {
     return null;
@@ -134,6 +141,7 @@ function persistPreferences(state: Pick<
   | "suggestionsMuted"
   | "previewLayout"
   | "minConfidence"
+  | "autoGoLive"
 >) {
   const payload: PersistedPreferences = {
     modelId: state.modelId,
@@ -142,6 +150,7 @@ function persistPreferences(state: Pick<
     suggestionsMuted: state.suggestionsMuted,
     previewLayout: state.previewLayout,
     minConfidence: state.minConfidence,
+    autoGoLive: state.autoGoLive,
   };
   localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
 }
@@ -203,6 +212,36 @@ function passesConfidenceFilter(level: ConfidenceLevel, min: ConfidenceLevel): b
   return order.indexOf(level) >= order.indexOf(min);
 }
 
+function activeSuggestions(state: TranscriptionState): ScriptureSuggestion[] {
+  return state.suggestions.filter((s) => s.status !== "ignored");
+}
+
+async function applySuggestionOutput(
+  suggestion: ScriptureSuggestion,
+  get: () => TranscriptionState,
+  set: (partial: Partial<TranscriptionState> | ((s: TranscriptionState) => Partial<TranscriptionState>)) => void,
+) {
+  const state = get();
+  if (state.autoGoLive) {
+    const session = await presentDetectedScripture(suggestion, state.previewLayout);
+    set({
+      verseSession: session,
+      selectedSuggestionId: suggestion.id,
+      lastVoiceAction: `Auto live — ${suggestion.reference}`,
+    });
+    get().markSuggestionStatus(suggestion.id, "live");
+    return;
+  }
+
+  const session = await previewDetectedScripture(suggestion, state.previewLayout);
+  set({
+    verseSession: session,
+    selectedSuggestionId: suggestion.id,
+    lastVoiceAction: null,
+  });
+  get().markSuggestionStatus(suggestion.id, "preview");
+}
+
 async function mergeDetections(
   detected: Omit<ScriptureSuggestion, "id" | "segmentId" | "status" | "createdAt">[],
   segmentId: string | undefined,
@@ -240,10 +279,7 @@ async function mergeDetections(
         suggestions: s.suggestions.map((item) => (item.id === existing.id ? refreshed : item)),
         selectedSuggestionId: existing.id,
       }));
-      const onAir = isTranscriptionOnAir();
-      const session = await previewDetectedScripture(refreshed, state.previewLayout);
-      set({ verseSession: session, lastVoiceAction: null });
-      get().markSuggestionStatus(existing.id, onAir ? "live" : "preview");
+      await applySuggestionOutput(refreshed, get, set);
       return;
     }
   }
@@ -266,10 +302,7 @@ async function mergeDetections(
 
   const top = newSuggestions.find((s) => s.detectionType === "explicit") ?? newSuggestions[0];
   if (top) {
-    const onAir = isTranscriptionOnAir();
-    const session = await previewDetectedScripture(top, state.previewLayout);
-    set({ verseSession: session, lastVoiceAction: null });
-    get().markSuggestionStatus(top.id, onAir ? "live" : "preview");
+    await applySuggestionOutput(top, get, set);
   }
 }
 
@@ -312,7 +345,7 @@ async function processVoiceCommands(
       return true;
     }
     set({ verseSession: next, lastVoiceAction: sessionProgressLabel(next) });
-    await presentVerseSession(next, state.previewLayout, isTranscriptionOnAir());
+    await presentVerseSession(next, state.previewLayout, shouldPresentVerseToProgram(get().autoGoLive));
     return true;
   }
 
@@ -330,7 +363,7 @@ async function processVoiceCommands(
           verseSession: updated,
           lastVoiceAction: `Switched to ${cmd.translation.abbreviation} · ${sessionProgressLabel(updated)}`,
         });
-        await presentVerseSession(updated, state.previewLayout, isTranscriptionOnAir());
+        await presentVerseSession(updated, state.previewLayout, shouldPresentVerseToProgram(get().autoGoLive));
       } else {
         set({ lastVoiceAction: `Could not load ${cmd.translation.abbreviation} for this passage.` });
       }
@@ -439,6 +472,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
   suggestionsMuted: false,
   previewLayout: "fullscreen",
   minConfidence: "low",
+  autoGoLive: false,
   lastScanAt: null,
   scanning: false,
   error: null,
@@ -516,13 +550,38 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
     set({ minConfidence: level });
     persistPreferences(get());
   },
+  setAutoGoLive: (enabled) => {
+    set({ autoGoLive: enabled });
+    persistPreferences(get());
+  },
   setSelectedSuggestion: (id) => set({ selectedSuggestionId: id }),
 
   previewSuggestion: async (suggestion) => {
-    const onAir = isTranscriptionOnAir();
-    const session = await previewDetectedScripture(suggestion, get().previewLayout);
-    set({ verseSession: session, selectedSuggestionId: suggestion.id, lastVoiceAction: null });
-    get().markSuggestionStatus(suggestion.id, onAir ? "live" : "preview");
+    await applySuggestionOutput(suggestion, get, set);
+  },
+
+  goLiveSelectedSuggestion: async () => {
+    const state = get();
+    const suggestion =
+      state.suggestions.find((s) => s.id === state.selectedSuggestionId && s.status !== "ignored") ??
+      activeSuggestions(state)[0];
+
+    let session = state.verseSession;
+    if (!session && suggestion) {
+      session = await createExpandedVerseSessionFromSuggestion(suggestion);
+    }
+    if (!session) return;
+
+    await presentVerseSession(session, state.previewLayout, false);
+    await usePresentationStore.getState().goLive();
+    set({
+      verseSession: session,
+      selectedSuggestionId: suggestion?.id ?? state.selectedSuggestionId,
+      lastVoiceAction: `Live — ${sessionProgressLabel(session)}`,
+    });
+    if (suggestion) {
+      get().markSuggestionStatus(suggestion.id, "live");
+    }
   },
 
   stepActiveVerse: async (delta) => {
@@ -531,7 +590,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
     const next = stepVerseSession(session, delta);
     if (!next) return false;
     set({ verseSession: next, lastVoiceAction: sessionProgressLabel(next) });
-    await presentVerseSession(next, get().previewLayout, isTranscriptionOnAir());
+    await presentVerseSession(next, get().previewLayout, shouldPresentVerseToProgram(get().autoGoLive));
     return true;
   },
 
@@ -542,7 +601,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
     const updated = await reloadVerseSessionTranslation(session, translationId);
     if (!updated) return false;
     set({ verseSession: updated, lastVoiceAction: sessionProgressLabel(updated) });
-    await presentVerseSession(updated, get().previewLayout, isTranscriptionOnAir());
+    await presentVerseSession(updated, get().previewLayout, shouldPresentVerseToProgram(get().autoGoLive));
     return true;
   },
 

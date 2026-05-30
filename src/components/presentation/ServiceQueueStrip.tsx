@@ -36,13 +36,13 @@ export function ServiceQueueStrip() {
             title={item.title}
             onClick={() => void selectItem(item.id)}
             className={cn(
-              "rounded-md px-2 py-1 text-[10px] font-medium",
+              "max-w-[120px] truncate rounded-md px-2 py-1 text-[10px] font-medium",
               activeItemId === item.id
                 ? "bg-blue-950/50 text-blue-300 ring-1 ring-blue-800/50"
                 : "bg-[var(--color-panel)] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]",
             )}
           >
-            {String(index + 1).padStart(2, "0")}
+            {String(index + 1).padStart(2, "0")} · {item.title}
           </button>
         ))}
         {activePlan.items.length === 0 && (
