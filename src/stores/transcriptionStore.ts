@@ -22,6 +22,11 @@ import {
 import { parseVoiceCommands, isLikelyVoiceCommand } from "@/lib/transcription/voiceCommands";
 import { preprocessTranscriptForDetection } from "@/lib/transcription/transcriptPreprocess";
 import {
+  audioInputLabel,
+  preflightAudioInput,
+} from "@/lib/transcription/audioInput";
+import { AudioLevelMonitor } from "@/lib/transcription/audioLevelMonitor";
+import {
   ensureMicrophoneAccess,
   listAudioInputDevices,
   pickValidAudioDeviceId,
@@ -41,6 +46,7 @@ import { usePresentationStore } from "@/stores/presentationStore";
 
 const SESSION_STORAGE_KEY = "bsp-transcription-session";
 const PARTIAL_SCAN_MS = 700;
+const NO_SIGNAL_WARN_MS = 12_000;
 
 interface PersistedPreferences {
   modelId: string;
@@ -67,8 +73,11 @@ interface TranscriptionState {
   modelId: string;
   audioDevices: MediaDeviceInfo[];
   audioDeviceId: string | null;
+  audioDeviceLabel: string | null;
   audioLevel: number;
   audioWarning: string | null;
+  preflightStatus: "idle" | "checking" | "ready" | "failed";
+  preflightMessage: string | null;
   paraphraseEnabled: boolean;
   suggestionsMuted: boolean;
   previewLayout: "fullscreen" | "lower_third";
@@ -82,6 +91,7 @@ interface TranscriptionState {
 
   init: () => Promise<void>;
   refreshAudioDevices: (requestPermission?: boolean) => Promise<void>;
+  preflightAudio: (options?: { strict?: boolean }) => Promise<boolean>;
   setModelId: (id: string) => void;
   setAudioDeviceId: (id: string | null) => void;
   setParaphraseEnabled: (enabled: boolean) => void;
@@ -96,7 +106,7 @@ interface TranscriptionState {
   switchActiveTranslation: (translationId: string) => Promise<boolean>;
   startListening: () => Promise<void>;
   pauseListening: () => void;
-  resumeListening: () => void;
+  resumeListening: () => Promise<void>;
   stopListening: () => void;
   rescanTranscript: () => Promise<void>;
   lookupManualReference: (reference: string) => Promise<void>;
@@ -109,9 +119,59 @@ interface TranscriptionState {
 }
 
 let engine: WebSpeechTranscriptionEngine | null = null;
+let levelMonitor: AudioLevelMonitor | null = null;
 let segmentCounter = 0;
 let partialScanTimer: number | undefined;
+let noSignalTimer: number | undefined;
 let lastReportedAudioLevel = 0;
+let sessionPeakAudioLevel = 0;
+
+async function stopLevelMonitor() {
+  window.clearTimeout(noSignalTimer);
+  noSignalTimer = undefined;
+  if (levelMonitor) {
+    await levelMonitor.stop();
+    levelMonitor = null;
+  }
+}
+
+async function startLevelMonitor(
+  deviceId: string | null,
+  set: (partial: Partial<TranscriptionState>) => void,
+  get: () => TranscriptionState,
+) {
+  await stopLevelMonitor();
+  if (!levelMonitor) levelMonitor = new AudioLevelMonitor();
+
+  sessionPeakAudioLevel = 0;
+  lastReportedAudioLevel = 0;
+
+  await levelMonitor.start(
+    deviceId,
+    (level) => {
+      sessionPeakAudioLevel = Math.max(sessionPeakAudioLevel, level);
+      const levelChanged = Math.abs(level - lastReportedAudioLevel) >= 0.015;
+      if (!levelChanged) return;
+      lastReportedAudioLevel = level;
+      set({ audioLevel: level });
+    },
+    (warning) => {
+      set({ audioWarning: warning });
+    },
+  );
+
+  window.clearTimeout(noSignalTimer);
+  noSignalTimer = window.setTimeout(() => {
+    const state = get();
+    if (state.status !== "listening" && state.status !== "processing" && state.status !== "reconnecting") return;
+    if (state.segments.length > 0 || state.partialText.trim()) return;
+    if (sessionPeakAudioLevel >= 0.02) return;
+    set({
+      audioWarning:
+        "Still no audio on the selected input — verify Windows Sound → Input, speak into the mic, or set this device as the default recording device.",
+    });
+  }, NO_SIGNAL_WARN_MS);
+}
 
 function loadPersistedPreferences(): PersistedPreferences | null {
   try {
@@ -466,8 +526,11 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
   modelId: TRANSCRIPTION_MODELS[0]?.id ?? "web-speech",
   audioDevices: [],
   audioDeviceId: null,
+  audioDeviceLabel: null,
   audioLevel: 0,
   audioWarning: null,
+  preflightStatus: "idle",
+  preflightMessage: null,
   paraphraseEnabled: false,
   suggestionsMuted: false,
   previewLayout: "fullscreen",
@@ -492,16 +555,20 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
       Boolean(existing.sessionId);
 
     await get().refreshAudioDevices(false);
+    const devices = get().audioDevices;
     const bible = useBibleStore.getState();
     if (!bible.selectedTranslationId) {
       await bible.loadTranslations();
     }
     const prefs = loadPersistedPreferences();
+    const resolvedDeviceId = pickValidAudioDeviceId(devices, prefs?.audioDeviceId ?? get().audioDeviceId);
     set({
       ...(preserveSession ? {} : resetWorkspaceState()),
       status: preserveSession ? existing.status : "idle",
       speechSupported,
       ...(prefs ?? {}),
+      audioDeviceId: resolvedDeviceId,
+      audioDeviceLabel: audioInputLabel(devices, resolvedDeviceId),
     });
     if (!speechSupported) {
       set({
@@ -515,17 +582,81 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
 
   refreshAudioDevices: async (requestPermission = true) => {
     try {
+      const preferredId = get().audioDeviceId;
       if (requestPermission) {
-        await ensureMicrophoneAccess();
+        await ensureMicrophoneAccess(preferredId);
       }
       const devices = await listAudioInputDevices();
-      const audioDeviceId = pickValidAudioDeviceId(devices, get().audioDeviceId);
-      set({ audioDevices: devices, audioDeviceId, audioWarning: null });
+      const audioDeviceId = pickValidAudioDeviceId(devices, preferredId);
+      set({
+        audioDevices: devices,
+        audioDeviceId,
+        audioDeviceLabel: audioInputLabel(devices, audioDeviceId),
+        audioWarning: null,
+      });
     } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Microphone access unavailable.";
       set({
         audioDevices: [],
-        audioWarning: err instanceof Error ? err.message : "Microphone access unavailable.",
+        audioDeviceLabel: null,
+        audioWarning: message,
       });
+    }
+  },
+
+  preflightAudio: async (options) => {
+    set({ preflightStatus: "checking", preflightMessage: null, error: null });
+    try {
+      await get().refreshAudioDevices(true);
+      const state = get();
+      const result = await preflightAudioInput(state.audioDeviceId, state.audioDevices);
+
+      set({
+        audioDeviceId: result.deviceId,
+        audioDeviceLabel: result.deviceLabel,
+        audioLevel: result.peakLevel,
+      });
+      persistPreferences(get());
+
+      if (result.error) {
+        const blocking = options?.strict !== false && !result.ok;
+        set({
+          preflightStatus: "failed",
+          preflightMessage: result.error.message,
+          audioWarning: result.error.code === "no_signal" ? result.error.message : get().audioWarning,
+          ...(blocking ? { error: result.error.message } : {}),
+        });
+        return !blocking && result.ok;
+      }
+
+      const hints: string[] = [];
+      if (result.clipping) {
+        hints.push("Input level is very hot — lower gain to avoid clipping.");
+      }
+      if (result.webSpeechUsesOsDefault) {
+        hints.push(
+          "If transcription stays silent while this meter moves, set the same device as Windows default input (Settings → Sound → Input).",
+        );
+      }
+
+      set({
+        preflightStatus: "ready",
+        preflightMessage: result.hasSignal
+          ? `Input OK on “${result.deviceLabel}”.`
+          : `Opened “${result.deviceLabel}” — speak during the test to confirm signal.`,
+        audioWarning: result.clipping ? hints[0] ?? null : null,
+        error: null,
+      });
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Microphone preflight failed.";
+      set({
+        preflightStatus: "failed",
+        preflightMessage: message,
+        error: message,
+      });
+      return false;
     }
   },
 
@@ -534,7 +665,13 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
     persistPreferences(get());
   },
   setAudioDeviceId: (id) => {
-    set({ audioDeviceId: id });
+    const devices = get().audioDevices;
+    set({
+      audioDeviceId: id,
+      audioDeviceLabel: audioInputLabel(devices, id),
+      preflightStatus: "idle",
+      preflightMessage: null,
+    });
     persistPreferences(get());
   },
   setParaphraseEnabled: (enabled) => {
@@ -633,19 +770,22 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
       return;
     }
 
-    try {
-      await ensureMicrophoneAccess();
-      const devices = await listAudioInputDevices();
-      const audioDeviceId = pickValidAudioDeviceId(devices, state.audioDeviceId);
-      set({ audioDevices: devices, audioDeviceId });
-      persistPreferences(get());
-    } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : "Could not access microphone.",
-        status: "unavailable",
-      });
-      return;
+    const preflightOk = await get().preflightAudio({ strict: false });
+    const afterPreflight = get();
+    if (!preflightOk && afterPreflight.preflightStatus === "failed") {
+      const preflightError = afterPreflight.preflightMessage;
+      const permissionBlocked =
+        preflightError?.includes("permission") || preflightError?.includes("denied");
+      if (permissionBlocked || afterPreflight.audioDevices.length === 0) {
+        set({
+          error: preflightError ?? "Could not access microphone.",
+          status: "unavailable",
+        });
+        return;
+      }
     }
+
+    const audioDeviceId = afterPreflight.audioDeviceId;
 
     clearReferenceDedupeCache();
 
@@ -657,6 +797,12 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
     const sessionId = freshSession ? crypto.randomUUID() : (get().sessionId ?? crypto.randomUUID());
     const startedAt = freshSession ? Date.now() : (get().startedAt ?? Date.now());
     lastReportedAudioLevel = 0;
+    sessionPeakAudioLevel = 0;
+
+    const noSignalHint =
+      get().preflightStatus === "failed" && get().preflightMessage?.includes("No audio detected")
+        ? get().preflightMessage
+        : null;
 
     set({
       status: "listening",
@@ -667,12 +813,24 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
         : "Listening — install a Bible translation in Settings to enable scripture detection.",
       partialText: "",
       speechSupported: true,
+      audioWarning: noSignalHint,
+      audioDeviceLabel: afterPreflight.audioDeviceLabel,
     });
 
-    engine.start(
+    try {
+      await startLevelMonitor(audioDeviceId, set, get);
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : "Could not open the selected microphone.",
+        status: "unavailable",
+      });
+      return;
+    }
+
+    await engine.start(
       {
         onPartial: (text) => {
-          set({ partialText: text });
+          set({ partialText: text, audioWarning: null });
           const cleaned = preprocessTranscriptForDetection(text);
           if (isLikelyVoiceCommand(cleaned)) {
             void processVoiceCommands(cleaned, get, set);
@@ -693,6 +851,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
             partialText: "",
             segments: [...s.segments, segment],
             status: "processing",
+            audioWarning: null,
           }));
 
           if (resolveTranslationId()) {
@@ -709,32 +868,37 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
           else if (status === "unavailable") set({ status: "unavailable" });
         },
         onError: (message) => set({ error: message, status: "unavailable" }),
-        onAudioActivity: (level) => {
-          const levelChanged = Math.abs(level - lastReportedAudioLevel) >= 0.02;
-          if (!levelChanged) return;
-          lastReportedAudioLevel = level;
-          set({ audioLevel: level });
-        },
       },
       { modelId: state.modelId },
+      audioDeviceId,
     );
   },
 
   pauseListening: () => {
     engine?.pause();
     window.clearTimeout(partialScanTimer);
-    set({ status: "paused", partialText: "" });
+    void stopLevelMonitor();
+    set({ status: "paused", partialText: "", audioLevel: 0 });
   },
 
-  resumeListening: () => {
+  resumeListening: async () => {
     engine?.resume();
     set({ status: "listening" });
+    try {
+      await startLevelMonitor(get().audioDeviceId, set, get);
+    } catch (err) {
+      set({
+        audioWarning: err instanceof Error ? err.message : "Could not reopen microphone for level monitoring.",
+      });
+    }
   },
 
   stopListening: () => {
     engine?.stop();
     window.clearTimeout(partialScanTimer);
+    void stopLevelMonitor();
     lastReportedAudioLevel = 0;
+    sessionPeakAudioLevel = 0;
     set({ status: "stopped", partialText: "", audioLevel: 0, audioWarning: null });
   },
 
@@ -837,8 +1001,15 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
 
   discardSession: () => {
     engine?.stop();
+    void stopLevelMonitor();
     get().resetListeningWorkspace();
-    set({ status: "idle", audioLevel: 0, audioWarning: null });
+    set({
+      status: "idle",
+      audioLevel: 0,
+      audioWarning: null,
+      preflightStatus: "idle",
+      preflightMessage: null,
+    });
   },
 
   ignoreSuggestion: (id) => {

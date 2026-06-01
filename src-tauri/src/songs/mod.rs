@@ -123,6 +123,8 @@ pub struct CreateSongInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SectionInput {
+    #[serde(default)]
+    pub id: Option<String>,
     pub section_type: String,
     pub label: String,
     pub lyrics: String,
@@ -260,8 +262,14 @@ pub fn get_song(conn: &Connection, id: &str) -> Result<SongDetail, String> {
     detail.copyright = load_copyright(conn, id)?;
 
     let has_lyrics = detail.sections.iter().any(|s| !s.lyrics.trim().is_empty());
+    let order = arrangement_section_ids(conn, id, &detail)?;
+    let current = section_ids_by_sort_order(&detail.sections);
+    if order != current {
+        sync_section_sort_orders(conn, id, &order)?;
+        detail.sections = load_sections(conn, id)?;
+    }
+
     if detail.slides.is_empty() && has_lyrics {
-        let order = arrangement_section_ids(conn, id, &detail)?;
         rebuild_slides(conn, id, &order, 4)?;
         detail.slides = load_slides(conn, id)?;
     }
@@ -509,18 +517,20 @@ pub fn update_song(conn: &Connection, input: &UpdateSongInput) -> Result<SongDet
         conn.execute("DELETE FROM song_sections WHERE song_id = ?1", params![input.id])
             .map_err(|e| e.to_string())?;
         let new_ids = insert_sections(conn, &input.id, sections)?;
-        section_order = Some(new_ids.clone());
 
-        let remapped_order = if let Some(arr_order) = &input.arrangement_section_ids {
-            remap_arrangement_order(arr_order, &old_id_to_sort, sections, &new_ids)
-        } else {
-            new_ids.clone()
-        };
+        let resolved_order = resolve_arrangement_order(
+            input.arrangement_section_ids.as_deref(),
+            &old_id_to_sort,
+            sections,
+            &new_ids,
+        );
 
-        update_default_arrangement(conn, &input.id, &remapped_order, input.arrangement_name.as_deref())?;
-        section_order = Some(remapped_order);
+        update_default_arrangement(conn, &input.id, &resolved_order, input.arrangement_name.as_deref())?;
+        sync_section_sort_orders(conn, &input.id, &resolved_order)?;
+        section_order = Some(resolved_order);
     } else if let Some(order) = &input.arrangement_section_ids {
         update_default_arrangement(conn, &input.id, order, input.arrangement_name.as_deref())?;
+        sync_section_sort_orders(conn, &input.id, order)?;
         section_order = Some(order.clone());
     }
 
@@ -570,6 +580,7 @@ pub fn duplicate_song(conn: &Connection, id: &str) -> Result<SongDetail, String>
             .sections
             .iter()
             .map(|s| SectionInput {
+                id: None,
                 section_type: s.section_type.clone(),
                 label: s.label.clone(),
                 lyrics: s.lyrics.clone(),
@@ -620,45 +631,114 @@ pub fn export_songs_library(conn: &Connection) -> Result<String, String> {
     serde_json::to_string_pretty(&songs).map_err(|e| e.to_string())
 }
 
+fn sync_section_sort_orders(conn: &Connection, song_id: &str, section_order: &[String]) -> Result<(), String> {
+    for (index, section_id) in section_order.iter().enumerate() {
+        conn.execute(
+            "UPDATE song_sections SET sort_order = ?1 WHERE id = ?2 AND song_id = ?3",
+            params![index as i32, section_id, song_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn section_ids_by_sort_order(sections: &[SongSection]) -> Vec<String> {
+    let mut sorted = sections.to_vec();
+    sorted.sort_by_key(|s| s.sort_order);
+    sorted.into_iter().map(|s| s.id).collect()
+}
+
 fn arrangement_section_ids(_conn: &Connection, _song_id: &str, detail: &SongDetail) -> Result<Vec<String>, String> {
-    if let Some(arr) = detail.arrangements.iter().find(|a| a.is_default) {
+    let mut order = if let Some(arr) = detail.arrangements.iter().find(|a| a.is_default) {
         let parsed: Vec<String> = serde_json::from_str(&arr.section_order_json).unwrap_or_default();
         let valid: Vec<String> = parsed
             .into_iter()
             .filter(|id| detail.sections.iter().any(|s| s.id == *id))
             .collect();
-        if !valid.is_empty() {
-            return Ok(valid);
+        if valid.is_empty() {
+            section_ids_by_sort_order(&detail.sections)
+        } else {
+            valid
+        }
+    } else {
+        section_ids_by_sort_order(&detail.sections)
+    };
+
+    let mut sorted_sections = detail.sections.clone();
+    sorted_sections.sort_by_key(|s| s.sort_order);
+    for section in sorted_sections.iter().filter(|s| !s.lyrics.trim().is_empty()) {
+        if !order.iter().any(|id| id == &section.id) {
+            order.push(section.id.clone());
         }
     }
-    Ok(detail.sections.iter().map(|s| s.id.clone()).collect())
+
+    Ok(order)
 }
 
-fn remap_arrangement_order(
-    arr_order: &[String],
+fn resolve_arrangement_order(
+    arr_order: Option<&[String]>,
     old_id_to_sort: &std::collections::HashMap<String, i32>,
     sections: &[SectionInput],
     new_ids: &[String],
 ) -> Vec<String> {
-    let remapped: Vec<String> = arr_order
+    let Some(arr_order) = arr_order else {
+        return new_ids.to_vec();
+    };
+
+    let input_id_to_new: std::collections::HashMap<String, String> = sections
         .iter()
-        .filter_map(|old_id| {
-            let sort = *old_id_to_sort.get(old_id)?;
-            let idx = sections.iter().position(|s| s.sort_order == sort)?;
-            new_ids.get(idx).cloned()
+        .zip(new_ids.iter())
+        .filter_map(|(section, new_id)| {
+            section
+                .id
+                .as_ref()
+                .filter(|id| !id.is_empty())
+                .map(|id| (id.clone(), new_id.clone()))
         })
         .collect();
-    if remapped.is_empty() {
+
+    let mut order = Vec::new();
+    let mut used = std::collections::HashSet::new();
+
+    for arr_id in arr_order {
+        if let Some(new_id) = input_id_to_new.get(arr_id) {
+            if used.insert(new_id.clone()) {
+                order.push(new_id.clone());
+            }
+            continue;
+        }
+        if let Some(sort) = old_id_to_sort.get(arr_id) {
+            if let Some(idx) = sections.iter().position(|s| s.sort_order == *sort) {
+                if let Some(new_id) = new_ids.get(idx) {
+                    if used.insert(new_id.clone()) {
+                        order.push(new_id.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    for new_id in new_ids {
+        if used.insert(new_id.clone()) {
+            order.push(new_id.clone());
+        }
+    }
+
+    if order.is_empty() {
         new_ids.to_vec()
     } else {
-        remapped
+        order
     }
 }
 
 fn insert_sections(conn: &Connection, song_id: &str, sections: &[SectionInput]) -> Result<Vec<String>, String> {
     let mut ids = Vec::new();
     for section in sections {
-        let id = Uuid::new_v4().to_string();
+        let id = section
+            .id
+            .clone()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
         conn.execute(
             "INSERT INTO song_sections (id, song_id, section_type, label, lyrics, sort_order, lines_per_slide)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -815,6 +895,7 @@ pub fn parse_sections_from_text(raw: &str) -> Vec<SectionInput> {
             return;
         }
         sections.push(SectionInput {
+            id: None,
             section_type: section_type.to_string(),
             label: if label.is_empty() { format!("Section {}", *sort + 1) } else { label.to_string() },
             lyrics: lines.join("\n"),
@@ -856,6 +937,7 @@ pub fn parse_sections_from_text(raw: &str) -> Vec<SectionInput> {
 
     if sections.is_empty() && !raw.trim().is_empty() {
         sections.push(SectionInput {
+            id: None,
             section_type: "verse".to_string(),
             label: "Verse 1".to_string(),
             lyrics: raw.trim().to_string(),
@@ -886,5 +968,71 @@ fn detect_section_type(header: &str) -> String {
         "intro".to_string()
     } else {
         "verse".to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_sections_from_text_preserves_upload_order() {
+        let raw = "[Intro]\nintro line\n\n[Chorus 1]\nchorus line\n\n[Verse 1]\nverse line\n";
+        let sections = parse_sections_from_text(raw);
+        assert_eq!(sections.len(), 3);
+        assert_eq!(sections[0].label, "Intro");
+        assert_eq!(sections[0].sort_order, 0);
+        assert_eq!(sections[1].label, "Chorus 1");
+        assert_eq!(sections[1].sort_order, 1);
+        assert_eq!(sections[2].label, "Verse 1");
+        assert_eq!(sections[2].sort_order, 2);
+    }
+
+    #[test]
+    fn resolve_arrangement_order_keeps_client_added_sections() {
+        let old_id_to_sort = std::collections::HashMap::from([
+            ("verse-db-id".to_string(), 0),
+            ("chorus-db-id".to_string(), 1),
+        ]);
+        let intro_id = "intro-client-id".to_string();
+        let sections = vec![
+            SectionInput {
+                id: Some("verse-db-id".to_string()),
+                section_type: "verse".to_string(),
+                label: "Verse 1".to_string(),
+                lyrics: "line".to_string(),
+                sort_order: 0,
+                lines_per_slide: None,
+            },
+            SectionInput {
+                id: Some("chorus-db-id".to_string()),
+                section_type: "chorus".to_string(),
+                label: "Chorus".to_string(),
+                lyrics: "hook".to_string(),
+                sort_order: 1,
+                lines_per_slide: None,
+            },
+            SectionInput {
+                id: Some(intro_id.clone()),
+                section_type: "intro".to_string(),
+                label: "Intro".to_string(),
+                lyrics: "intro".to_string(),
+                sort_order: 2,
+                lines_per_slide: None,
+            },
+        ];
+        let new_ids = vec![
+            "verse-db-id".to_string(),
+            "chorus-db-id".to_string(),
+            intro_id.clone(),
+        ];
+        let arr_order = vec![
+            intro_id.clone(),
+            "verse-db-id".to_string(),
+            "chorus-db-id".to_string(),
+        ];
+
+        let resolved = resolve_arrangement_order(Some(&arr_order), &old_id_to_sort, &sections, &new_ids);
+        assert_eq!(resolved, arr_order);
     }
 }

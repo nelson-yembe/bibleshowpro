@@ -1,5 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import type { LowerThirdStyle } from "@/lib/themeConfig";
+import type { LowerThirdBarDimensions } from "@/lib/lowerThird";
+import { lowerThirdBarDimensions, lowerThirdContentLayout } from "@/lib/lowerThird";
 import { WorshipGoldBorder } from "@/components/presentation/WorshipLowerThirdDecor";
 import { cn } from "@/lib/utils";
 
@@ -11,6 +13,7 @@ interface WorshipLowerThirdBarProps {
   transparentOnOutput?: boolean;
   referenceNode?: ReactNode;
   referencePlacement?: LowerThirdStyle["referencePlacement"];
+  barBox?: LowerThirdBarDimensions;
   children: ReactNode;
 }
 
@@ -22,27 +25,18 @@ export function WorshipLowerThirdBar({
   transparentOnOutput,
   referenceNode,
   referencePlacement,
+  barBox,
   children,
 }: WorshipLowerThirdBarProps) {
-  const scale = compact ? (compactVariant === "stage" ? 0.55 : 0.45) : 1;
-  const vhScale = compact ? (compactVariant === "stage" ? 0.38 : 0.28) : 1;
   const borderPx = compact ? Math.max(lt.accentWidth * 0.5, 2) : lt.accentWidth;
   const gold = lt.accentGoldColor;
+  const dimensions = barBox ?? lowerThirdBarDimensions(lt, { compact, compactVariant });
+  const contentLayout = lowerThirdContentLayout(lt);
 
-  const heightStyle: CSSProperties =
-    lt.barHeightPercent > 0
-      ? {
-          height: `${lt.barHeightPercent * vhScale}vh`,
-          minHeight: `${lt.barHeightPercent * vhScale}vh`,
-        }
-      : {
-          minHeight: compact ? Math.max(lt.barHeight * scale, 48) : Math.max(lt.barHeight, 80),
-        };
-
-  const gradientBg =
-    lt.barOpacity > 0.01 && !transparentOnOutput
-      ? `linear-gradient(${lt.barGradient.angle}deg, ${lt.barGradient.from}, ${lt.barGradient.to})`
-      : "transparent";
+  const showBarFill = lt.barOpacity > 0.01;
+  const gradientBg = showBarFill
+    ? `linear-gradient(${lt.barGradient.angle}deg, ${lt.barGradient.from}, ${lt.barGradient.to})`
+    : "transparent";
 
   const sidePad = compact ? lt.paddingX * 0.35 : lt.paddingX;
 
@@ -53,7 +47,7 @@ export function WorshipLowerThirdBar({
         animationClass,
         transparentOnOutput && compact && "outline outline-1 outline-dashed outline-emerald-500/40",
       )}
-      style={heightStyle}
+      style={dimensions.boxStyle}
     >
       <div
         className="absolute inset-0"
@@ -63,19 +57,21 @@ export function WorshipLowerThirdBar({
         }}
       />
 
-      <div
-        className="absolute inset-0"
-        style={{
-          background:
-            "radial-gradient(ellipse 80% 120% at 50% 50%, transparent 40%, rgba(0,0,0,0.25) 100%)",
-        }}
-      />
+      {showBarFill && (
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(ellipse 80% 120% at 50% 50%, transparent 40%, rgba(0,0,0,0.25) 100%)",
+          }}
+        />
+      )}
 
       {lt.showAccent && <WorshipGoldBorder position="top" thickness={borderPx} gold={gold} />}
       {lt.showBottomAccent && <WorshipGoldBorder position="bottom" thickness={borderPx} gold={gold} />}
 
       <div
-        className="relative z-[4] flex h-full flex-col items-center justify-center"
+        className="relative z-[4] flex h-full min-h-0 flex-col items-center justify-center overflow-hidden"
         style={{
           paddingLeft: sidePad,
           paddingRight: sidePad,
@@ -84,22 +80,39 @@ export function WorshipLowerThirdBar({
         }}
       >
         {referenceNode && referencePlacement === "above" && (
-          <div className="mb-2 shrink-0">{referenceNode}</div>
+          <div className={cn("mb-2 shrink-0", contentLayout.className)} style={contentLayout.style}>
+            {referenceNode}
+          </div>
         )}
 
-        <div className="flex min-h-0 w-full flex-1 items-center justify-center">{children}</div>
+        <div
+          className={cn(
+            "flex min-h-0 items-center justify-center overflow-hidden",
+            contentLayout.className,
+          )}
+          style={{ ...contentLayout.style, flex: "1 1 0" }}
+        >
+          {children}
+        </div>
 
         {referenceNode && referencePlacement === "below" && (
-          <div className="mt-2 shrink-0">{referenceNode}</div>
+          <div className={cn("mt-2 shrink-0", contentLayout.className)} style={contentLayout.style}>
+            {referenceNode}
+          </div>
         )}
       </div>
     </div>
   );
 }
 
-export function worshipTextStyle(lt: LowerThirdStyle, themeTextColor: string, baseStyle: CSSProperties): CSSProperties {
+export function worshipTextStyle(
+  lt: LowerThirdStyle,
+  themeTextColor: string,
+  baseStyle: CSSProperties,
+  autoFit = false,
+): CSSProperties {
   const family = lt.fontFamily?.trim() || undefined;
-  return {
+  const style: CSSProperties = {
     ...baseStyle,
     color: themeTextColor,
     fontFamily: family,
@@ -110,9 +123,16 @@ export function worshipTextStyle(lt: LowerThirdStyle, themeTextColor: string, ba
       ? "0 2px 8px rgba(0,0,0,0.85), 0 1px 3px rgba(0,0,0,0.9)"
       : baseStyle.textShadow,
     whiteSpace: "pre-line",
-    display: "block",
-    WebkitLineClamp: undefined,
-    WebkitBoxOrient: undefined,
-    overflow: "visible",
+    overflow: "hidden",
   };
+
+  if (!autoFit && lt.maxLines > 0) {
+    style.display = "-webkit-box";
+    style.WebkitLineClamp = lt.maxLines;
+    style.WebkitBoxOrient = "vertical";
+  } else {
+    style.display = "block";
+  }
+
+  return style;
 }

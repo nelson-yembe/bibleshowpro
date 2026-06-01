@@ -53,8 +53,11 @@ export function LiveListenPage() {
     models,
     audioDevices,
     audioDeviceId,
+    audioDeviceLabel,
     audioLevel,
     audioWarning,
+    preflightStatus,
+    preflightMessage,
     paraphraseEnabled,
     minConfidence,
     lastScanAt,
@@ -64,6 +67,7 @@ export function LiveListenPage() {
     saving,
     init,
     refreshAudioDevices,
+    preflightAudio,
     setModelId,
     setAudioDeviceId,
     setParaphraseEnabled,
@@ -118,11 +122,14 @@ export function LiveListenPage() {
 
   const handleStart = () => {
     if (status === "paused") {
-      resumeListening();
+      void resumeListening();
       return;
     }
     void startListening();
   };
+
+  const activeInputLabel = audioDeviceLabel ?? "System default microphone";
+  const isPreflightChecking = preflightStatus === "checking";
 
   const handleSave = async () => {
     const id = await saveSession(saveTitle);
@@ -232,7 +239,12 @@ export function LiveListenPage() {
 
         <SuggestionsMuteToggle />
         <div className="ml-auto flex items-center gap-2">
-          <div className="hidden h-2 w-24 overflow-hidden rounded-full bg-black/40 sm:block">
+          <div className="hidden min-w-0 sm:block">
+            <p className="truncate text-[10px] text-[var(--color-subtle)]" title={activeInputLabel}>
+              Input: {activeInputLabel}
+            </p>
+          </div>
+          <div className="hidden h-2 w-24 overflow-hidden rounded-full bg-black/40 sm:block" title="Input level">
             <div
               className={cn(
                 "h-full transition-all duration-75",
@@ -287,14 +299,14 @@ export function LiveListenPage() {
             <h2 className="section-label mb-2">Detection settings</h2>
             <div className="grid grid-cols-2 gap-2">
               <label className="block">
-                <span className="mb-1 block text-[10px] uppercase tracking-wide text-[var(--color-subtle)]">Audio</span>
+                <span className="mb-1 block text-[10px] uppercase tracking-wide text-[var(--color-subtle)]">Audio input</span>
                 <select
                   value={audioDeviceId ?? ""}
                   onChange={(e) => setAudioDeviceId(e.target.value || null)}
-                  disabled={isListening}
+                  disabled={isListening || isPreflightChecking}
                   className="h-8 w-full rounded-md border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 text-[11px]"
                 >
-                  {audioDevices.length === 0 && <option value="">Default mic</option>}
+                  {audioDevices.length === 0 && <option value="">No microphone found</option>}
                   {audioDevices.map((d) => (
                     <option key={d.deviceId} value={d.deviceId}>
                       {d.label || `Mic ${d.deviceId.slice(0, 6)}`}
@@ -319,8 +331,40 @@ export function LiveListenPage() {
               </label>
             </div>
             <p className="mt-1 text-[10px] text-[var(--color-subtle)]">
-              Live transcription uses your system default microphone. Use Refresh mics after plugging in hardware.
+              Level meter and preflight use the selected input. If transcription stays silent while the meter moves,
+              set the same device as Windows default input (Settings → Sound → Input).
             </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={isListening || isPreflightChecking}
+                onClick={() => void preflightAudio({ strict: true })}
+                className="control-btn text-[10px]"
+              >
+                {isPreflightChecking ? "Testing mic…" : "Test selected mic"}
+              </button>
+              <button
+                type="button"
+                disabled={isListening || isPreflightChecking}
+                onClick={() => void refreshAudioDevices(true)}
+                className="control-btn text-[10px]"
+              >
+                Refresh mics
+              </button>
+            </div>
+            {preflightMessage && (
+              <p
+                className={cn(
+                  "mt-2 text-[10px]",
+                  preflightStatus === "ready" ? "text-emerald-400" : preflightStatus === "failed" ? "text-amber-300" : "text-[var(--color-subtle)]",
+                )}
+              >
+                {preflightMessage}
+              </p>
+            )}
+            {audioWarning && (
+              <p className="mt-2 text-[10px] text-amber-400">{audioWarning}</p>
+            )}
             <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-[var(--color-muted-foreground)]">
               <label className="flex items-center gap-1.5">
                 <input type="checkbox" checked={paraphraseEnabled} onChange={(e) => setParaphraseEnabled(e.target.checked)} />
@@ -339,9 +383,6 @@ export function LiveListenPage() {
                 <option value="high">High only</option>
               </select>
             </label>
-            {audioWarning === "Input clipping — lower gain." && (
-              <p className="mt-2 text-[10px] text-amber-400">{audioWarning}</p>
-            )}
             <p className="mt-2 inline-flex items-center gap-1 text-[10px] text-[var(--color-subtle)]">
               {model?.requiresInternet ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
               {model?.requiresInternet ? "Internet required" : "Local preferred"}
@@ -411,9 +452,6 @@ export function LiveListenPage() {
               </button>
               <button type="button" onClick={exportReferences} className="control-btn text-[11px]">
                 Export scriptures
-              </button>
-              <button type="button" onClick={() => void refreshAudioDevices(true)} className="control-btn text-[11px]">
-                Refresh mics
               </button>
               <button type="button" disabled={scanning} onClick={() => void rescanTranscript()} className="control-btn text-[11px]">
                 Rescan all

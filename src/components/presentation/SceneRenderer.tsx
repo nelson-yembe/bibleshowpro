@@ -26,7 +26,12 @@ import {
 import { ScriptureFrame } from "@/components/presentation/scriptureLayout";
 import {
   applyBarColorOpacity,
+  clipTextToMaxLines,
+  estimateLowerThirdMaxLines,
+  isTransparentLowerThirdOutput,
   lowerThirdAnimationClass,
+  lowerThirdBarDimensions,
+  lowerThirdContentLayout,
   lowerThirdMaxFontSize,
 } from "@/lib/lowerThird";
 import { mediaUrl } from "@/lib/mediaUrl";
@@ -227,20 +232,34 @@ export function SceneRenderer({
   const isScriptureFullscreen =
     scene.type === "scripture_fullscreen" || scene.type === "scripture_comparison";
 
+  const transparentLtOutput = isTransparentLowerThirdOutput(scene, themeOverride, compact);
+  const mediaUnderlay =
+    transparentLtOutput &&
+    ((theme.backgroundType === "video" && theme.backgroundVideo) ||
+      (theme.backgroundType === "image" && theme.backgroundImage));
+
+  const rootStyle: CSSProperties = transparentLtOutput
+    ? { backgroundColor: mediaUnderlay ? theme.backgroundColor : "transparent" }
+    : { ...bgStyle };
+
   return (
     <div
       className={cn("relative h-full overflow-hidden", className)}
       style={{
-        ...bgStyle,
+        ...rootStyle,
         color: theme.textColor,
         fontFamily: theme.fontFamily,
-        padding: compact ? 16 : isScriptureFullscreen ? 0 : theme.padding,
+        padding: compact ? 16 : isScriptureFullscreen && !isLowerThird ? 0 : isLowerThird ? 0 : theme.padding,
       }}
     >
-      {(theme.backgroundType === "image" || theme.backgroundType === "video") && theme.backgroundOverlay > 0 && (
-        <div className="absolute inset-0 z-[1]" style={{ backgroundColor: `rgba(0,0,0,${theme.backgroundOverlay})` }} />
+      {mediaUnderlay && theme.backgroundType === "image" && theme.backgroundImage && (
+        <img
+          src={theme.backgroundImage}
+          alt=""
+          className="absolute inset-0 z-0 h-full w-full object-cover"
+        />
       )}
-      {theme.backgroundVideo && theme.backgroundType === "video" && (
+      {mediaUnderlay && theme.backgroundVideo && theme.backgroundType === "video" && (
         <video
           className="absolute inset-0 z-0 h-full w-full object-cover"
           src={theme.backgroundVideo}
@@ -251,7 +270,28 @@ export function SceneRenderer({
         />
       )}
 
-      {!hideVectorLayers && (
+      {!transparentLtOutput && (theme.backgroundType === "image" || theme.backgroundType === "video") && theme.backgroundOverlay > 0 && (
+        <div className="absolute inset-0 z-[1]" style={{ backgroundColor: `rgba(0,0,0,${theme.backgroundOverlay})` }} />
+      )}
+      {!transparentLtOutput && theme.backgroundType === "image" && theme.backgroundImage && (
+        <img
+          src={theme.backgroundImage}
+          alt=""
+          className="absolute inset-0 z-0 h-full w-full object-cover"
+        />
+      )}
+      {!transparentLtOutput && theme.backgroundType === "video" && theme.backgroundVideo && (
+        <video
+          className="absolute inset-0 z-0 h-full w-full object-cover"
+          src={theme.backgroundVideo}
+          autoPlay
+          loop
+          muted
+          playsInline
+        />
+      )}
+
+      {!transparentLtOutput && !hideVectorLayers && (
         <VectorOverlay
           design={theme.vectorDesign}
           layer="background"
@@ -311,6 +351,7 @@ export function SceneRenderer({
               maxFitSize={maxFitSize}
               minFitSize={minFitSize}
               showTitle={scene.type === "announcement"}
+              verticalAlign={theme.verticalAlign}
             />
           ) : (
             <ContentBlock
@@ -432,7 +473,7 @@ function ComparisonLayout({
 
   return (
     <div className="relative z-10 flex h-full min-h-0 w-full flex-col">
-      <ScriptureFrame className="flex-1">
+      <ScriptureFrame className="flex-1" sizePercent={theme.maxContentWidth}>
         <div className={cn("flex h-full min-h-0 w-full flex-col gap-1", alignClass)}>
           {headerRef}
           <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">{stackedVerses}</div>
@@ -517,7 +558,7 @@ function ContentBlock({
           {scene.content.title}
         </p>
       )}
-      <ScriptureFrame align={frameAlign} className="min-h-0 flex-1">
+      <ScriptureFrame align={frameAlign} className="min-h-0 flex-1" sizePercent={theme.maxContentWidth}>
         <div className={cn("flex h-full min-h-0 w-full flex-col gap-1", alignClass)}>
           {hasHeaderRef && (
             <ReferenceLine
@@ -579,7 +620,7 @@ function LowerThirdLayout({
 }) {
   const lt = theme.lowerThird;
   const scale = compact ? (compactVariant === "stage" ? 0.55 : 0.45) : 1;
-  const barHeight = compact ? Math.max(lt.barHeight * scale, 14) : lt.barHeight;
+  const barBox = lowerThirdBarDimensions(lt, { compact, compactVariant });
   const refText = scene.content.reference
     ? formatReference(scene.content.reference, theme.referenceStyle)
     : undefined;
@@ -589,11 +630,31 @@ function LowerThirdLayout({
         ? ` · ${scene.content.translationAbbr} / ${comparisonAbbr}`
         : ` · ${scene.content.translationAbbr}`
       : "";
-  const bodyContent = renderBody(body, opts.highlightPhrase, opts.highlightColor);
-  const secondaryContent = comparisonBody
-    ? renderBody(comparisonBody, opts.highlightPhrase, opts.highlightColor)
+  const dual = !!comparisonBody;
+
+  const showInlineRef = refText && opts.showReference && lt.referencePlacement === "inline";
+  const showAboveRef = refText && opts.showReference && lt.referencePlacement === "above";
+  const showBelowRef = refText && opts.showReference && lt.referencePlacement === "below";
+  const showBadgeRef = refText && opts.showReference && lt.referencePlacement === "badge";
+  const referenceLineCount = showAboveRef || showBelowRef ? 1 : 0;
+
+  const lineHeight = lt.template === "worship" ? 1.65 : theme.lineHeight;
+  const effectiveMaxLines = estimateLowerThirdMaxLines(lt, barBox, {
+    compact,
+    compactVariant,
+    minFontSize: minFitSize,
+    lineHeight,
+    referenceLines: referenceLineCount,
+  });
+  const primaryMaxLines = dual ? Math.max(1, Math.ceil(effectiveMaxLines * 0.55)) : effectiveMaxLines;
+  const secondaryMaxLines = dual ? Math.max(1, effectiveMaxLines - primaryMaxLines) : 0;
+  const displayBody = clipTextToMaxLines(body, primaryMaxLines);
+  const displayComparisonBody = comparisonBody ? clipTextToMaxLines(comparisonBody, secondaryMaxLines) : null;
+
+  const bodyContent = renderBody(displayBody, opts.highlightPhrase, opts.highlightColor);
+  const secondaryContent = displayComparisonBody
+    ? renderBody(displayComparisonBody, opts.highlightPhrase, opts.highlightColor)
     : null;
-  const dual = !!secondaryContent;
 
   const hAlignClass =
     lt.horizontalAlign === "left"
@@ -605,9 +666,10 @@ function LowerThirdLayout({
   const safeH = compact ? Math.min(lt.safeMarginPercent, 3) : lt.safeMarginPercent;
   const bottomPad = compact ? lt.bottomOffsetPercent * 0.6 : lt.bottomOffsetPercent;
   const widthPct = lt.widthPercent;
+  const contentLayout = lowerThirdContentLayout(lt);
 
   const transparentOnOutput = lt.transparentOutput && !compact;
-  const showBarFill = !transparentOnOutput && lt.barOpacity > 0.01;
+  const showBarFill = lt.barOpacity > 0.01;
   const barBackground = showBarFill ? applyBarColorOpacity(lt.barColor, lt.barOpacity) : "transparent";
 
   const outlineStyle: CSSProperties | undefined = lt.textOutline
@@ -616,24 +678,30 @@ function LowerThirdLayout({
       ? { textShadow: `0 2px 12px ${theme.shadowColor}` }
       : undefined;
 
+  const useAutoFit = opts.autoFit;
   const textBlockStyle: CSSProperties = {
     ...textStyle,
     ...outlineStyle,
-    WebkitLineClamp: lt.maxLines,
-    display: lt.maxLines > 0 ? "-webkit-box" : undefined,
-    WebkitBoxOrient: lt.maxLines > 0 ? "vertical" : undefined,
-    overflow: lt.maxLines > 0 ? "hidden" : undefined,
+    overflow: "hidden",
+    whiteSpace: "pre-line",
   };
 
+  if (!useAutoFit && lt.maxLines > 0) {
+    textBlockStyle.WebkitLineClamp = lt.maxLines;
+    textBlockStyle.display = "-webkit-box";
+    textBlockStyle.WebkitBoxOrient = "vertical";
+  }
+
   const finalTextStyle =
-    lt.template === "worship" ? worshipTextStyle(lt, theme.textColor, textBlockStyle) : textBlockStyle;
+    lt.template === "worship"
+      ? worshipTextStyle(lt, theme.textColor, textBlockStyle, useAutoFit)
+      : textBlockStyle;
 
   const accentPx = compact ? Math.max(lt.accentWidth * 0.6, 2) : lt.accentWidth;
   const accentStyle: CSSProperties = { backgroundColor: theme.accentColor };
 
-  const templateBarStyle: CSSProperties = {
+  const barSurfaceStyle: CSSProperties = {
     backgroundColor: barBackground,
-    minHeight: dual ? barHeight * 1.55 : barHeight,
     paddingLeft: compact ? lt.paddingX * 0.45 : lt.paddingX,
     paddingRight: compact ? lt.paddingX * 0.45 : lt.paddingX,
     paddingTop: compact ? lt.paddingY * 0.5 : lt.paddingY,
@@ -643,24 +711,24 @@ function LowerThirdLayout({
   };
 
   if (lt.template === "line-only") {
-    templateBarStyle.borderBottom = lt.showAccent
+    barSurfaceStyle.borderBottom = lt.showAccent
       ? `${accentPx}px solid ${theme.accentColor}`
       : "1px solid rgba(255,255,255,0.2)";
-    templateBarStyle.backgroundColor = showBarFill ? barBackground : "transparent";
+    barSurfaceStyle.backgroundColor = showBarFill ? barBackground : "transparent";
   } else if (lt.template === "glass") {
-    templateBarStyle.border = "1px solid rgba(255,255,255,0.12)";
-    templateBarStyle.borderRadius = compact ? 4 : 8;
+    barSurfaceStyle.border = "1px solid rgba(255,255,255,0.12)";
+    barSurfaceStyle.borderRadius = compact ? 4 : 8;
   } else if (lt.template === "minimal") {
-    templateBarStyle.borderRadius = compact ? 2 : 4;
+    barSurfaceStyle.borderRadius = compact ? 2 : 4;
   } else if (lt.template === "broadcast") {
-    templateBarStyle.borderRadius = compact ? 2 : 6;
+    barSurfaceStyle.borderRadius = compact ? 2 : 6;
   }
 
   if (lt.showAccent && lt.template !== "line-only") {
     if (lt.accentPosition === "top") {
-      templateBarStyle.borderTop = `${accentPx}px solid ${theme.accentColor}`;
+      barSurfaceStyle.borderTop = `${accentPx}px solid ${theme.accentColor}`;
     } else if (lt.accentPosition === "bottom") {
-      templateBarStyle.borderBottom = `${accentPx}px solid ${theme.accentColor}`;
+      barSurfaceStyle.borderBottom = `${accentPx}px solid ${theme.accentColor}`;
     }
   }
 
@@ -699,33 +767,40 @@ function LowerThirdLayout({
       )
     ) : null;
 
-  const bodyNode = opts.autoFit ? (
+  const bodyNode = useAutoFit ? (
     <AutoFitText
       block={dual}
       blockClassName={dual && lt.dualStack === "horizontal" ? "gap-4 md:flex-row" : "gap-3"}
       enabled
       maxFontSize={maxFitSize}
       minFontSize={minFitSize}
-      className={cn(emphasisClass, contentAlign)}
+      maxLines={primaryMaxLines}
+      className={cn(emphasisClass, contentAlign, scriptureTextClass)}
       style={finalTextStyle}
-      containerClassName="h-full w-full min-h-0"
+      containerClassName="h-full w-full min-h-0 max-h-full"
     >
-      <p className={cn("m-0", emphasisClass, contentAlign)}>{bodyContent}</p>
+      <p className={cn(scriptureTextClass, "m-0", emphasisClass, contentAlign)}>{bodyContent}</p>
       {dual && secondaryContent && (
         <div
           className={cn(
             lt.dualStack === "horizontal" ? "min-w-0 flex-1 border-l border-white/10 pl-4" : "border-t border-white/10 pt-3",
           )}
         >
-          <p className={cn("m-0 italic opacity-90", contentAlign)}>{secondaryContent}</p>
+          <p className={cn(scriptureTextClass, "m-0 italic opacity-90", contentAlign)}>{secondaryContent}</p>
         </div>
       )}
     </AutoFitText>
   ) : (
-    <div className={cn("flex min-h-0 flex-col", dual && lt.dualStack === "horizontal" ? "flex-row gap-4" : "gap-3", contentAlign)}>
+    <div className={cn("flex min-h-0 flex-col overflow-hidden", dual && lt.dualStack === "horizontal" ? "flex-row gap-4" : "gap-3", contentAlign)}>
       <p
         className={cn(scriptureTextClass, emphasisClass, contentAlign, "m-0")}
-        style={{ ...finalTextStyle, fontSize: compact ? Math.min(lt.textSize * scale, 14) : lt.textSize }}
+        style={{
+          ...finalTextStyle,
+          fontSize: compact ? Math.min(lt.textSize * scale, 14) : lt.textSize,
+          WebkitLineClamp: primaryMaxLines,
+          display: "-webkit-box",
+          WebkitBoxOrient: "vertical",
+        }}
       >
         {bodyContent}
       </p>
@@ -741,11 +816,6 @@ function LowerThirdLayout({
       )}
     </div>
   );
-
-  const showInlineRef = referenceNode && lt.referencePlacement === "inline";
-  const showAboveRef = referenceNode && lt.referencePlacement === "above";
-  const showBelowRef = referenceNode && lt.referencePlacement === "below";
-  const showBadgeRef = referenceNode && lt.referencePlacement === "badge";
 
   if (lt.template === "worship") {
     const worshipRefNode =
@@ -781,8 +851,9 @@ function LowerThirdLayout({
             transparentOnOutput={transparentOnOutput}
             referenceNode={worshipRefNode}
             referencePlacement={lt.referencePlacement}
+            barBox={barBox}
           >
-            <div className="w-full max-w-[920px] text-center">{bodyNode}</div>
+            {bodyNode}
           </WorshipLowerThirdBar>
         </div>
       </div>
@@ -801,45 +872,55 @@ function LowerThirdLayout({
       <div
         key={`${scene.id}-${scene.content.reference ?? ""}`}
         className={cn(
-          "flex w-full min-w-0",
+          "flex w-full min-w-0 overflow-hidden",
           lt.template === "broadcast" && lt.showAccent && lt.accentPosition === "left" ? "flex-row" : "flex-col",
           animationClass,
           transparentOnOutput && compact && "outline outline-1 outline-dashed outline-emerald-500/40",
         )}
-        style={{ width: `${widthPct}%`, maxWidth: "100%" }}
+        style={{ width: `${widthPct}%`, maxWidth: "100%", ...barBox.boxStyle }}
       >
         {lt.template === "broadcast" && lt.showAccent && lt.accentPosition === "left" && (
           <div className="shrink-0 self-stretch" style={{ ...accentStyle, width: accentPx * 2 }} />
         )}
 
-        <div className="flex min-w-0 flex-1 flex-col">
-          {showAboveRef && <div className="mb-1.5">{referenceNode}</div>}
+        <div
+          className="flex min-h-0 min-w-0 flex-1 flex-col items-center overflow-hidden"
+          style={barSurfaceStyle}
+        >
+          {showAboveRef && (
+            <div className={cn("mb-1 shrink-0", contentLayout.className)} style={contentLayout.style}>
+              {referenceNode}
+            </div>
+          )}
 
           <div
             className={cn(
-              "flex min-w-0 flex-1 items-stretch gap-3",
+              "flex min-h-0 min-w-0 flex-1 items-stretch gap-3 overflow-hidden",
+              contentLayout.className,
               showInlineRef || showBadgeRef ? "flex-row" : "flex-col",
             )}
-            style={templateBarStyle}
+            style={contentLayout.style}
           >
             {showBadgeRef && <div className="flex shrink-0 items-center self-stretch">{referenceNode}</div>}
 
             <div
               className={cn(
-                "flex min-h-0 min-w-0 flex-1 flex-col justify-center",
+                "flex min-h-0 min-w-0 flex-1 flex-col justify-center overflow-hidden",
                 showInlineRef ? "flex-row items-center gap-4" : "",
               )}
-              style={{
-                minHeight: Math.max(barHeight - 4, 20),
-                maxHeight: dual ? undefined : barHeight + lt.paddingY * 2,
-              }}
             >
-              <div className={cn("min-h-0 min-w-0 flex-1", showInlineRef ? "order-1" : "")}>{bodyNode}</div>
+              <div className={cn("min-h-0 min-w-0 flex-1 overflow-hidden", showInlineRef ? "order-1" : "")}>
+                {bodyNode}
+              </div>
               {showInlineRef && <div className="order-2 shrink-0 self-center">{referenceNode}</div>}
             </div>
           </div>
 
-          {showBelowRef && <div className="mt-1.5">{referenceNode}</div>}
+          {showBelowRef && (
+            <div className={cn("mt-1 shrink-0", contentLayout.className)} style={contentLayout.style}>
+              {referenceNode}
+            </div>
+          )}
         </div>
       </div>
     </div>

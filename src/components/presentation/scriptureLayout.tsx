@@ -15,19 +15,29 @@ interface ScriptureFrameProps {
   children: ReactNode;
   className?: string;
   align?: "center" | "start" | "end";
+  /** Content box size as % of slide (theme maxContentWidth). */
+  sizePercent?: number;
 }
 
-/** Centers scripture content in an 85% × 85% box so text wraps and auto-fits within fixed bounds. */
-export function ScriptureFrame({ children, className, align = "center" }: ScriptureFrameProps) {
+/** Centers scripture content in a bounded box so text wraps and auto-fits. */
+export function ScriptureFrame({
+  children,
+  className,
+  align = "center",
+  sizePercent = SCRIPTURE_FRAME_PERCENT,
+}: ScriptureFrameProps) {
   const alignClass =
     align === "start" ? "items-start" : align === "end" ? "items-end" : "items-center";
+  const boxStyle: CSSProperties = {
+    width: `${sizePercent}%`,
+    height: `${sizePercent}%`,
+    maxWidth: `${sizePercent}%`,
+    maxHeight: `${sizePercent}%`,
+  };
 
   return (
     <div className={cn("flex h-full min-h-0 w-full flex-1 justify-center", alignClass, className)}>
-      <div
-        className="flex min-h-0 min-w-0 flex-col overflow-hidden"
-        style={scriptureFrameStyle}
-      >
+      <div className="flex min-h-0 min-w-0 flex-col overflow-hidden" style={boxStyle}>
         {children}
       </div>
     </div>

@@ -58,6 +58,23 @@ pub fn replay_stored_program(app: &AppHandle) {
     }
 }
 
+fn schedule_output_visibility_retries(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        for delay_ms in [150_u64, 450, 1000] {
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            let Some(window) = app.get_webview_window("output") else {
+                break;
+            };
+            if let Ok(monitor) = display::pick_output_monitor(&app) {
+                if let Err(error) = display::place_output_on_monitor(&window, &monitor) {
+                    eprintln!("[output] visibility retry failed: {error}");
+                }
+            }
+        }
+    });
+}
+
 pub async fn ensure_output_window(app: AppHandle) -> Result<DisplayInfo, String> {
     let monitor = display::pick_output_monitor(&app)?;
     let primary = app.primary_monitor().map_err(|e| e.to_string())?;
@@ -68,6 +85,7 @@ pub async fn ensure_output_window(app: AppHandle) -> Result<DisplayInfo, String>
         let _ = app.emit("output-opened", &display);
         crate::keep_awake::set_output_active(true);
         replay_stored_program(&app);
+        schedule_output_visibility_retries(&app);
         return Ok(display);
     }
 
@@ -77,6 +95,7 @@ pub async fn ensure_output_window(app: AppHandle) -> Result<DisplayInfo, String>
     let window = WebviewWindowBuilder::new(&app, "output", WebviewUrl::App("output.html".into()))
         .title("Bible Show Pro — Output")
         .decorations(false)
+        .transparent(true)
         .resizable(false)
         .position(position.x as f64, position.y as f64)
         .inner_size(size.width as f64, size.height as f64)
@@ -104,6 +123,8 @@ pub async fn ensure_output_window(app: AppHandle) -> Result<DisplayInfo, String>
             replay_stored_program(&replay_app);
         }
     });
+
+    schedule_output_visibility_retries(&app);
 
     Ok(display)
 }

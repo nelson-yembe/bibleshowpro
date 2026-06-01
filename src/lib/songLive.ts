@@ -2,8 +2,7 @@ import type { LyricSlide, SongDetail, SongThemeSettings } from "@/lib/songTypes"
 import { copyrightLine, parseSongTheme } from "@/lib/songTypes";
 import type { ThemeConfig } from "@/lib/tauri";
 import { mergeThemeConfig } from "@/lib/themeConfig";
-import type { LowerThirdOverrides } from "@/lib/lowerThird";
-import { mergeLowerThirdTheme } from "@/lib/lowerThird";
+import { buildLowerThirdTheme } from "@/lib/lowerThird";
 import { broadcastProgramReliable } from "@/engine/broadcast";
 import { persistSnapshot } from "@/engine/previewProgram";
 import { sceneFromServiceItem, type Scene } from "@/engine/scene";
@@ -20,19 +19,12 @@ export function isSongLowerThirdMode(settings: SongThemeSettings): boolean {
 export function buildSongProjectionTheme(
   baseTheme: ThemeConfig | undefined,
   songTheme: SongThemeSettings,
-  lowerThirdOverrides?: LowerThirdOverrides,
 ): ThemeConfig {
   let theme = mergeThemeConfig(baseTheme);
   const isLowerThird = isSongLowerThirdMode(songTheme);
 
   if (isLowerThird) {
-    theme = mergeLowerThirdTheme(theme, {
-      enabled: true,
-      ...(songTheme.mode === "clean"
-        ? { transparentOutput: true, barOpacity: 0, textOutline: true }
-        : {}),
-      ...lowerThirdOverrides,
-    });
+    theme = buildLowerThirdTheme(theme);
     theme = {
       ...theme,
       textColor: songTheme.textColor ?? theme.textColor,
@@ -67,12 +59,11 @@ export function sceneFromLyricSlide(
   song: SongDetail,
   theme?: ThemeConfig,
   songTheme?: SongThemeSettings,
-  lowerThirdOverrides?: LowerThirdOverrides,
 ): Scene {
   const settings = songTheme ?? parseSongTheme(song.theme_json);
   const copyright = copyrightLine(song.copyright);
   const isLowerThird = isSongLowerThirdMode(settings);
-  const mergedTheme = buildSongProjectionTheme(theme, settings, lowerThirdOverrides);
+  const mergedTheme = buildSongProjectionTheme(theme, settings);
   const sectionLabel = slide.section_label ?? "Lyrics";
 
   return {
@@ -141,9 +132,8 @@ export async function previewSongSlide(
   song: SongDetail,
   theme?: ThemeConfig,
   songTheme?: SongThemeSettings,
-  lowerThirdOverrides?: LowerThirdOverrides,
 ) {
-  const scene = sceneFromLyricSlide(slide, song, theme, songTheme, lowerThirdOverrides);
+  const scene = sceneFromLyricSlide(slide, song, theme, songTheme);
   commitSongScene(scene, false);
 }
 
@@ -152,9 +142,8 @@ export async function takeSongSlideLive(
   song: SongDetail,
   theme?: ThemeConfig,
   songTheme?: SongThemeSettings,
-  lowerThirdOverrides?: LowerThirdOverrides,
 ) {
-  const scene = sceneFromLyricSlide(slide, song, theme, songTheme, lowerThirdOverrides);
+  const scene = sceneFromLyricSlide(slide, song, theme, songTheme);
   const state = usePresentationStore.getState();
 
   if (isPresentationOnAir(state)) {

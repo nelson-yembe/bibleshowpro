@@ -4,19 +4,22 @@ import {
   defaultSongTheme,
   parseSongTheme,
   buildSlidesFromSong,
+  arrangementSectionIds,
+  syncSongSectionOrder,
   type LyricSlide,
   type SongDetail,
   type SongSection,
   type SongSummary,
   type SongThemeSettings,
 } from "@/lib/songTypes";
+import { estimateLowerThirdMaxLines, lowerThirdBarDimensions, LOWER_THIRD_LAYOUT_DEFAULTS } from "@/lib/lowerThird";
 import {
   previewSongSlide,
   takeSongSlideLive,
   buildSongProjectionTheme,
   serviceItemContentFromSong,
+  isSongLowerThirdMode,
 } from "@/lib/songLive";
-import type { LowerThirdOverrides } from "@/lib/lowerThird";
 import { api } from "@/lib/tauri";
 import { useLiveNavigationStore } from "@/stores/liveNavigationStore";
 import { useServiceStore } from "@/stores/serviceStore";
@@ -36,9 +39,6 @@ interface SongState {
   dirty: boolean;
   importWarning: string | null;
   linesPerSlide: number;
-  lowerThirdOverrides?: LowerThirdOverrides;
-  showLowerThirdSafeMargins: boolean;
-  lowerThirdChromaPreview: boolean;
   loadSongs: () => Promise<void>;
   selectSong: (id: string) => Promise<void>;
   setSearch: (q: string) => void;
@@ -68,7 +68,6 @@ interface SongState {
   removeSection: (id: string) => void;
   markDirty: () => void;
   setProjectionMode: (mode: "fullscreen" | "lower_third") => void;
-  setLowerThirdOverrides: (patch: Record<string, unknown>) => void;
   projectionTheme: () => import("@/lib/tauri").ThemeConfig;
   warnings: () => string[];
   effectiveSlides: () => LyricSlide[];
@@ -91,9 +90,30 @@ function clampSlideIndex(index: number, slides: LyricSlide[]): number {
   return Math.max(0, Math.min(index, slides.length - 1));
 }
 
-function resolveSlides(song: SongDetail | null, linesPerSlide: number, dirty: boolean): LyricSlide[] {
+function resolveSlides(
+  song: SongDetail | null,
+  linesPerSlide: number,
+  dirty: boolean,
+): LyricSlide[] {
   if (!song) return [];
-  const computed = buildSlidesFromSong(song, linesPerSlide);
+
+  let effectiveLines = linesPerSlide;
+  const settings = themeSettings(song);
+  if (isSongLowerThirdMode(settings)) {
+    const theme = buildSongProjectionTheme(activeTheme(), settings);
+    const lt = theme.lowerThird;
+    const barBox = lowerThirdBarDimensions(lt);
+    effectiveLines = Math.min(
+      linesPerSlide,
+      estimateLowerThirdMaxLines(lt, barBox, {
+        minFontSize: 14,
+        lineHeight: lt.template === "worship" ? 1.65 : theme.lineHeight,
+        referenceLines: 1,
+      }),
+    );
+  }
+
+  const computed = buildSlidesFromSong(song, effectiveLines);
   if (computed.length > 0) return computed;
   if (!dirty && song.slides.length > 0) return song.slides;
   return computed;
@@ -111,9 +131,6 @@ export const useSongStore = create<SongState>((set, get) => ({
   dirty: false,
   importWarning: null,
   linesPerSlide: 4,
-  lowerThirdOverrides: undefined,
-  showLowerThirdSafeMargins: false,
-  lowerThirdChromaPreview: true,
 
   loadSongs: async () => {
     set({ loading: true });
@@ -127,15 +144,14 @@ export const useSongStore = create<SongState>((set, get) => ({
   },
 
   selectSong: async (id) => {
-    const activeSong = await api.getSong(id);
+    const loaded = await api.getSong(id);
+    const activeSong = syncSongSectionOrder(loaded);
     set({
       activeSong,
       selectedId: id,
       slideIndex: 0,
       dirty: false,
       importWarning: null,
-      lowerThirdOverrides: undefined,
-      showLowerThirdSafeMargins: false,
     });
     await get().previewCurrent();
   },
@@ -195,26 +211,14 @@ export const useSongStore = create<SongState>((set, get) => ({
     const song = get().activeSong;
     const slide = get().currentSlide();
     if (!song || !slide) return;
-    await previewSongSlide(
-      slide,
-      song,
-      activeTheme(),
-      themeSettings(song),
-      get().lowerThirdOverrides,
-    );
+    await previewSongSlide(slide, song, activeTheme(), themeSettings(song));
   },
 
   goLiveCurrent: async () => {
     const song = get().activeSong;
     const slide = get().currentSlide();
     if (!song || !slide) return;
-    await takeSongSlideLive(
-      slide,
-      song,
-      activeTheme(),
-      themeSettings(song),
-      get().lowerThirdOverrides,
-    );
+    await takeSongSlideLive(slide, song, activeTheme(), themeSettings(song));
     void api.markSongUsed(song.id);
   },
 
@@ -223,47 +227,20 @@ export const useSongStore = create<SongState>((set, get) => ({
     if (!song) return;
     const current = themeSettings(song);
     get().updateDraft({ theme: { ...current, mode } });
-    void get().previewCurrent();
-  },
-
-  setLowerThirdOverrides: (patch) => {
-    set((state) => {
-      const next = {
-        ...state,
-        showLowerThirdSafeMargins:
-          patch.showLowerThirdSafeMargins !== undefined
-            ? (patch.showLowerThirdSafeMargins as boolean)
-            : state.showLowerThirdSafeMargins,
-        lowerThirdChromaPreview:
-          patch.lowerThirdChromaPreview !== undefined
-            ? (patch.lowerThirdChromaPreview as boolean)
-            : state.lowerThirdChromaPreview,
-      };
-      const ltPatch = (patch.lowerThird as LowerThirdOverrides | undefined) ?? {};
-      const directLt: LowerThirdOverrides = {};
-      for (const [key, value] of Object.entries(patch)) {
-        if (
-          key !== "lowerThird" &&
-          key !== "showLowerThirdSafeMargins" &&
-          key !== "lowerThirdChromaPreview" &&
-          value !== undefined
-        ) {
-          (directLt as Record<string, unknown>)[key] = value;
-        }
-      }
-      const merged = { ...(state.lowerThirdOverrides ?? {}), ...ltPatch, ...directLt };
-      if (Object.keys(merged).length > 0) {
-        next.lowerThirdOverrides = merged;
-      }
-      return next;
-    });
+    if (mode === "lower_third") {
+      const theme = activeTheme();
+      useThemeStore.getState().applyThemeLive({
+        ...theme,
+        lowerThird: { ...theme.lowerThird, ...LOWER_THIRD_LAYOUT_DEFAULTS },
+      });
+    }
     void get().previewCurrent();
   },
 
   projectionTheme: () => {
     const song = get().activeSong;
     if (!song) return activeTheme();
-    return buildSongProjectionTheme(activeTheme(), themeSettings(song), get().lowerThirdOverrides);
+    return buildSongProjectionTheme(activeTheme(), themeSettings(song));
   },
 
   toggleFavorite: async () => {
@@ -307,22 +284,21 @@ export const useSongStore = create<SongState>((set, get) => ({
     if (!song) return;
     set({ saving: true });
     try {
-      const arrangement = song.arrangements.find((a) => a.is_default);
-      const sectionOrder: string[] = arrangement
-        ? (JSON.parse(arrangement.section_order_json) as string[])
-        : song.sections.map((s) => s.id);
+      const synced = syncSongSectionOrder(song);
+      const sectionOrder = arrangementSectionIds(synced);
 
       const updated = await api.updateSong({
-        id: song.id,
-        title: song.title,
-        artist: song.artist ?? undefined,
-        default_key: song.default_key ?? undefined,
-        bpm: song.bpm ?? undefined,
-        tags_json: song.tags_json,
-        favorite: song.favorite,
-        operator_notes: song.operator_notes ?? undefined,
-        theme_json: song.theme_json,
-        sections: song.sections.map((s, i) => ({
+        id: synced.id,
+        title: synced.title,
+        artist: synced.artist ?? undefined,
+        default_key: synced.default_key ?? undefined,
+        bpm: synced.bpm ?? undefined,
+        tags_json: synced.tags_json,
+        favorite: synced.favorite,
+        operator_notes: synced.operator_notes ?? undefined,
+        theme_json: synced.theme_json,
+        sections: synced.sections.map((s, i) => ({
+          id: s.id,
           section_type: s.section_type,
           label: s.label,
           lyrics: s.lyrics,
@@ -330,19 +306,19 @@ export const useSongStore = create<SongState>((set, get) => ({
           lines_per_slide: s.lines_per_slide ?? undefined,
         })),
         arrangement_section_ids: sectionOrder,
-        copyright: song.copyright
+        copyright: synced.copyright
           ? {
-              author: song.copyright.author ?? undefined,
-              composer: song.copyright.composer ?? undefined,
-              publisher: song.copyright.publisher ?? undefined,
-              copyright_year: song.copyright.copyright_year ?? undefined,
-              ccli_number: song.copyright.ccli_number ?? undefined,
-              license_text: song.copyright.license_text ?? undefined,
+              author: synced.copyright.author ?? undefined,
+              composer: synced.copyright.composer ?? undefined,
+              publisher: synced.copyright.publisher ?? undefined,
+              copyright_year: synced.copyright.copyright_year ?? undefined,
+              ccli_number: synced.copyright.ccli_number ?? undefined,
+              license_text: synced.copyright.license_text ?? undefined,
             }
           : undefined,
         lines_per_slide: get().linesPerSlide,
       });
-      set({ activeSong: updated, dirty: false });
+      set({ activeSong: syncSongSectionOrder(updated), dirty: false });
       await get().loadSongs();
       await get().previewCurrent();
     } finally {
@@ -390,11 +366,14 @@ export const useSongStore = create<SongState>((set, get) => ({
   reorderArrangement: (sectionIds) => {
     const song = get().activeSong;
     if (!song) return;
-    get().updateDraft({
-      arrangements: song.arrangements.map((a) =>
-        a.is_default ? { ...a, section_order_json: JSON.stringify(sectionIds) } : a,
-      ),
-    });
+    get().updateDraft(
+      syncSongSectionOrder({
+        ...song,
+        arrangements: song.arrangements.map((a) =>
+          a.is_default ? { ...a, section_order_json: JSON.stringify(sectionIds) } : a,
+        ),
+      }),
+    );
   },
 
   setSectionLinesPerSlide: (sectionId, linesPerSlide) => {
@@ -479,7 +458,8 @@ export const useSongStore = create<SongState>((set, get) => ({
     return warnings;
   },
 
-  effectiveSlides: () => resolveSlides(get().activeSong, get().linesPerSlide, get().dirty),
+  effectiveSlides: () =>
+    resolveSlides(get().activeSong, get().linesPerSlide, get().dirty),
 
   currentSlide: () => {
     const slides = get().effectiveSlides();

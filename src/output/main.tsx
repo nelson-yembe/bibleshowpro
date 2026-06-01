@@ -4,7 +4,9 @@ import { createRoot } from "react-dom/client";
 import { SceneRenderer } from "@/components/presentation/SceneRenderer";
 import type { Scene } from "@/engine/scene";
 import { logoScene } from "@/engine/scene";
+import { isTransparentLowerThirdOutput } from "@/lib/lowerThird";
 import { api } from "@/lib/tauri";
+import { cn } from "@/lib/utils";
 import "../index.css";
 
 function useOutputWakeLock() {
@@ -39,10 +41,25 @@ function useOutputWakeLock() {
   }, []);
 }
 
+function useTransparentOutput(scene: Scene | null) {
+  useEffect(() => {
+    const transparent = isTransparentLowerThirdOutput(scene, null, false);
+    document.documentElement.classList.toggle("bsp-output-transparent", transparent);
+    document.body.classList.toggle("bsp-output-transparent", transparent);
+    return () => {
+      document.documentElement.classList.remove("bsp-output-transparent");
+      document.body.classList.remove("bsp-output-transparent");
+    };
+  }, [scene]);
+}
+
 function OutputApp() {
   const isPreviewFeed = new URLSearchParams(window.location.search).get("ndi") === "preview";
   const [scene, setScene] = useState<Scene | null>(() => logoScene());
   useOutputWakeLock();
+  useTransparentOutput(scene);
+
+  const transparent = isTransparentLowerThirdOutput(scene, null, false);
 
   useEffect(() => {
     const hydrate = async () => {
@@ -77,7 +94,10 @@ function OutputApp() {
   }, [isPreviewFeed]);
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-black">
+    <div
+      className={cn("h-screen w-screen overflow-hidden", !transparent && "bg-black")}
+      style={transparent ? { backgroundColor: "transparent" } : undefined}
+    >
       <SceneRenderer scene={scene} className="h-full w-full" label="" />
     </div>
   );

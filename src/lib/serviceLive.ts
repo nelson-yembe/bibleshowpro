@@ -40,7 +40,7 @@ export async function previewServiceItem(item: ServiceItem, theme?: ThemeConfig)
       const song = await api.getSong(content.songId);
       const slideIndex = content.slideIndex ?? 0;
       const songTheme = parseSongTheme(song.theme_json);
-      const slides = song.slides.length > 0 ? song.slides : buildSlidesFromSong(song, 4);
+      const slides = buildSlidesFromSong(song, 4);
       const slide = slides[slideIndex] ?? slides[0];
       if (slide) {
         const scene = sceneFromLyricSlide(slide, song, theme, songTheme);

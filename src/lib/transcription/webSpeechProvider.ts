@@ -1,4 +1,8 @@
 import {
+  mapSpeechRecognitionError,
+  openAudioInputStream,
+} from "@/lib/transcription/audioInput";
+import {
   getSpeechRecognitionCtor,
   isSpeechRecognitionSupported,
   type SpeechRecognitionErrorEvent,
@@ -6,27 +10,26 @@ import {
   type SpeechRecognitionInstance,
 } from "@/lib/transcription/speechTypes";
 
+export {
+  ensureMicrophoneAccess,
+  listAudioInputDevices,
+  pickValidAudioDeviceId,
+  openAudioInputStream,
+  mapSpeechRecognitionError,
+} from "@/lib/transcription/audioInput";
+export { AudioLevelMonitor } from "@/lib/transcription/audioLevelMonitor";
+
 export interface TranscriptionCallbacks {
   onPartial: (text: string) => void;
   onFinal: (text: string) => void;
   onStatus: (status: "listening" | "paused" | "stopped" | "unavailable" | "reconnecting") => void;
   onError: (message: string) => void;
-  /** Lightweight mic activity from the speech engine (avoids a second getUserMedia stream). */
   onAudioActivity?: (level: number) => void;
 }
 
 export interface TranscriptionEngineOptions {
   modelId: string;
   language?: string;
-}
-
-/** Prompt for mic permission so device labels/IDs are available. */
-export async function ensureMicrophoneAccess(): Promise<void> {
-  if (!navigator.mediaDevices?.getUserMedia) {
-    throw new Error("Microphone access is not available in this environment.");
-  }
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  stream.getTracks().forEach((track) => track.stop());
 }
 
 export class WebSpeechTranscriptionEngine {
@@ -36,18 +39,21 @@ export class WebSpeechTranscriptionEngine {
   private callbacks: TranscriptionCallbacks | null = null;
   private lastOptions: TranscriptionEngineOptions | null = null;
   private restartTimer: number | undefined;
+  private primingStream: MediaStream | null = null;
 
   isSupported(): boolean {
     return isSpeechRecognitionSupported();
   }
 
-  start(callbacks: TranscriptionCallbacks, options: TranscriptionEngineOptions) {
+  async start(callbacks: TranscriptionCallbacks, options: TranscriptionEngineOptions, deviceId?: string | null) {
     const Ctor = getSpeechRecognitionCtor();
     if (!Ctor) {
       callbacks.onStatus("unavailable");
       callbacks.onError("Speech recognition is not supported in this environment.");
       return;
     }
+
+    await this.primeAudioInput(deviceId ?? null);
 
     this.callbacks = callbacks;
     this.lastOptions = options;
@@ -58,6 +64,21 @@ export class WebSpeechTranscriptionEngine {
     this.attachRecognition(new Ctor(), options, true);
   }
 
+  /** Hold the selected input open so capture routes consistently on Windows/WebView2. */
+  private async primeAudioInput(deviceId: string | null) {
+    this.releasePrimingStream();
+    try {
+      this.primingStream = await openAudioInputStream(deviceId);
+    } catch {
+      this.primingStream = null;
+    }
+  }
+
+  private releasePrimingStream() {
+    this.primingStream?.getTracks().forEach((track) => track.stop());
+    this.primingStream = null;
+  }
+
   private disposeRecognition() {
     if (!this.recognition) return;
     try {
@@ -65,6 +86,8 @@ export class WebSpeechTranscriptionEngine {
       this.recognition.onerror = null;
       this.recognition.onend = null;
       this.recognition.onstart = null;
+      this.recognition.onsoundstart = null;
+      this.recognition.onsoundend = null;
       this.recognition.abort();
     } catch {
       // ignore
@@ -109,32 +132,29 @@ export class WebSpeechTranscriptionEngine {
       if (finalText.trim()) this.callbacks?.onFinal(finalText.trim());
     };
 
-    recognition.onsoundstart = () => {
-      this.callbacks?.onAudioActivity?.(0.55);
-    };
-    recognition.onsoundend = () => {
-      this.callbacks?.onAudioActivity?.(0.04);
-    };
-
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      if (event.error === "no-speech" || event.error === "aborted") return;
+      if (event.error === "aborted") return;
+      if (event.error === "no-speech") {
+        this.callbacks?.onError(mapSpeechRecognitionError(event.error, event.message).message);
+        return;
+      }
       if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-        this.callbacks?.onError("Microphone permission denied — allow mic access for Bible Show Pro.");
+        this.callbacks?.onError(mapSpeechRecognitionError(event.error, event.message).message);
         this.shouldRestart = false;
         this.callbacks?.onStatus("unavailable");
         return;
       }
       if (event.error === "audio-capture") {
-        this.callbacks?.onError("No microphone detected — check your audio input device.");
+        this.callbacks?.onError(mapSpeechRecognitionError(event.error, event.message).message);
         this.shouldRestart = false;
         this.callbacks?.onStatus("unavailable");
         return;
       }
       if (event.error === "network") {
-        this.callbacks?.onError("Network error — Web Speech requires internet on this system.");
-      } else {
-        this.callbacks?.onError(event.message || event.error);
+        this.callbacks?.onError(mapSpeechRecognitionError(event.error, event.message).message);
+        return;
       }
+      this.callbacks?.onError(mapSpeechRecognitionError(event.error, event.message).message);
     };
 
     recognition.onend = () => {
@@ -203,87 +223,9 @@ export class WebSpeechTranscriptionEngine {
     this.paused = false;
     window.clearTimeout(this.restartTimer);
     this.disposeRecognition();
+    this.releasePrimingStream();
     this.lastOptions = null;
     this.callbacks?.onStatus("stopped");
     this.callbacks = null;
   }
-}
-
-export class AudioLevelMonitor {
-  private stream: MediaStream | null = null;
-  private context: AudioContext | null = null;
-  private analyser: AnalyserNode | null = null;
-  private raf = 0;
-  private onLevel: ((level: number) => void) | null = null;
-
-  async start(deviceId: string | null, onLevel: (level: number) => void) {
-    await this.stop();
-    this.onLevel = onLevel;
-
-    const attempts: MediaStreamConstraints[] = deviceId
-      ? [{ audio: { deviceId: { ideal: deviceId } } }, { audio: true }]
-      : [{ audio: true }];
-
-    let lastError: unknown;
-    for (const constraints of attempts) {
-      try {
-        this.stream = await navigator.mediaDevices.getUserMedia(constraints);
-        break;
-      } catch (err) {
-        lastError = err;
-      }
-    }
-
-    if (!this.stream) {
-      throw lastError instanceof Error ? lastError : new Error("Could not open microphone for level meter.");
-    }
-
-    this.context = new AudioContext();
-    if (this.context.state === "suspended") {
-      await this.context.resume().catch(() => undefined);
-    }
-    const source = this.context.createMediaStreamSource(this.stream);
-    this.analyser = this.context.createAnalyser();
-    this.analyser.fftSize = 256;
-    source.connect(this.analyser);
-
-    const data = new Uint8Array(this.analyser.frequencyBinCount);
-    const tick = () => {
-      if (!this.analyser) return;
-      this.analyser.getByteFrequencyData(data);
-      const avg = data.reduce((sum, v) => sum + v, 0) / data.length;
-      const level = Math.min(1, avg / 128);
-      this.onLevel?.(level);
-      this.raf = requestAnimationFrame(tick);
-    };
-    tick();
-  }
-
-  async stop() {
-    cancelAnimationFrame(this.raf);
-    this.stream?.getTracks().forEach((t) => t.stop());
-    this.stream = null;
-    if (this.context) {
-      await this.context.close().catch(() => undefined);
-    }
-    this.context = null;
-    this.analyser = null;
-    this.onLevel = null;
-  }
-}
-
-export async function listAudioInputDevices(): Promise<MediaDeviceInfo[]> {
-  if (!navigator.mediaDevices?.enumerateDevices) return [];
-  const devices = await navigator.mediaDevices.enumerateDevices();
-  return devices.filter((d) => d.kind === "audioinput" && d.deviceId.length > 0);
-}
-
-export function pickValidAudioDeviceId(
-  devices: MediaDeviceInfo[],
-  preferredId: string | null | undefined,
-): string | null {
-  if (preferredId && devices.some((d) => d.deviceId === preferredId)) {
-    return preferredId;
-  }
-  return devices[0]?.deviceId ?? null;
 }

@@ -170,9 +170,36 @@ export function splitLyricsToSlides(lyrics: string, linesPerSlide = 4): string[]
 
 export function arrangementSectionIds(song: SongDetail): string[] {
   const arr = song.arrangements.find((a) => a.is_default);
-  const parsed = arr ? (JSON.parse(arr.section_order_json) as string[]) : song.sections.map((s) => s.id);
+  const byUploadOrder = [...song.sections].sort((a, b) => a.sort_order - b.sort_order);
+  const parsed = arr ? (JSON.parse(arr.section_order_json) as string[]) : byUploadOrder.map((s) => s.id);
   const valid = parsed.filter((id) => song.sections.some((s) => s.id === id));
-  return valid.length > 0 ? valid : song.sections.map((s) => s.id);
+  const base = valid.length > 0 ? valid : byUploadOrder.map((s) => s.id);
+  const missing = byUploadOrder
+    .filter((s) => s.lyrics.trim() && !base.includes(s.id))
+    .map((s) => s.id);
+  return missing.length > 0 ? [...base, ...missing] : base;
+}
+
+/** Sections in worship-flow / upload order (arrangement first, then upload sort_order). */
+export function orderedSongSections(song: SongDetail): SongSection[] {
+  return arrangementSectionIds(song)
+    .map((id) => song.sections.find((s) => s.id === id))
+    .filter((s): s is SongSection => !!s);
+}
+
+/** Keep section sort_order and default arrangement aligned with display order. */
+export function syncSongSectionOrder(song: SongDetail): SongDetail {
+  const ordered = orderedSongSections(song);
+  if (ordered.length === 0) return song;
+  const ids = ordered.map((s) => s.id);
+  const orderJson = JSON.stringify(ids);
+  return {
+    ...song,
+    sections: ordered.map((s, i) => ({ ...s, sort_order: i })),
+    arrangements: song.arrangements.map((a) =>
+      a.is_default ? { ...a, section_order_json: orderJson } : a,
+    ),
+  };
 }
 
 export function sectionLinesPerSlide(section: SongSection, defaultLinesPerSlide = 4): number {

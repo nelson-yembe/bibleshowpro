@@ -40,6 +40,14 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Program output window — true alpha for OBS / NDI lower-third overlays */
+html.bsp-output-transparent,
+html.bsp-output-transparent body,
+html.bsp-output-transparent #root {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
 button,
 input,
 select,

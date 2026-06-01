@@ -211,6 +211,7 @@ async fn ensure_preview_surface(app: &AppHandle, width: u32, height: u32) -> Res
     )
     .title(PREVIEW_WINDOW_TITLE)
     .decorations(false)
+    .transparent(true)
     .visible(false)
     .skip_taskbar(true)
     .inner_size(width as f64, height as f64)

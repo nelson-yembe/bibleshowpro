@@ -1,4 +1,5 @@
 import { logoScene, sceneFromVerses, type Scene } from "@/engine/scene";
+import { buildLowerThirdTheme } from "@/lib/lowerThird";
 import type { ThemeConfig } from "@/lib/themeConfig";
 import type { VerseResult } from "@/lib/tauri";
 
@@ -44,8 +45,20 @@ export function previewSceneForTab(tab: PreviewTab, theme: ThemeConfig): Scene {
         theme,
       };
     case "Lower Third": {
-      const base = sceneFromVerses([SAMPLE_VERSE], theme);
-      return { ...base, id: "preview-lower-third", type: "scripture_lower_third" };
+      if (!theme.lowerThird.enabled) {
+        return {
+          id: "preview-lower-third-disabled",
+          type: "announcement",
+          content: {
+            title: "Lower third disabled",
+            body: "Enable “Lower third bar” in the theme panel to preview stream overlays here.",
+          },
+          theme,
+        };
+      }
+      const ltTheme = buildLowerThirdTheme(theme);
+      const base = sceneFromVerses([SAMPLE_VERSE], ltTheme);
+      return { ...base, id: "preview-lower-third", type: "scripture_lower_third", theme: ltTheme };
     }
     case "Blank / Logo": {
       const scene = logoScene("Bible Show Pro");

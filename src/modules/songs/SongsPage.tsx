@@ -37,6 +37,7 @@ import {
   SONG_TAG_FILTERS,
   defaultSongTheme,
   groupSlidesBySection,
+  orderedSongSections,
   parseSongTags,
   parseSongTheme,
   sectionLineCount,
@@ -46,11 +47,14 @@ import {
   type SongSection,
 } from "@/lib/songTypes";
 import { isSongLowerThirdMode } from "@/lib/songLive";
-import { LowerThirdControls } from "@/components/presentation/LowerThirdControls";
+import { LowerThirdSettingsModal } from "@/components/presentation/LowerThirdSettingsModal";
+import { LowerThirdSettingsTrigger } from "@/components/presentation/LowerThirdSettingsTrigger";
+import { useLowerThirdSettings } from "@/hooks/useLowerThirdSettings";
 import { downloadTextFile, cn } from "@/lib/utils";
 import { useLiveNavigationStore } from "@/stores/liveNavigationStore";
 import { registerSongLiveNavigation, useSongStore } from "@/stores/songStore";
 import { usePresentationStore } from "@/stores/presentationStore";
+import { useThemeStore } from "@/stores/themeStore";
 
 const SECTION_TYPE_COLORS: Record<string, string> = {
   verse: "text-blue-300",
@@ -190,6 +194,9 @@ function LyricSlideCard({
 
 export function SongsPage() {
   const store = useSongStore();
+  const activeTheme = useThemeStore((s) => s.activeTheme);
+  useThemeStore((s) => s.themeRevision);
+  const lowerThirdSettings = useLowerThirdSettings();
   const previewSource = usePresentationStore((s) => s.previewSource);
   const program = usePresentationStore((s) => s.program);
   const liveFollow = usePresentationStore((s) => s.liveFollow);
@@ -199,6 +206,7 @@ export function SongsPage() {
   const [tab, setTab] = useState<SongTab>("project");
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
   const [newSongSession, setNewSongSession] = useState(false);
+  const [lowerThirdSettingsOpen, setLowerThirdSettingsOpen] = useState(false);
 
   const handleNewSong = async () => {
     setNewSongSession(true);
@@ -246,12 +254,10 @@ export function SongsPage() {
   const warnings = store.warnings();
   const tags = song ? parseSongTags(song.tags_json) : [];
 
-  const arrangementOrder = useMemo(() => {
-    if (!song) return [];
-    const arr = song.arrangements.find((a) => a.is_default);
-    const ids = arr ? (JSON.parse(arr.section_order_json) as string[]) : song.sections.map((s) => s.id);
-    return ids.map((id) => song.sections.find((s) => s.id === id)).filter(Boolean) as SongSection[];
-  }, [song]);
+  const arrangementOrder = useMemo(
+    () => (song ? orderedSongSections(song) : []),
+    [song],
+  );
 
   const activeSectionId = selectedSectionId ?? arrangementOrder[0]?.id ?? null;
   const sectionGroups = useMemo(
@@ -492,18 +498,10 @@ export function SongsPage() {
                           </div>
                         </div>
                         {isLowerThirdMode && (
-                          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-4">
-                            <LowerThirdControls
-                              effective={effectiveLowerThird}
-                              state={{
-                                lowerThird: store.lowerThirdOverrides,
-                                showLowerThirdSafeMargins: store.showLowerThirdSafeMargins,
-                                lowerThirdChromaPreview: store.lowerThirdChromaPreview,
-                              }}
-                              onChange={(patch) => store.setLowerThirdOverrides(patch as Record<string, unknown>)}
-                              showReference
-                            />
-                          </div>
+                          <LowerThirdSettingsTrigger
+                            effective={effectiveLowerThird}
+                            onOpen={() => setLowerThirdSettingsOpen(true)}
+                          />
                         )}
                       </div>
 
@@ -660,7 +658,7 @@ export function SongsPage() {
                         </div>
                       </div>
                       <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
-                        {song.sections.map((section) => (
+                        {arrangementOrder.map((section) => (
                           <div
                             key={section.id}
                             className={cn(
@@ -813,6 +811,18 @@ export function SongsPage() {
           )}
         </main>
       </div>
+
+      <LowerThirdSettingsModal
+        open={lowerThirdSettingsOpen}
+        onClose={() => setLowerThirdSettingsOpen(false)}
+        effective={effectiveLowerThird}
+        state={lowerThirdSettings.controlState}
+        onChange={lowerThirdSettings.onChange}
+        onShowToggle={lowerThirdSettings.onShowToggle}
+        showReference={activeTheme.showReference}
+        showVersion={activeTheme.showVersion}
+        showVerseNumbers={activeTheme.showVerseNumbers}
+      />
 
       <input
         ref={fileRef}

@@ -87,8 +87,9 @@ export const THEME_PRESETS: ThemePreset[] = [
       lowerThird: {
         ...DEFAULT_THEME.lowerThird,
         enabled: true,
+        transparentOutput: true,
         barColor: "rgba(15,23,42,0.94)",
-        barHeight: 32,
+        barHeight: 112,
         textSize: 24,
       },
       accentColor: "#3b82f6",

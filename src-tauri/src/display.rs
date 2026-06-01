@@ -70,6 +70,8 @@ pub fn place_output_on_monitor(window: &WebviewWindow, monitor: &Monitor) -> Res
         .map_err(|e| e.to_string())?;
     window.set_fullscreen(true).map_err(|e| e.to_string())?;
     window.show().map_err(|e| e.to_string())?;
+    // Focus can fail if another app holds it; visibility is what matters for projection.
+    let _ = window.set_focus();
 
     Ok(())
 }

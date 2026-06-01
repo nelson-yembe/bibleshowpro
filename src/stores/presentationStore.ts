@@ -34,6 +34,7 @@ export type PreviewSource = "bible" | "service" | "media" | "song" | "transcript
 
 interface PresentationState extends PresentationSnapshot {
   outputOpen: boolean;
+  outputError: string | null;
   displays: DisplayInfo[];
   activeDisplay: DisplayInfo | null;
   activePlanId?: string;
@@ -128,14 +129,15 @@ function isOnAir(state: PresentationState): boolean {
 }
 
 async function ensureOutputOpen() {
-  if (!usePresentationStore.getState().outputOpen) {
-    await usePresentationStore.getState().openOutput();
-  }
+  await api.openOutputWindow();
+  await usePresentationStore.getState().syncOutputStatus();
+  usePresentationStore.setState({ outputError: null });
 }
 
 export const usePresentationStore = create<PresentationState>((set, get) => ({
   ...createInitialSnapshot(),
   outputOpen: false,
+  outputError: null,
   displays: [],
   activeDisplay: null,
   liveFollow: false,
@@ -213,7 +215,13 @@ export const usePresentationStore = create<PresentationState>((set, get) => ({
   },
 
   goLive: async () => {
-    await ensureOutputOpen();
+    try {
+      await ensureOutputOpen();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      set({ outputError: message || "Failed to open projector window" });
+      return;
+    }
 
     await refreshPreviewBeforeGoLive(get().previewSource);
 
@@ -277,9 +285,16 @@ export const usePresentationStore = create<PresentationState>((set, get) => ({
   freeze: () => set(toggleFreeze(get())),
 
   openOutput: async () => {
-    await api.openOutputWindow();
-    await get().syncOutputStatus();
-    await syncOutputReliable(get());
+    try {
+      await api.openOutputWindow();
+      await get().syncOutputStatus();
+      set({ outputError: null });
+      await syncOutputReliable(get());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      set({ outputError: message || "Failed to open projector window" });
+      throw error;
+    }
   },
 
   closeOutput: async () => {

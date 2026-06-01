@@ -29,9 +29,11 @@ export interface LowerThirdStyle {
   template: LowerThirdTemplate;
   horizontalAlign: LowerThirdHAlign;
   widthPercent: number;
+  /** Text/content area width as % of the bar (default 80). */
+  contentWidthPercent: number;
   bottomOffsetPercent: number;
   barOpacity: number;
-  /** Transparent bar on program output (chroma/OBS overlay). */
+  /** Transparent canvas on program output (OBS / NDI); bar styling is independent. */
   transparentOutput: boolean;
   showAccent: boolean;
   accentPosition: "top" | "left" | "bottom";
@@ -117,11 +119,12 @@ export const DEFAULT_THEME: ThemeConfig = {
   lowerThird: {
     enabled: true,
     barColor: "rgba(15,23,42,0.92)",
-    barHeight: 28,
+    barHeight: 112,
     textSize: 22,
     template: "worship",
     horizontalAlign: "center",
     widthPercent: 100,
+    contentWidthPercent: 80,
     bottomOffsetPercent: 0,
     barOpacity: 1,
     transparentOutput: false,
@@ -224,11 +227,25 @@ export function themeToDisplayDefaults(theme: ThemeConfig) {
     showVerseNumbers: theme.showVerseNumbers,
     showReference: theme.showReference,
     showVersion: theme.showVersion,
-    autoFit: true,
+    autoFit: theme.autoFit,
     emphasis: "none" as const,
     highlightPhrase: "",
     verseStart: "16",
     verseEnd: "16",
     backgroundPreset: "theme" as const,
   };
+}
+
+/** Normalize a color for `<input type="color">` (supports rgba in the text field). */
+export function colorPickerValue(value: string, fallback = "#0f172a"): string {
+  if (/^#[0-9a-f]{6}$/i.test(value)) return value;
+  if (/^#[0-9a-f]{3}$/i.test(value)) return value;
+  const rgba = value.match(/^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/i);
+  if (rgba) {
+    const hex = (n: string) => Math.max(0, Math.min(255, Math.round(Number(n))))
+      .toString(16)
+      .padStart(2, "0");
+    return `#${hex(rgba[1])}${hex(rgba[2])}${hex(rgba[3])}`;
+  }
+  return fallback;
 }

@@ -21,8 +21,10 @@ import {
   FONT_OPTIONS,
   mergeThemeConfig,
   themeToDisplayDefaults,
+  colorPickerValue,
 } from "@/lib/themeConfig";
 import { THEME_PRESETS, presetToConfig } from "@/modules/themes/themePresets";
+import { ThemeLowerThirdPanel } from "@/modules/themes/ThemeLowerThirdPanel";
 import { previewSceneForTab, themeSwatchStyle, type PreviewTab } from "@/modules/themes/themePreview";
 import { VectorDesignPanel, applyVectorTemplate } from "@/modules/themes/vector/VectorDesignPanel";
 import { VectorEditorCanvas } from "@/modules/themes/vector/VectorEditorCanvas";
@@ -59,7 +61,7 @@ function ColorField({
       <div className="flex items-center gap-2">
         <input
           type="color"
-          value={value}
+          value={colorPickerValue(value)}
           onChange={(e) => onChange(e.target.value)}
           className="h-8 w-10 cursor-pointer rounded border border-[var(--color-border-light)]"
         />
@@ -197,7 +199,9 @@ export function ThemeEditorPage() {
     const url = URL.createObjectURL(file);
     patch({
       backgroundType: type,
-      ...(type === "image" ? { backgroundImage: url } : { backgroundVideo: url }),
+      ...(type === "image"
+        ? { backgroundImage: url, backgroundVideo: undefined }
+        : { backgroundVideo: url, backgroundImage: undefined }),
     });
   };
 
@@ -583,6 +587,30 @@ export function ThemeEditorPage() {
                     Pick video
                   </button>
                 </div>
+                {(draft.backgroundImage || draft.backgroundVideo) && (
+                  <div className="flex items-center justify-between rounded-md border border-[var(--color-border-light)] px-2 py-1.5 text-[10px] text-[var(--color-subtle)]">
+                    <span className="truncate">
+                      {draft.backgroundType === "video" && draft.backgroundVideo
+                        ? "Video background loaded"
+                        : draft.backgroundImage
+                          ? "Image background loaded"
+                          : "No media selected"}
+                    </span>
+                    <button
+                      type="button"
+                      className="shrink-0 text-[var(--color-primary)]"
+                      onClick={() =>
+                        patch({
+                          backgroundImage: undefined,
+                          backgroundVideo: undefined,
+                          backgroundType: "solid",
+                        })
+                      }
+                    >
+                      Clear
+                    </button>
+                  </div>
+                )}
                 <input ref={imageRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleMediaPick("image", e.target.files?.[0])} />
                 <input ref={videoRef} type="file" accept="video/*" className="hidden" onChange={(e) => handleMediaPick("video", e.target.files?.[0])} />
                 <SliderField
@@ -623,7 +651,7 @@ export function ThemeEditorPage() {
               <Toggle checked={draft.textShadow} onChange={(v) => patch({ textShadow: v })} />
             </div>
             {draft.textShadow && (
-              <ColorField label="Shadow color" value={draft.shadowColor.startsWith("rgba") ? "#000000" : draft.shadowColor} onChange={(v) => patch({ shadowColor: v })} />
+              <ColorField label="Shadow color" value={draft.shadowColor} onChange={(v) => patch({ shadowColor: v })} />
             )}
           </section>
 
@@ -695,56 +723,28 @@ export function ThemeEditorPage() {
               <span className="text-[11px] text-[var(--color-subtle)]">Auto-fit text</span>
               <Toggle checked={draft.autoFit} onChange={(v) => patch({ autoFit: v })} />
             </div>
-          </section>
-
-          <section className="space-y-3 p-4">
-            <p className="section-label">Lower third bar</p>
             <div className="flex items-center justify-between">
-              <span className="text-[11px] text-[var(--color-subtle)]">Enabled</span>
-              <Toggle checked={draft.lowerThird.enabled} onChange={(v) => patch({ lowerThird: { ...draft.lowerThird, enabled: v } })} />
+              <span className="text-[11px] text-[var(--color-subtle)]">Vector overlays</span>
+              <Toggle
+                checked={draft.vectorDesign.enabled}
+                onChange={(v) => patch({ vectorDesign: { ...draft.vectorDesign, enabled: v } })}
+              />
             </div>
-            {draft.lowerThird.enabled && (
-              <>
-                <ColorField
-                  label="Bar color"
-                  value={draft.lowerThird.barColor.startsWith("rgba") ? "#0f172a" : draft.lowerThird.barColor}
-                  onChange={(v) => patch({ lowerThird: { ...draft.lowerThird, barColor: v } })}
-                />
-                <SliderField label="Bar height" value={draft.lowerThird.barHeight} min={16} max={72} suffix="px" onChange={(v) => patch({ lowerThird: { ...draft.lowerThird, barHeight: v } })} />
-                <SliderField label="Bar text size" value={draft.lowerThird.textSize} min={14} max={40} suffix="pt" onChange={(v) => patch({ lowerThird: { ...draft.lowerThird, textSize: v } })} />
-                <SliderField label="Bar width" value={draft.lowerThird.widthPercent} min={40} max={100} suffix="%" onChange={(v) => patch({ lowerThird: { ...draft.lowerThird, widthPercent: v } })} />
-                <SliderField label="Bottom offset" value={draft.lowerThird.bottomOffsetPercent} min={0} max={20} suffix="%" onChange={(v) => patch({ lowerThird: { ...draft.lowerThird, bottomOffsetPercent: v } })} />
-                <SliderField label="Bar opacity" value={Math.round(draft.lowerThird.barOpacity * 100)} min={0} max={100} suffix="%" onChange={(v) => patch({ lowerThird: { ...draft.lowerThird, barOpacity: v / 100 } })} />
-                <div>
-                  <p className="mb-1 text-[11px] text-[var(--color-subtle)]">Default template</p>
-                  <Segmented
-                    options={[
-                      { value: "worship", label: "Worship" },
-                      { value: "classic", label: "Classic" },
-                      { value: "broadcast", label: "TV" },
-                      { value: "glass", label: "Glass" },
-                      { value: "minimal", label: "Min" },
-                      { value: "line-only", label: "Line" },
-                    ]}
-                    value={draft.lowerThird.template}
-                    onChange={(v) => patch({ lowerThird: { ...draft.lowerThird, template: v as typeof draft.lowerThird.template } })}
-                  />
-                </div>
-                <div>
-                  <p className="mb-1 text-[11px] text-[var(--color-subtle)]">Default position</p>
-                  <Segmented
-                    options={[
-                      { value: "left", label: "Left" },
-                      { value: "center", label: "Center" },
-                      { value: "right", label: "Right" },
-                    ]}
-                    value={draft.lowerThird.horizontalAlign}
-                    onChange={(v) => patch({ lowerThird: { ...draft.lowerThird, horizontalAlign: v as typeof draft.lowerThird.horizontalAlign } })}
-                  />
-                </div>
-              </>
+            {draft.vectorDesign.enabled && (
+              <button
+                type="button"
+                onClick={() => setEditorMode("vector")}
+                className="w-full rounded-md border border-[var(--color-border-light)] py-1.5 text-[11px] text-[var(--color-primary)] hover:bg-[var(--color-panel)]"
+              >
+                Open vector editor →
+              </button>
             )}
           </section>
+
+          <ThemeLowerThirdPanel
+            lowerThird={draft.lowerThird}
+            onPatch={(ltPatch) => patch({ lowerThird: { ...draft.lowerThird, ...ltPatch } })}
+          />
             </>
           )}
         </aside>

@@ -1,5 +1,6 @@
 import { sceneFromVersesWithLayout } from "@/engine/scene";
 import { api, type VerseResult } from "@/lib/tauri";
+import { themeForLowerThirdLayout } from "@/lib/lowerThird";
 import { isTranscriptionOnAir } from "@/lib/transcription/transcriptionLiveFollow";
 import {
   createExpandedVerseSessionFromSuggestion,
@@ -11,12 +12,17 @@ import { useServiceStore } from "@/stores/serviceStore";
 import { useThemeStore } from "@/stores/themeStore";
 import type { ScriptureSuggestion } from "@/lib/transcription/types";
 
+function projectionTheme(layout: "fullscreen" | "lower_third" = "fullscreen") {
+  const base = useThemeStore.getState().activeTheme;
+  return layout === "lower_third" ? themeForLowerThirdLayout(base, "lower_third") : base;
+}
+
 export async function presentSingleVerse(
   verse: VerseResult,
   layout: "fullscreen" | "lower_third" = "fullscreen",
   toProgram = false,
 ) {
-  const theme = useThemeStore.getState().activeTheme;
+  const theme = projectionTheme(layout);
   const store = usePresentationStore.getState();
 
   if (toProgram) {
@@ -117,7 +123,7 @@ export function buildPreviewSceneFromSuggestion(
   suggestion: ScriptureSuggestion,
   layout: "fullscreen" | "lower_third" = "fullscreen",
 ) {
-  const theme = useThemeStore.getState().activeTheme;
+  const theme = projectionTheme(layout);
   const first = suggestion.verses[0];
   if (!first) return null;
   return sceneFromVersesWithLayout([first], theme, layout);

@@ -18,6 +18,8 @@ interface AutoFitTextProps {
   block?: boolean;
   /** Extra classes for the inner block stack (dual translations). */
   blockClassName?: string;
+  /** Hard cap on logical lines — applies clamp if text still overflows at minFontSize. */
+  maxLines?: number;
 }
 
 /** Binary-search font size so text fits its container (width + height). */
@@ -31,14 +33,17 @@ export function AutoFitText({
   containerClassName,
   block = false,
   blockClassName,
+  maxLines,
 }: AutoFitTextProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
   const [fontSize, setFontSize] = useState(maxFontSize);
+  const [clampLines, setClampLines] = useState<number | undefined>(undefined);
 
   useLayoutEffect(() => {
     if (!enabled) {
       setFontSize(maxFontSize);
+      setClampLines(maxLines);
       return;
     }
 
@@ -46,13 +51,31 @@ export function AutoFitText({
     const text = textRef.current;
     if (!container || !text) return;
 
+    const clearClamp = () => {
+      text.style.display = "";
+      text.style.webkitLineClamp = "";
+      text.style.webkitBoxOrient = "";
+      setClampLines(undefined);
+    };
+
+    const applyClamp = (lines: number) => {
+      text.style.display = "-webkit-box";
+      text.style.webkitLineClamp = String(lines);
+      text.style.webkitBoxOrient = "vertical";
+      text.style.overflow = "hidden";
+      setClampLines(lines);
+    };
+
     const fit = () => {
       const maxW = container.clientWidth;
       const maxH = container.clientHeight;
       if (maxW <= 0 || maxH <= 0) return;
 
+      clearClamp();
       text.style.width = `${maxW}px`;
       text.style.maxWidth = `${maxW}px`;
+      text.style.maxHeight = `${maxH}px`;
+      text.style.overflow = "hidden";
 
       let lo = minFontSize;
       let hi = maxFontSize;
@@ -61,13 +84,27 @@ export function AutoFitText({
       while (lo <= hi) {
         const mid = Math.floor((lo + hi) / 2);
         text.style.fontSize = `${mid}px`;
-        const fits = text.scrollWidth <= maxW && text.scrollHeight <= maxH;
+        const fits = text.scrollWidth <= maxW + 1 && text.scrollHeight <= maxH + 1;
         if (fits) {
           best = mid;
           lo = mid + 1;
         } else {
           hi = mid - 1;
         }
+      }
+
+      text.style.fontSize = `${best}px`;
+      const fitsAtBest = text.scrollWidth <= maxW + 1 && text.scrollHeight <= maxH + 1;
+
+      if (!fitsAtBest && maxLines && maxLines > 0) {
+        applyClamp(maxLines);
+        text.style.fontSize = `${minFontSize}px`;
+        setFontSize(minFontSize);
+        return;
+      }
+
+      if (!fitsAtBest && best === minFontSize) {
+        text.style.overflow = "hidden";
       }
 
       setFontSize(best);
@@ -78,7 +115,7 @@ export function AutoFitText({
     const observer = new ResizeObserver(fit);
     observer.observe(container);
     return () => observer.disconnect();
-  }, [children, maxFontSize, minFontSize, enabled]);
+  }, [children, maxFontSize, minFontSize, enabled, maxLines]);
 
   if (!enabled) {
     const Tag = block ? "div" : "p";
@@ -113,6 +150,15 @@ export function AutoFitText({
           fontSize,
           lineHeight: style?.lineHeight ?? 1.35,
           overflowWrap: "anywhere",
+          overflow: "hidden",
+          maxHeight: "100%",
+          ...(clampLines
+            ? {
+                display: "-webkit-box",
+                WebkitLineClamp: clampLines,
+                WebkitBoxOrient: "vertical" as const,
+              }
+            : {}),
         }}
       >
         {children}

@@ -11,7 +11,7 @@ pub mod transcription;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use tauri::{Emitter, Manager, RunEvent};
+use tauri::{Emitter, Listener, Manager, RunEvent};
 
 pub struct AppState {
     pub db: Mutex<db::Database>,
@@ -56,6 +56,21 @@ pub fn run() {
             }
 
             output::start_display_watcher(app.handle().clone());
+
+            let output_ready_app = app.handle().clone();
+            app.handle().listen("output-ready", move |_| {
+                let app = output_ready_app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let Some(window) = app.get_webview_window("output") else {
+                        return;
+                    };
+                    if let Ok(monitor) = display::pick_output_monitor(&app) {
+                        if let Err(error) = display::place_output_on_monitor(&window, &monitor) {
+                            eprintln!("[output] show on output-ready failed: {error}");
+                        }
+                    }
+                });
+            });
 
             let startup_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {

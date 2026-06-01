@@ -1,9 +1,10 @@
 import { StagingPreview } from "@/components/presentation/StagingPreview";
+import { ChromaPreviewGrid } from "@/components/presentation/SafeMarginOverlay";
 import { cn } from "@/lib/utils";
+import { isTransparentLowerThirdOutput } from "@/lib/lowerThird";
 import { canStepVerse, sessionProgressLabel } from "@/lib/transcription/verseSession";
 import { usePresentationStore } from "@/stores/presentationStore";
 import { useTranscriptionStore } from "@/stores/transcriptionStore";
-import { useThemeStore } from "@/stores/themeStore";
 import {
   ChevronLeft,
   ChevronRight,
@@ -43,7 +44,6 @@ export function ListenPreviewPanel() {
   const previewSuggestion = useTranscriptionStore((s) => s.previewSuggestion);
   const clearPreview = usePresentationStore((s) => s.clearPreview);
 
-  const activeTheme = useThemeStore((s) => s.activeTheme);
   const selected =
     suggestions.find((s) => s.id === selectedSuggestionId) ??
     suggestions.find((s) => s.status !== "ignored");
@@ -57,6 +57,11 @@ export function ListenPreviewPanel() {
   const previewReference = preview?.content.reference ?? preview?.content.title ?? null;
   const isOnAir = liveFollow && previewSource === "transcription";
   const canGoLive = !autoGoLive && Boolean(verseSession || selected);
+
+  const isLowerThird = previewLayout === "lower_third";
+  const transparentOverlay =
+    isLowerThird &&
+    (preview ? isTransparentLowerThirdOutput(preview, null, false) : true);
 
   const refreshSelectedPreview = async () => {
     if (!selected) return;
@@ -117,7 +122,6 @@ export function ListenPreviewPanel() {
       <div className="min-h-0 flex-1 p-4">
         <StagingPreview
           scene={preview}
-          themeOverride={activeTheme}
           label={
             autoGoLive
               ? isOnAir
@@ -126,13 +130,17 @@ export function ListenPreviewPanel() {
               : preview
                 ? isOnAir
                   ? "On air — use Previous/Next to step verses in this passage"
-                  : "Staged in preview — click Go live to project"
+                  : isLowerThird
+                    ? "Stream overlay — transparent canvas with lower third only"
+                    : "Staged in preview — click Go live to project"
                 : selected
                   ? `${selected.reference} — loading preview…`
                   : "Preview a detected scripture"
           }
           className="h-full min-h-[420px]"
-        />
+        >
+          {isLowerThird && transparentOverlay && <ChromaPreviewGrid />}
+        </StagingPreview>
       </div>
 
       <div className="border-t border-[var(--color-border)] px-4 py-3">

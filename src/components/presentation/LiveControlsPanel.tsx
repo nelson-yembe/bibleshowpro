@@ -61,6 +61,7 @@ export function LiveControlsPanel({ displayOptions }: LiveControlsPanelProps) {
     showLogo,
     freeze,
     outputOpen,
+    outputError,
     displays,
     activeDisplay,
     openOutput,
@@ -268,6 +269,9 @@ export function LiveControlsPanel({ displayOptions }: LiveControlsPanelProps) {
                 ? `${externalDisplays.length} external display(s) detected`
                 : "Opens when you go live"}
           </p>
+          {outputError && (
+            <p className="mt-2 text-[10px] leading-snug text-red-400">{outputError}</p>
+          )}
         </div>
       </div>
     </aside>

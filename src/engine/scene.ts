@@ -1,5 +1,7 @@
 import type { ThemeConfig, VerseResult } from "@/lib/tauri";
-import { DEFAULT_THEME, mergeThemeConfig } from "@/lib/themeConfig";
+import { themeForLowerThirdLayout } from "@/lib/lowerThird";
+import { DEFAULT_THEME } from "@/lib/themeConfig";
+import type { ServiceItemContent } from "@/lib/serviceItemContent";
 
 export { DEFAULT_THEME };
 
@@ -74,10 +76,7 @@ export function sceneFromVersesWithLayout(
 ): Scene {
   const scene = sceneFromVerses(verses, theme);
   if (layout === "lower_third") {
-    const mergedTheme = mergeThemeConfig({
-      ...scene.theme,
-      lowerThird: { ...mergeThemeConfig(scene.theme).lowerThird, enabled: true },
-    });
+    const mergedTheme = themeForLowerThirdLayout(scene.theme, "lower_third");
     return { ...scene, type: "scripture_lower_third", theme: mergedTheme };
   }
   return scene;
@@ -97,12 +96,7 @@ export function sceneFromVerseComparison(
     layout === "lower_third" ? "scripture_lower_third" : ("scripture_comparison" as SceneType);
 
   const mergedTheme =
-    layout === "lower_third"
-      ? mergeThemeConfig({
-          ...theme,
-          lowerThird: { ...mergeThemeConfig(theme).lowerThird, enabled: true },
-        })
-      : theme;
+    layout === "lower_third" ? themeForLowerThirdLayout(theme, "lower_third") : theme;
 
   return {
     id: crypto.randomUUID(),
@@ -121,7 +115,7 @@ export function sceneFromVerseComparison(
 }
 
 export function sceneFromServiceItem(itemType: string, title: string, contentJson: string, theme?: ThemeConfig): Scene {
-  const content = JSON.parse(contentJson || "{}") as SceneContent & {
+  const content = JSON.parse(contentJson || "{}") as SceneContent & ServiceItemContent & {
     filePath?: string;
     mediaId?: string;
     audioPath?: string;
@@ -143,20 +137,33 @@ export function sceneFromServiceItem(itemType: string, title: string, contentJso
     sermon_note: "announcement",
   };
 
+  const sceneType = typeMap[itemType] ?? "announcement";
+  const isSpeakerLowerThird = sceneType === "speaker_lower_third";
+  const speakerName = content.speakerName?.trim();
+  const speakerTitle = content.speakerTitle?.trim();
+  const speakerBody = isSpeakerLowerThird
+    ? speakerName || content.body || title
+    : content.body ?? title;
+  const speakerReference = isSpeakerLowerThird
+    ? speakerTitle || undefined
+    : content.reference;
+
+  const mergedTheme = isSpeakerLowerThird ? themeForLowerThirdLayout(theme, "lower_third") : theme;
+
   return {
     id: crypto.randomUUID(),
-    type: typeMap[itemType] ?? "announcement",
+    type: sceneType,
     content: {
       title,
-      body: content.body ?? title,
-      reference: content.reference,
+      body: speakerBody,
+      reference: speakerReference,
       imagePath: content.imagePath ?? (itemType === "image" ? filePath : undefined),
       videoPath: content.videoPath ?? (itemType === "video" ? filePath : undefined),
       countdownSeconds: content.countdownSeconds,
       speakerName: content.speakerName,
       speakerTitle: content.speakerTitle,
     },
-    theme,
+    theme: mergedTheme,
     transition: "fade",
   };
 }

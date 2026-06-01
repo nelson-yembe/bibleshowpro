@@ -155,13 +155,20 @@ export function LowerThirdControls({
           />
         </Field>
 
-        <Field label={`Bar height · ${effective.barHeight}px`}>
+        <Field label={`Bar height · ${effective.barHeightPercent > 0 ? `${effective.barHeightPercent}% viewport` : `${effective.barHeight}px`}`}>
           <input
             type="range"
-            min={18}
-            max={72}
-            value={effective.barHeight}
-            onChange={(e) => patchLt({ barHeight: Number(e.target.value) })}
+            min={effective.template === "worship" && effective.barHeightPercent > 0 ? 18 : 48}
+            max={effective.template === "worship" && effective.barHeightPercent > 0 ? 38 : 160}
+            value={effective.template === "worship" && effective.barHeightPercent > 0 ? effective.barHeightPercent : effective.barHeight}
+            onChange={(e) => {
+              const value = Number(e.target.value);
+              if (effective.template === "worship" && effective.barHeightPercent > 0) {
+                patchLt({ barHeightPercent: value });
+              } else {
+                patchLt({ barHeight: value, barHeightPercent: 0 });
+              }
+            }}
             className="w-full accent-[var(--color-primary)]"
           />
         </Field>
@@ -243,7 +250,7 @@ export function LowerThirdControls({
           onChange={(v) => patchLt({ textOutline: v })}
         />
         <ToggleRow
-          label="Chroma / transparent output"
+          label="Transparent overlay (OBS / NDI)"
           checked={effective.transparentOutput}
           onChange={(v) => patchLt({ transparentOutput: v })}
           icon={<Radio className="h-3 w-3" />}

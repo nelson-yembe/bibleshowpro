@@ -16,10 +16,11 @@ import { TopBar } from "@/components/layout/TopBar";
 import { Pill } from "@/components/ui/pill";
 import { TranslationCompare } from "@/modules/bible/TranslationCompare";
 import { ChapterResultsPanel } from "@/modules/bible/ChapterResultsPanel";
-import { LowerThirdControls } from "@/components/presentation/LowerThirdControls";
+import { LowerThirdSettingsModal } from "@/components/presentation/LowerThirdSettingsModal";
+import { LowerThirdSettingsTrigger } from "@/components/presentation/LowerThirdSettingsTrigger";
 import { ChromaPreviewGrid, SafeMarginOverlay } from "@/components/presentation/SafeMarginOverlay";
-import { mergeLowerThirdTheme } from "@/lib/lowerThird";
-import type { LowerThirdOverrides } from "@/lib/lowerThird";
+import { buildLowerThirdTheme, LOWER_THIRD_LAYOUT_DEFAULTS } from "@/lib/lowerThird";
+import { useLowerThirdSettings } from "@/hooks/useLowerThirdSettings";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import {
@@ -34,6 +35,7 @@ import { useLiveDisplayStore } from "@/stores/liveDisplayStore";
 import { usePresentationStore } from "@/stores/presentationStore";
 import { useServiceStore } from "@/stores/serviceStore";
 import { useThemeStore } from "@/stores/themeStore";
+import { useLowerThirdStore } from "@/stores/lowerThirdStore";
 import type { CatalogEntryView, VerseResult } from "@/lib/tauri";
 import { BIBLE_BOOKS, chapterOptions, verseOptions } from "@/lib/bibleBooks";
 import { lookupVerseInTranslation, lookupVersePairInTranslations } from "@/lib/bibleCompare";
@@ -71,15 +73,15 @@ export function BibleSearchPage() {
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
   const previewRef = useRef<HTMLDivElement>(null);
   const [highlightMenu, setHighlightMenu] = useState<HighlightMenuState | null>(null);
+  const [lowerThirdSettingsOpen, setLowerThirdSettingsOpen] = useState(false);
+  const lowerThirdSettings = useLowerThirdSettings();
+  const showLowerThirdSafeMargins = useLowerThirdStore((s) => s.showLowerThirdSafeMargins);
+  const lowerThirdChromaPreview = useLowerThirdStore((s) => s.lowerThirdChromaPreview);
 
   /** Typography comes from Themes; Bible Search only keeps verse/session overrides */
   const effectiveTheme = useMemo(
-    () =>
-      mergeLowerThirdTheme(activeTheme, {
-        ...localDisplay.lowerThird,
-        ...(viewMode === "lower_third" ? { enabled: true } : {}),
-      }),
-    [activeTheme, themeRevision, localDisplay.lowerThird, viewMode],
+    () => (viewMode === "lower_third" ? buildLowerThirdTheme(activeTheme) : activeTheme),
+    [activeTheme, themeRevision, viewMode],
   );
 
   const displayOptions = useMemo(
@@ -89,35 +91,6 @@ export function BibleSearchPage() {
 
   const effectiveLowerThird = effectiveTheme.lowerThird;
   const isLowerThirdMode = viewMode === "lower_third";
-
-  const handleLowerThirdChange = useCallback((patch: Record<string, unknown>) => {
-    setLocalDisplay((prev) => {
-      const next = { ...prev };
-      if (patch.showLowerThirdSafeMargins !== undefined) {
-        next.showLowerThirdSafeMargins = patch.showLowerThirdSafeMargins as boolean;
-      }
-      if (patch.lowerThirdChromaPreview !== undefined) {
-        next.lowerThirdChromaPreview = patch.lowerThirdChromaPreview as boolean;
-      }
-      const ltPatch = (patch.lowerThird as LowerThirdOverrides | undefined) ?? {};
-      const directLt: LowerThirdOverrides = {};
-      for (const [key, value] of Object.entries(patch)) {
-        if (
-          key !== "lowerThird" &&
-          key !== "showLowerThirdSafeMargins" &&
-          key !== "lowerThirdChromaPreview" &&
-          value !== undefined
-        ) {
-          (directLt as Record<string, unknown>)[key] = value;
-        }
-      }
-      const mergedLt = { ...(prev.lowerThird ?? {}), ...ltPatch, ...directLt };
-      if (Object.keys(mergedLt).length > 0) {
-        next.lowerThird = mergedLt;
-      }
-      return next;
-    });
-  }, []);
 
   const handleDisplayChange = useCallback((patch: Partial<DisplayOptions>) => {
     const localPatch: Partial<LocalDisplayOverrides> = {};
@@ -174,7 +147,7 @@ export function BibleSearchPage() {
     if (!isLowerThirdMode) return;
     const active = useBibleStore.getState().getActiveVerse();
     if (active) void presentActiveVerse(active);
-  }, [localDisplay.lowerThird, isLowerThirdMode, presentActiveVerse]);
+  }, [activeTheme.lowerThird, themeRevision, isLowerThirdMode, presentActiveVerse]);
 
   useEffect(() => {
     const active = useBibleStore.getState().getActiveVerse();
@@ -770,6 +743,12 @@ export function BibleSearchPage() {
                   type="button"
                   onClick={() => {
                     setViewMode(tab.value);
+                    if (tab.value === "lower_third") {
+                      applyThemeLive({
+                        ...activeTheme,
+                        lowerThird: { ...activeTheme.lowerThird, ...LOWER_THIRD_LAYOUT_DEFAULTS },
+                      });
+                    }
                     const active = useBibleStore.getState().getActiveVerse();
                     if (active) {
                       void presentActiveVerse(
@@ -843,10 +822,10 @@ export function BibleSearchPage() {
                   onContextMenu={handlePreviewContextMenu}
                   isBlackout={isBlackout}
                 >
-                  {isLowerThirdMode && localDisplay.lowerThirdChromaPreview !== false && effectiveLowerThird.transparentOutput && (
+                  {isLowerThirdMode && lowerThirdChromaPreview !== false && effectiveLowerThird.transparentOutput && (
                     <ChromaPreviewGrid />
                   )}
-                  {isLowerThirdMode && localDisplay.showLowerThirdSafeMargins && (
+                  {isLowerThirdMode && showLowerThirdSafeMargins && (
                     <SafeMarginOverlay marginPercent={effectiveLowerThird.safeMarginPercent} />
                   )}
                   <PreviewHighlightMenu
@@ -893,14 +872,9 @@ export function BibleSearchPage() {
                 {/* Format controls bar */}
                 <div className="shrink-0 space-y-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-4">
                   {isLowerThirdMode && (
-                    <LowerThirdControls
+                    <LowerThirdSettingsTrigger
                       effective={effectiveLowerThird}
-                      state={localDisplay}
-                      onChange={handleLowerThirdChange}
-                      onShowToggle={(patch) => applyThemeLive({ ...activeTheme, ...patch })}
-                      showReference={displayOptions.showReference}
-                      showVersion={displayOptions.showVersion}
-                      showVerseNumbers={displayOptions.showVerseNumbers}
+                      onOpen={() => setLowerThirdSettingsOpen(true)}
                     />
                   )}
                   <FormatControls
@@ -919,6 +893,18 @@ export function BibleSearchPage() {
           </div>
         </main>
       </div>
+
+      <LowerThirdSettingsModal
+        open={lowerThirdSettingsOpen}
+        onClose={() => setLowerThirdSettingsOpen(false)}
+        effective={effectiveLowerThird}
+        state={lowerThirdSettings.controlState}
+        onChange={lowerThirdSettings.onChange}
+        onShowToggle={lowerThirdSettings.onShowToggle}
+        showReference={displayOptions.showReference}
+        showVersion={displayOptions.showVersion}
+        showVerseNumbers={displayOptions.showVerseNumbers}
+      />
     </div>
   );
 }
