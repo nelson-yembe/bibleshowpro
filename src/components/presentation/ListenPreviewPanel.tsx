@@ -1,10 +1,16 @@
 import { StagingPreview } from "@/components/presentation/StagingPreview";
-import { ChromaPreviewGrid } from "@/components/presentation/SafeMarginOverlay";
+import { LowerThirdSettingsModal } from "@/components/presentation/LowerThirdSettingsModal";
+import { LowerThirdSettingsTrigger } from "@/components/presentation/LowerThirdSettingsTrigger";
+import { ChromaPreviewGrid, SafeMarginOverlay } from "@/components/presentation/SafeMarginOverlay";
+import { buildLowerThirdTheme, isTransparentLowerThirdOutput } from "@/lib/lowerThird";
+import { transcriptionSceneMatchesLayout } from "@/lib/transcriptionLive";
+import { useLowerThirdSettings } from "@/hooks/useLowerThirdSettings";
 import { cn } from "@/lib/utils";
-import { isTransparentLowerThirdOutput } from "@/lib/lowerThird";
 import { canStepVerse, sessionProgressLabel } from "@/lib/transcription/verseSession";
 import { usePresentationStore } from "@/stores/presentationStore";
 import { useTranscriptionStore } from "@/stores/transcriptionStore";
+import { useThemeStore } from "@/stores/themeStore";
+import { useLowerThirdStore } from "@/stores/lowerThirdStore";
 import {
   ChevronLeft,
   ChevronRight,
@@ -15,6 +21,7 @@ import {
   RotateCcw,
   Zap,
 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 const sourceLabels = {
   bible: "Bible",
@@ -28,6 +35,8 @@ export function ListenPreviewPanel() {
   const preview = usePresentationStore((s) => s.preview);
   const previewSource = usePresentationStore((s) => s.previewSource);
   const liveFollow = usePresentationStore((s) => s.liveFollow);
+  const activeTheme = useThemeStore((s) => s.activeTheme);
+  const themeRevision = useThemeStore((s) => s.themeRevision);
 
   const previewLayout = useTranscriptionStore((s) => s.previewLayout);
   const setPreviewLayout = useTranscriptionStore((s) => s.setPreviewLayout);
@@ -42,7 +51,18 @@ export function ListenPreviewPanel() {
   const stepActiveVerse = useTranscriptionStore((s) => s.stepActiveVerse);
   const goLiveSelectedSuggestion = useTranscriptionStore((s) => s.goLiveSelectedSuggestion);
   const previewSuggestion = useTranscriptionStore((s) => s.previewSuggestion);
+  const refreshPreviewOutput = useTranscriptionStore((s) => s.refreshPreviewOutput);
   const clearPreview = usePresentationStore((s) => s.clearPreview);
+
+  const lowerThirdSettings = useLowerThirdSettings();
+  const showLowerThirdSafeMargins = useLowerThirdStore((s) => s.showLowerThirdSafeMargins);
+  const lowerThirdChromaPreview = useLowerThirdStore((s) => s.lowerThirdChromaPreview);
+  const [lowerThirdSettingsOpen, setLowerThirdSettingsOpen] = useState(false);
+
+  const effectiveLowerThird = useMemo(
+    () => buildLowerThirdTheme(activeTheme).lowerThird,
+    [activeTheme, themeRevision],
+  );
 
   const selected =
     suggestions.find((s) => s.id === selectedSuggestionId) ??
@@ -67,6 +87,16 @@ export function ListenPreviewPanel() {
     if (!selected) return;
     await previewSuggestion(selected);
   };
+
+  useEffect(() => {
+    void refreshPreviewOutput();
+  }, [activeTheme.lowerThird, themeRevision, previewLayout, refreshPreviewOutput]);
+
+  useEffect(() => {
+    if (!preview) return;
+    if (transcriptionSceneMatchesLayout(preview, previewLayout)) return;
+    void refreshPreviewOutput();
+  }, [preview, previewLayout, refreshPreviewOutput]);
 
   return (
     <section className="flex min-h-0 flex-1 flex-col rounded-xl border border-[var(--color-border)] bg-[#0a0c12]">
@@ -122,6 +152,7 @@ export function ListenPreviewPanel() {
       <div className="min-h-0 flex-1 p-4">
         <StagingPreview
           scene={preview}
+          themeOverride={isLowerThird ? { lowerThird: effectiveLowerThird } : undefined}
           label={
             autoGoLive
               ? isOnAir
@@ -139,11 +170,23 @@ export function ListenPreviewPanel() {
           }
           className="h-full min-h-[420px]"
         >
-          {isLowerThird && transparentOverlay && <ChromaPreviewGrid />}
+          {isLowerThird && lowerThirdChromaPreview !== false && transparentOverlay && <ChromaPreviewGrid />}
+          {isLowerThird && showLowerThirdSafeMargins && (
+            <SafeMarginOverlay marginPercent={effectiveLowerThird.safeMarginPercent} />
+          )}
         </StagingPreview>
       </div>
 
       <div className="border-t border-[var(--color-border)] px-4 py-3">
+        {isLowerThird && (
+          <div className="mb-3">
+            <LowerThirdSettingsTrigger
+              effective={effectiveLowerThird}
+              onOpen={() => setLowerThirdSettingsOpen(true)}
+            />
+          </div>
+        )}
+
         {verseSession && (
           <div className="mb-3 flex items-center justify-between gap-2 rounded-lg border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 py-1.5">
             <button
@@ -230,6 +273,18 @@ export function ListenPreviewPanel() {
             : "Auto off: detections stay in preview until you click Go live. Then Previous/Next moves verse 15 → 16 → 17 in the same chapter."}
         </p>
       </div>
+
+      <LowerThirdSettingsModal
+        open={lowerThirdSettingsOpen}
+        onClose={() => setLowerThirdSettingsOpen(false)}
+        effective={effectiveLowerThird}
+        state={lowerThirdSettings.controlState}
+        onChange={lowerThirdSettings.onChange}
+        onShowToggle={lowerThirdSettings.onShowToggle}
+        showReference={activeTheme.showReference}
+        showVersion={activeTheme.showVersion}
+        showVerseNumbers={activeTheme.showVerseNumbers}
+      />
     </section>
   );
 }

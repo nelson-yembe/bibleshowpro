@@ -12,7 +12,7 @@ import {
   type SongSummary,
   type SongThemeSettings,
 } from "@/lib/songTypes";
-import { estimateLowerThirdMaxLines, lowerThirdBarDimensions, LOWER_THIRD_LAYOUT_DEFAULTS } from "@/lib/lowerThird";
+import { estimateLowerThirdMaxLines, lowerThirdBarDimensions } from "@/lib/lowerThird";
 import {
   previewSongSlide,
   takeSongSlideLive,
@@ -227,13 +227,6 @@ export const useSongStore = create<SongState>((set, get) => ({
     if (!song) return;
     const current = themeSettings(song);
     get().updateDraft({ theme: { ...current, mode } });
-    if (mode === "lower_third") {
-      const theme = activeTheme();
-      useThemeStore.getState().applyThemeLive({
-        ...theme,
-        lowerThird: { ...theme.lowerThird, ...LOWER_THIRD_LAYOUT_DEFAULTS },
-      });
-    }
     void get().previewCurrent();
   },
 

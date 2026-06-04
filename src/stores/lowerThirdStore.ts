@@ -42,9 +42,17 @@ function extractLowerThirdPatch(
 function refreshLowerThirdLiveOutput() {
   const presentation = usePresentationStore.getState();
   const onAir = isPresentationOnAir(presentation);
-  const program = presentation.program;
+  const displayScene = onAir ? presentation.program : (presentation.preview ?? presentation.program);
 
-  if (presentation.previewSource === "song") {
+  if (displayScene?.type === "song_lyrics" && displayScene.content.layout === "lower_third") {
+    const song = useSongStore.getState().activeSong;
+    if (!song) return;
+    if (onAir) void useSongStore.getState().goLiveCurrent();
+    else void useSongStore.getState().previewCurrent();
+    return;
+  }
+
+  if (presentation.previewSource === "song" && !displayScene) {
     const song = useSongStore.getState().activeSong;
     if (!song) return;
     const settings = JSON.parse(song.theme_json || "{}") as { mode?: string };
@@ -55,11 +63,11 @@ function refreshLowerThirdLiveOutput() {
     return;
   }
 
-  if (!program || !isLowerThirdScene(program)) return;
+  if (!displayScene || !isLowerThirdScene(displayScene)) return;
 
   const mergedTheme = buildLowerThirdTheme(useThemeStore.getState().activeTheme);
   const refreshed = {
-    ...program,
+    ...displayScene,
     theme: {
       ...mergedTheme,
       showReference: useThemeStore.getState().activeTheme.showReference,

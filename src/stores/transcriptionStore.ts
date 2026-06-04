@@ -10,6 +10,8 @@ import {
   presentDetectedScripture,
   presentVerseSession,
   reloadVerseSessionTranslation,
+  representTranscriptionVerses,
+  resolveTranscriptionVerses,
   shouldPresentVerseToProgram,
 } from "@/lib/transcriptionLive";
 import {
@@ -101,6 +103,7 @@ interface TranscriptionState {
   setAutoGoLive: (enabled: boolean) => void;
   setSelectedSuggestion: (id: string | null) => void;
   previewSuggestion: (suggestion: ScriptureSuggestion) => Promise<void>;
+  refreshPreviewOutput: () => Promise<void>;
   goLiveSelectedSuggestion: () => Promise<void>;
   stepActiveVerse: (delta: number) => Promise<boolean>;
   switchActiveTranslation: (translationId: string) => Promise<boolean>;
@@ -300,6 +303,36 @@ async function applySuggestionOutput(
     lastVoiceAction: null,
   });
   get().markSuggestionStatus(suggestion.id, "preview");
+}
+
+async function refreshPreviewOutput(
+  get: () => TranscriptionState,
+  set: (partial: Partial<TranscriptionState> | ((s: TranscriptionState) => Partial<TranscriptionState>)) => void,
+) {
+  const state = get();
+  const presentation = usePresentationStore.getState();
+  const toProgram = shouldPresentVerseToProgram(state.autoGoLive);
+
+  if (state.verseSession) {
+    await presentVerseSession(state.verseSession, state.previewLayout, toProgram);
+    return;
+  }
+
+  const suggestion =
+    state.suggestions.find((s) => s.id === state.selectedSuggestionId && s.status !== "ignored") ??
+    activeSuggestions(state)[0];
+  if (suggestion) {
+    await applySuggestionOutput(suggestion, get, set);
+    return;
+  }
+
+  const verses = resolveTranscriptionVerses({
+    preview: presentation.preview,
+    program: presentation.program,
+  });
+  if (verses.length > 0) {
+    await representTranscriptionVerses(verses, state.previewLayout, toProgram);
+  }
 }
 
 async function mergeDetections(
@@ -682,6 +715,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
   setPreviewLayout: (layout) => {
     set({ previewLayout: layout });
     persistPreferences(get());
+    void refreshPreviewOutput(get, set);
   },
   setMinConfidence: (level) => {
     set({ minConfidence: level });
@@ -695,6 +729,10 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
 
   previewSuggestion: async (suggestion) => {
     await applySuggestionOutput(suggestion, get, set);
+  },
+
+  refreshPreviewOutput: async () => {
+    await refreshPreviewOutput(get, set);
   },
 
   goLiveSelectedSuggestion: async () => {

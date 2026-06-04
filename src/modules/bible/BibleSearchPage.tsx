@@ -19,7 +19,7 @@ import { ChapterResultsPanel } from "@/modules/bible/ChapterResultsPanel";
 import { LowerThirdSettingsModal } from "@/components/presentation/LowerThirdSettingsModal";
 import { LowerThirdSettingsTrigger } from "@/components/presentation/LowerThirdSettingsTrigger";
 import { ChromaPreviewGrid, SafeMarginOverlay } from "@/components/presentation/SafeMarginOverlay";
-import { buildLowerThirdTheme, LOWER_THIRD_LAYOUT_DEFAULTS } from "@/lib/lowerThird";
+import { buildLowerThirdTheme, isLowerThirdScene } from "@/lib/lowerThird";
 import { useLowerThirdSettings } from "@/hooks/useLowerThirdSettings";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
@@ -55,11 +55,10 @@ export function BibleSearchPage() {
   const bible = useBibleStore();
   const catalog = useBibleVersionsStore((s) => s.catalog);
   const loadCatalog = useBibleVersionsStore((s) => s.loadCatalog);
-  const { showVerses, showVerseComparison, preview, program, liveFollow } = usePresentationStore();
+  const { showVerses, showVerseComparison, preview, program, liveFollow, previewVerses } = usePresentationStore();
   const { activePlan, addItem, ensureActivePlan } = useServiceStore();
   const activeTheme = useThemeStore((s) => s.activeTheme);
   const themeRevision = useThemeStore((s) => s.themeRevision);
-  const applyThemeLive = useThemeStore((s) => s.applyThemeLive);
 
   const [viewMode, setViewMode] = useState("fullscreen");
   const [selectedGroup, setSelectedGroup] = useState<VerseResult[] | null>(null);
@@ -150,9 +149,20 @@ export function BibleSearchPage() {
   }, [activeTheme.lowerThird, themeRevision, isLowerThirdMode, presentActiveVerse]);
 
   useEffect(() => {
+    const layout = verseLayout;
     const active = useBibleStore.getState().getActiveVerse();
-    if (active) void presentActiveVerse(active);
-  }, [viewMode, effectiveTheme, themeRevision, presentActiveVerse]);
+    if (active) {
+      void presentActiveVerse(active, layout);
+      return;
+    }
+    if (!preview?.content.verses?.length) return;
+    const sceneIsLowerThird = isLowerThirdScene(preview);
+    const wantsLowerThird = layout === "lower_third";
+    if (sceneIsLowerThird === wantsLowerThird) return;
+    const theme = wantsLowerThird ? buildLowerThirdTheme(activeTheme) : activeTheme;
+    if (liveFollow) showVerses(preview.content.verses, theme, layout);
+    else previewVerses(preview.content.verses, theme, layout);
+  }, [viewMode, effectiveTheme, themeRevision, presentActiveVerse, preview, verseLayout, liveFollow, activeTheme, showVerses, previewVerses]);
 
   useEffect(() => {
     const refreshForTranslations = async () => {
@@ -742,20 +752,20 @@ export function BibleSearchPage() {
                   key={tab.value}
                   type="button"
                   onClick={() => {
+                    const layout = tab.value === "lower_third" ? "lower_third" : "fullscreen";
                     setViewMode(tab.value);
-                    if (tab.value === "lower_third") {
-                      applyThemeLive({
-                        ...activeTheme,
-                        lowerThird: { ...activeTheme.lowerThird, ...LOWER_THIRD_LAYOUT_DEFAULTS },
-                      });
-                    }
                     const active = useBibleStore.getState().getActiveVerse();
                     if (active) {
-                      void presentActiveVerse(
-                        active,
-                        tab.value === "lower_third" ? "lower_third" : "fullscreen",
-                      );
+                      void presentActiveVerse(active, layout);
+                      return;
                     }
+                    if (tab.value === "compare" || tab.value === "reader") return;
+                    const stored = usePresentationStore.getState().preview;
+                    const verses = stored?.content.verses;
+                    if (!verses?.length) return;
+                    const theme = layout === "lower_third" ? buildLowerThirdTheme(activeTheme) : activeTheme;
+                    if (liveFollow) showVerses(verses, theme, layout);
+                    else previewVerses(verses, theme, layout);
                   }}
                   className={cn(
                     "rounded-md px-3 py-1.5 text-[11px] font-medium transition-colors",

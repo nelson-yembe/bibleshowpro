@@ -1,6 +1,6 @@
-import { sceneFromVersesWithLayout } from "@/engine/scene";
+import { sceneFromVersesWithLayout, type Scene } from "@/engine/scene";
 import { api, type VerseResult } from "@/lib/tauri";
-import { themeForLowerThirdLayout } from "@/lib/lowerThird";
+import { buildLowerThirdTheme, isLowerThirdScene } from "@/lib/lowerThird";
 import { isTranscriptionOnAir } from "@/lib/transcription/transcriptionLiveFollow";
 import {
   createExpandedVerseSessionFromSuggestion,
@@ -12,9 +12,63 @@ import { useServiceStore } from "@/stores/serviceStore";
 import { useThemeStore } from "@/stores/themeStore";
 import type { ScriptureSuggestion } from "@/lib/transcription/types";
 
-function projectionTheme(layout: "fullscreen" | "lower_third" = "fullscreen") {
+export function projectionThemeForLayout(layout: "fullscreen" | "lower_third" = "fullscreen") {
   const base = useThemeStore.getState().activeTheme;
-  return layout === "lower_third" ? themeForLowerThirdLayout(base, "lower_third") : base;
+  return layout === "lower_third" ? buildLowerThirdTheme(base) : base;
+}
+
+function projectionTheme(layout: "fullscreen" | "lower_third" = "fullscreen") {
+  return projectionThemeForLayout(layout);
+}
+
+function versesFromScene(scene: Scene | null | undefined): VerseResult[] {
+  if (!scene?.content.verses?.length) return [];
+  return scene.content.verses;
+}
+
+/** Resolve verses to re-present when toggling fullscreen ↔ lower third. */
+export function resolveTranscriptionVerses(options: {
+  verseSession?: ActiveVerseSession | null;
+  suggestion?: ScriptureSuggestion | null;
+  preview?: Scene | null;
+  program?: Scene | null;
+}): VerseResult[] {
+  const fromSession = options.verseSession ? getCurrentVerse(options.verseSession) : null;
+  if (fromSession) return [fromSession];
+
+  const fromSuggestion = options.suggestion?.verses[0];
+  if (fromSuggestion) return [fromSuggestion];
+
+  const fromPreview = versesFromScene(options.preview);
+  if (fromPreview.length > 0) return fromPreview;
+  return versesFromScene(options.program);
+}
+
+export async function representTranscriptionVerses(
+  verses: VerseResult[],
+  layout: "fullscreen" | "lower_third",
+  toProgram: boolean,
+) {
+  if (verses.length === 0) return;
+
+  const theme = projectionTheme(layout);
+  const store = usePresentationStore.getState();
+
+  if (toProgram) {
+    store.showVerses(verses, theme, layout);
+  } else {
+    store.previewVerses(verses, theme, layout);
+  }
+  usePresentationStore.setState({ previewSource: "transcription" });
+}
+
+export function transcriptionSceneMatchesLayout(
+  scene: Scene | null | undefined,
+  layout: "fullscreen" | "lower_third",
+): boolean {
+  if (!scene) return true;
+  const sceneIsLowerThird = isLowerThirdScene(scene);
+  return layout === "lower_third" ? sceneIsLowerThird : !sceneIsLowerThird;
 }
 
 export async function presentSingleVerse(

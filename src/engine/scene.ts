@@ -1,5 +1,5 @@
 import type { ThemeConfig, VerseResult } from "@/lib/tauri";
-import { themeForLowerThirdLayout } from "@/lib/lowerThird";
+import { resolveVerseLayout, themeForLowerThirdLayout } from "@/lib/lowerThird";
 import { DEFAULT_THEME } from "@/lib/themeConfig";
 import type { ServiceItemContent } from "@/lib/serviceItemContent";
 
@@ -75,7 +75,8 @@ export function sceneFromVersesWithLayout(
   layout: VerseLayout = "fullscreen",
 ): Scene {
   const scene = sceneFromVerses(verses, theme);
-  if (layout === "lower_third") {
+  const effectiveLayout = resolveVerseLayout(theme, layout);
+  if (effectiveLayout === "lower_third") {
     const mergedTheme = themeForLowerThirdLayout(scene.theme, "lower_third");
     return { ...scene, type: "scripture_lower_third", theme: mergedTheme };
   }
@@ -92,11 +93,12 @@ export function sceneFromVerseComparison(
   const primaryBody = showNums ? `[${primary.verse}] ${primary.text}` : primary.text;
   const secondaryBody = showNums ? `[${secondary.verse}] ${secondary.text}` : secondary.text;
 
+  const effectiveLayout = resolveVerseLayout(theme, layout);
   const type =
-    layout === "lower_third" ? "scripture_lower_third" : ("scripture_comparison" as SceneType);
+    effectiveLayout === "lower_third" ? "scripture_lower_third" : ("scripture_comparison" as SceneType);
 
   const mergedTheme =
-    layout === "lower_third" ? themeForLowerThirdLayout(theme, "lower_third") : theme;
+    effectiveLayout === "lower_third" ? themeForLowerThirdLayout(theme, "lower_third") : theme;
 
   return {
     id: crypto.randomUUID(),

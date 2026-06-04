@@ -74,11 +74,19 @@ export function buildLowerThirdTheme(
   extraOverrides?: LowerThirdOverrides | null,
 ): ThemeConfig {
   const theme = mergeThemeConfig(base ?? undefined);
-  return mergeLowerThirdTheme(theme, {
+  const result = mergeLowerThirdTheme(theme, {
     ...LOWER_THIRD_LAYOUT_DEFAULTS,
     ...theme.lowerThird,
     ...extraOverrides,
   });
+  return result;
+}
+
+export function resolveVerseLayout(
+  _theme: ThemeConfig | undefined,
+  layout: "fullscreen" | "lower_third",
+): "fullscreen" | "lower_third" {
+  return layout === "lower_third" ? "lower_third" : "fullscreen";
 }
 
 export function themeForLowerThirdLayout(base: ThemeConfig | undefined, layout: "fullscreen" | "lower_third"): ThemeConfig {
