@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import { SceneRenderer } from "@/components/presentation/SceneRenderer";
 import type { Scene } from "@/engine/scene";
 import { logoScene } from "@/engine/scene";
-import { isTransparentLowerThirdOutput } from "@/lib/lowerThird";
+import { isTransparentOutput } from "@/lib/lowerThird";
 import { api } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import "../index.css";
@@ -43,7 +43,7 @@ function useOutputWakeLock() {
 
 function useTransparentOutput(scene: Scene | null) {
   useEffect(() => {
-    const transparent = isTransparentLowerThirdOutput(scene, null, false);
+    const transparent = isTransparentOutput(scene, null, false);
     document.documentElement.classList.toggle("bsp-output-transparent", transparent);
     document.body.classList.toggle("bsp-output-transparent", transparent);
     return () => {
@@ -59,7 +59,7 @@ function OutputApp() {
   useOutputWakeLock();
   useTransparentOutput(scene);
 
-  const transparent = isTransparentLowerThirdOutput(scene, null, false);
+  const transparent = isTransparentOutput(scene, null, false);
 
   useEffect(() => {
     const hydrate = async () => {

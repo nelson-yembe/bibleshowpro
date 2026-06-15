@@ -68,6 +68,31 @@ export function isTransparentLowerThirdOutput(
   return theme.lowerThird.transparentOutput;
 }
 
+/** Text-bearing scenes that support a transparent (keyed) output canvas. */
+const TRANSPARENT_OUTPUT_SCENE_TYPES: ReadonlySet<Scene["type"]> = new Set([
+  "scripture_fullscreen",
+  "scripture_comparison",
+  "scripture_lower_third",
+  "speaker_lower_third",
+  "song_lyrics",
+  "announcement",
+]);
+
+/**
+ * Whether the output canvas should be transparent for OBS/NDI keying. Unlike
+ * `isTransparentLowerThirdOutput`, this also applies to fullscreen scripture/song
+ * scenes, so the background drops out while the text (or lower-third bar) remains.
+ */
+export function isTransparentOutput(
+  scene: Scene | null | undefined,
+  themeOverride?: Partial<ThemeConfig> | null,
+  compact?: boolean,
+): boolean {
+  if (!scene || compact || !TRANSPARENT_OUTPUT_SCENE_TYPES.has(scene.type)) return false;
+  const theme = mergeThemeConfig({ ...(scene.theme ?? undefined), ...themeOverride });
+  return theme.lowerThird.transparentOutput;
+}
+
 /** Merge stream layout defaults without overriding saved theme / modal settings. */
 export function buildLowerThirdTheme(
   base?: ThemeConfig | null,

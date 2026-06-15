@@ -28,7 +28,7 @@ import {
   applyBarColorOpacity,
   clipTextToMaxLines,
   estimateLowerThirdMaxLines,
-  isTransparentLowerThirdOutput,
+  isTransparentOutput,
   lowerThirdAnimationClass,
   lowerThirdBarDimensions,
   lowerThirdContentLayout,
@@ -232,13 +232,14 @@ export function SceneRenderer({
   const isScriptureFullscreen =
     scene.type === "scripture_fullscreen" || scene.type === "scripture_comparison";
 
-  const transparentLtOutput = isTransparentLowerThirdOutput(scene, themeOverride, compact);
+  const transparentOutput = isTransparentOutput(scene, themeOverride, compact);
   const mediaUnderlay =
-    transparentLtOutput &&
+    transparentOutput &&
+    isLowerThird &&
     ((theme.backgroundType === "video" && theme.backgroundVideo) ||
       (theme.backgroundType === "image" && theme.backgroundImage));
 
-  const rootStyle: CSSProperties = transparentLtOutput
+  const rootStyle: CSSProperties = transparentOutput
     ? { backgroundColor: mediaUnderlay ? theme.backgroundColor : "transparent" }
     : { ...bgStyle };
 
@@ -270,17 +271,17 @@ export function SceneRenderer({
         />
       )}
 
-      {!transparentLtOutput && (theme.backgroundType === "image" || theme.backgroundType === "video") && theme.backgroundOverlay > 0 && (
+      {!transparentOutput && (theme.backgroundType === "image" || theme.backgroundType === "video") && theme.backgroundOverlay > 0 && (
         <div className="absolute inset-0 z-[1]" style={{ backgroundColor: `rgba(0,0,0,${theme.backgroundOverlay})` }} />
       )}
-      {!transparentLtOutput && theme.backgroundType === "image" && theme.backgroundImage && (
+      {!transparentOutput && theme.backgroundType === "image" && theme.backgroundImage && (
         <img
           src={theme.backgroundImage}
           alt=""
           className="absolute inset-0 z-0 h-full w-full object-cover"
         />
       )}
-      {!transparentLtOutput && theme.backgroundType === "video" && theme.backgroundVideo && (
+      {!transparentOutput && theme.backgroundType === "video" && theme.backgroundVideo && (
         <video
           className="absolute inset-0 z-0 h-full w-full object-cover"
           src={theme.backgroundVideo}
@@ -291,7 +292,7 @@ export function SceneRenderer({
         />
       )}
 
-      {!transparentLtOutput && !hideVectorLayers && (
+      {!transparentOutput && !hideVectorLayers && (
         <VectorOverlay
           design={theme.vectorDesign}
           layer="background"
