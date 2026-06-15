@@ -1,3 +1,5 @@
+use once_cell::sync::Lazy;
+use regex::Regex;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -429,18 +431,31 @@ pub fn import_song_from_text(
     raw_text: String,
     tags_json: Option<String>,
 ) -> Result<ImportSongResult, String> {
-    let sections = parse_sections_from_text(&raw_text);
-    let duplicate_of = find_duplicate_title(conn, &title)?;
+    let parsed = parse_song_from_text(&raw_text);
+    let final_title = parsed
+        .title
+        .filter(|t| !t.trim().is_empty())
+        .unwrap_or(title);
+    let final_artist = parsed
+        .artist
+        .filter(|a| !a.trim().is_empty())
+        .or(artist);
+    let arrangement = if parsed.arrangement.is_empty() {
+        None
+    } else {
+        Some(parsed.arrangement)
+    };
+    let duplicate_of = find_duplicate_title(conn, &final_title)?;
     let input = CreateSongInput {
-        title,
-        artist,
+        title: final_title,
+        artist: final_artist,
         default_key: None,
         bpm: None,
         tags_json,
         operator_notes: None,
         theme_json: None,
-        sections,
-        arrangement: None,
+        sections: parsed.sections,
+        arrangement,
         copyright: None,
         lines_per_slide: Some(4),
     };
@@ -859,98 +874,322 @@ pub fn rebuild_slides(conn: &Connection, song_id: &str, section_order: &[String]
     Ok(())
 }
 
+/// Split text into stanzas on blank-line boundaries; trims lines, drops empties within a stanza.
+fn split_into_stanzas(lyrics: &str) -> Vec<Vec<&str>> {
+    let mut stanzas: Vec<Vec<&str>> = Vec::new();
+    let mut current: Vec<&str> = Vec::new();
+    for raw_line in lyrics.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            if !current.is_empty() {
+                stanzas.push(std::mem::take(&mut current));
+            }
+            continue;
+        }
+        current.push(line);
+    }
+    if !current.is_empty() {
+        stanzas.push(current);
+    }
+    stanzas
+}
+
+/// Distribute `lines` into balanced chunks of at most `lines_per_slide` (avoids orphan single lines).
+fn balanced_chunks<'a>(lines: &[&'a str], lines_per_slide: usize) -> Vec<Vec<&'a str>> {
+    if lines.len() <= lines_per_slide {
+        return vec![lines.to_vec()];
+    }
+    let chunk_count = lines.len().div_ceil(lines_per_slide);
+    let base = lines.len() / chunk_count;
+    let mut remainder = lines.len() % chunk_count;
+
+    let mut chunks = Vec::with_capacity(chunk_count);
+    let mut index = 0;
+    for _ in 0..chunk_count {
+        let mut size = base;
+        if remainder > 0 {
+            size += 1;
+            remainder -= 1;
+        }
+        chunks.push(lines[index..index + size].to_vec());
+        index += size;
+    }
+    chunks
+}
+
+/// Stanza-aware slide splitting: respects blank-line breaks, keeps whole stanzas
+/// together when they fit, and balances larger stanzas so no slide is left with a
+/// lonely orphan line. Mirrors `splitLyricsToSlides` in `src/lib/songTypes.ts`.
 pub fn split_lyrics_to_slides(lyrics: &str, lines_per_slide: usize) -> Vec<String> {
-    let lines: Vec<&str> = lyrics
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .collect();
-    if lines.is_empty() {
+    let per_slide = lines_per_slide.max(1);
+    let stanzas = split_into_stanzas(lyrics);
+    if stanzas.is_empty() {
         return vec![];
     }
     let mut slides = Vec::new();
-    let mut chunk = Vec::new();
-    for line in lines {
-        chunk.push(line);
-        if chunk.len() >= lines_per_slide {
+    for stanza in stanzas {
+        for chunk in balanced_chunks(&stanza, per_slide) {
             slides.push(chunk.join("\n"));
-            chunk = Vec::new();
         }
-    }
-    if !chunk.is_empty() {
-        slides.push(chunk.join("\n"));
     }
     slides
 }
 
-pub fn parse_sections_from_text(raw: &str) -> Vec<SectionInput> {
-    let mut sections = Vec::new();
+/// Section-type keywords used to recognize headers in plain-text lyric files.
+const SECTION_KEYWORDS: &str =
+    r"intro|verse|pre[-\s]?chorus|chorus|refrain|bridge|tag|outro|ending|instrumental|interlude|vamp|coda";
+
+/// Whole-line bare header, e.g. `Verse 1`, `Chorus (once)`, `Bridge:`, `[Chorus]`.
+static BARE_HEADER_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(&format!(
+        r"(?i)^\s*(?:{SECTION_KEYWORDS})(?:\s*\d+)?\s*(?:\([^)]*\))?\s*:?\s*$"
+    ))
+    .unwrap()
+});
+
+/// A header keyword glued onto the end of a lyric line, e.g. `...all to usOutro:`.
+/// Requires the keyword to be welded directly to a word (no space) and end with a colon,
+/// which is a strong signal of a corrupted line break rather than a normal lyric.
+static GLUED_HEADER_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(&format!(
+        r"(?i)^(?P<pre>.+?[\p{{L}}0-9'\u{{2019}},])(?P<kw>{SECTION_KEYWORDS})\s*:\s*$"
+    ))
+    .unwrap()
+});
+
+/// Metadata lines in a file preamble, e.g. `Artist: Loveworld Singers`.
+static META_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)^\s*(artist|author|by|written by|words and music|ccli|copyright|key|tempo|bpm)\s*:\s*(.+?)\s*$")
+        .unwrap()
+});
+
+#[derive(Debug, Clone, Default)]
+pub struct ParsedSong {
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub sections: Vec<SectionInput>,
+    /// Section ids in performance order; repeats reference the same section id.
+    pub arrangement: Vec<String>,
+}
+
+/// If `line` is a section header (bracketed or bare keyword), return its inner text.
+fn match_header(line: &str) -> Option<String> {
+    if line.starts_with('[') && line.ends_with(']') && line.len() >= 2 {
+        return Some(line.trim_matches(['[', ']']).trim().to_string());
+    }
+    if BARE_HEADER_RE.is_match(line) {
+        return Some(line.trim().to_string());
+    }
+    None
+}
+
+/// Detect a header keyword glued onto the end of a lyric line. Returns (lyric_prefix, header).
+fn match_glued_header(line: &str) -> Option<(String, String)> {
+    let caps = GLUED_HEADER_RE.captures(line)?;
+    let pre = caps.name("pre")?.as_str().trim();
+    let kw = caps.name("kw")?.as_str().trim();
+    if pre.is_empty() {
+        return None;
+    }
+    Some((pre.to_string(), kw.to_string()))
+}
+
+/// Turn a raw header into a clean label: strip brackets, parenthetical notes and trailing colon.
+fn clean_header_label(header: &str) -> String {
+    let mut label = header.trim().trim_matches(['[', ']']).trim().to_string();
+    if let Some(open) = label.find('(') {
+        label.truncate(open);
+    }
+    label = label.trim().trim_end_matches(':').trim().to_string();
+    label
+}
+
+/// Drop leading/trailing blank lines from a section body.
+fn trim_blank_edges(lines: &[String]) -> Vec<String> {
+    let start = lines.iter().position(|l| !l.trim().is_empty());
+    let end = lines.iter().rposition(|l| !l.trim().is_empty());
+    match (start, end) {
+        (Some(s), Some(e)) => lines[s..=e].to_vec(),
+        _ => Vec::new(),
+    }
+}
+
+/// Flush the accumulated lyric lines into a section, deduplicating identical bodies and
+/// recording the (possibly repeated) section id into the arrangement.
+#[allow(clippy::too_many_arguments)]
+fn flush_parsed_section(
+    sections: &mut Vec<SectionInput>,
+    arrangement: &mut Vec<String>,
+    dedup: &mut std::collections::HashMap<(String, String), String>,
+    label: Option<&str>,
+    section_type: &str,
+    lines: &mut Vec<String>,
+    sort: &mut i32,
+) {
+    let body = trim_blank_edges(lines);
+    lines.clear();
+    if body.is_empty() && label.is_none() {
+        return;
+    }
+    let lyrics = body.join("\n");
+    let key = (
+        section_type.to_string(),
+        lyrics.to_lowercase().split_whitespace().collect::<Vec<_>>().join(" "),
+    );
+    if !lyrics.is_empty() {
+        if let Some(existing) = dedup.get(&key) {
+            arrangement.push(existing.clone());
+            return;
+        }
+    }
+    let id = Uuid::new_v4().to_string();
+    sections.push(SectionInput {
+        id: Some(id.clone()),
+        section_type: section_type.to_string(),
+        label: label
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("Section {}", *sort + 1)),
+        lyrics,
+        sort_order: *sort,
+        lines_per_slide: None,
+    });
+    if !key.1.is_empty() {
+        dedup.insert(key, id.clone());
+    }
+    arrangement.push(id);
+    *sort += 1;
+}
+
+/// Parse a plain-text lyric file into a structured song: title/artist metadata,
+/// deduplicated sections, and an arrangement that repeats reused sections (e.g. choruses).
+///
+/// Recognizes section headers whether bracketed (`[Chorus]`) or bare (`Chorus`, `Verse 2`,
+/// `Chorus (twice)`), and recovers a header keyword that was accidentally glued to the end
+/// of a lyric line. Vocal cues like `Choir:` / `Solo:` are kept as lyric text. Blank lines
+/// within a section are preserved so the stanza-aware slide splitter can use them.
+pub fn parse_song_from_text(raw: &str) -> ParsedSong {
+    let has_header = raw.lines().any(|line| match_header(line.trim()).is_some());
+
+    let mut parsed = ParsedSong::default();
+    let mut dedup: std::collections::HashMap<(String, String), String> =
+        std::collections::HashMap::new();
     let mut current_label: Option<String> = None;
     let mut current_type = "verse".to_string();
     let mut lines: Vec<String> = Vec::new();
+    let mut seen_header = false;
     let mut sort = 0;
 
-    let flush = |sections: &mut Vec<SectionInput>, label: &str, section_type: &str, lines: &mut Vec<String>, sort: &mut i32| {
-        if lines.is_empty() && label.is_empty() {
-            return;
-        }
-        sections.push(SectionInput {
-            id: None,
-            section_type: section_type.to_string(),
-            label: if label.is_empty() { format!("Section {}", *sort + 1) } else { label.to_string() },
-            lyrics: lines.join("\n"),
-            sort_order: *sort,
-            lines_per_slide: None,
-        });
-        *sort += 1;
-        lines.clear();
-    };
+    for raw_line in raw.lines() {
+        let trimmed = raw_line.trim();
 
-    for line in raw.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            if current_label.is_some() || !lines.is_empty() {
-                flush(
-                    &mut sections,
-                    current_label.as_deref().unwrap_or(""),
-                    &current_type,
-                    &mut lines,
-                    &mut sort,
-                );
-            }
-            let header = trimmed.trim_matches(['[', ']']).trim();
-            current_type = detect_section_type(header);
-            current_label = Some(header.to_string());
+        if let Some(header) = match_header(trimmed) {
+            flush_parsed_section(
+                &mut parsed.sections,
+                &mut parsed.arrangement,
+                &mut dedup,
+                current_label.as_deref(),
+                &current_type,
+                &mut lines,
+                &mut sort,
+            );
+            seen_header = true;
+            current_type = detect_section_type(&header);
+            current_label = Some(clean_header_label(&header));
             continue;
         }
-        if !trimmed.is_empty() {
+
+        if let Some((pre, kw)) = match_glued_header(trimmed) {
+            lines.push(pre);
+            flush_parsed_section(
+                &mut parsed.sections,
+                &mut parsed.arrangement,
+                &mut dedup,
+                current_label.as_deref(),
+                &current_type,
+                &mut lines,
+                &mut sort,
+            );
+            seen_header = true;
+            current_type = detect_section_type(&kw);
+            current_label = Some(clean_header_label(&kw));
+            continue;
+        }
+
+        // Preamble: pull title/artist out of the lines before the first section header.
+        if has_header && !seen_header && lines.is_empty() {
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Some(caps) = META_RE.captures(trimmed) {
+                let key = caps.get(1).map(|m| m.as_str().to_lowercase()).unwrap_or_default();
+                let value = caps.get(2).map(|m| m.as_str().trim().to_string());
+                if matches!(key.as_str(), "artist" | "author" | "by" | "written by" | "words and music")
+                {
+                    if parsed.artist.is_none() {
+                        parsed.artist = value;
+                    }
+                }
+                continue;
+            }
+            if parsed.title.is_none() {
+                parsed.title = Some(trimmed.to_string());
+                continue;
+            }
+            continue;
+        }
+
+        if trimmed.is_empty() {
+            if !lines.is_empty() {
+                lines.push(String::new());
+            }
+        } else {
             lines.push(trimmed.to_string());
         }
     }
-    flush(
-        &mut sections,
-        current_label.as_deref().unwrap_or("Verse 1"),
+
+    let final_label = current_label.clone().or_else(|| {
+        if parsed.sections.is_empty() {
+            Some("Verse 1".to_string())
+        } else {
+            None
+        }
+    });
+    flush_parsed_section(
+        &mut parsed.sections,
+        &mut parsed.arrangement,
+        &mut dedup,
+        final_label.as_deref(),
         &current_type,
         &mut lines,
         &mut sort,
     );
 
-    if sections.is_empty() && !raw.trim().is_empty() {
-        sections.push(SectionInput {
-            id: None,
+    if parsed.sections.is_empty() && !raw.trim().is_empty() {
+        let id = Uuid::new_v4().to_string();
+        parsed.sections.push(SectionInput {
+            id: Some(id.clone()),
             section_type: "verse".to_string(),
             label: "Verse 1".to_string(),
             lyrics: raw.trim().to_string(),
             sort_order: 0,
             lines_per_slide: None,
         });
+        parsed.arrangement.push(id);
     }
-    sections
+
+    parsed
+}
+
+/// Back-compat helper returning only the parsed sections.
+pub fn parse_sections_from_text(raw: &str) -> Vec<SectionInput> {
+    parse_song_from_text(raw).sections
 }
 
 fn detect_section_type(header: &str) -> String {
     let h = header.to_lowercase();
-    if h.contains("chorus") {
+    if h.contains("pre-chorus") || h.contains("prechorus") || h.contains("pre chorus") {
+        "pre_chorus".to_string()
+    } else if h.contains("chorus") {
         "chorus".to_string()
     } else if h.contains("bridge") {
         "bridge".to_string()
@@ -958,12 +1197,10 @@ fn detect_section_type(header: &str) -> String {
         "tag".to_string()
     } else if h.contains("ending") || h.contains("outro") {
         "ending".to_string()
-    } else if h.contains("instrumental") {
+    } else if h.contains("instrumental") || h.contains("interlude") || h.contains("vamp") {
         "instrumental".to_string()
     } else if h.contains("spoken") {
         "spoken".to_string()
-    } else if h.contains("pre-chorus") || h.contains("prechorus") {
-        "pre_chorus".to_string()
     } else if h.contains("intro") {
         "intro".to_string()
     } else {
@@ -986,6 +1223,151 @@ mod tests {
         assert_eq!(sections[1].sort_order, 1);
         assert_eq!(sections[2].label, "Verse 1");
         assert_eq!(sections[2].sort_order, 2);
+    }
+
+    #[test]
+    fn split_keeps_whole_stanza_when_it_fits() {
+        let slides = split_lyrics_to_slides("line one\nline two\nline three", 4);
+        assert_eq!(slides, vec!["line one\nline two\nline three".to_string()]);
+    }
+
+    #[test]
+    fn split_balances_oversized_stanza_without_orphans() {
+        // 5 lines @ 4 per slide -> 3 + 2 (not 4 + 1)
+        let slides = split_lyrics_to_slides("a\nb\nc\nd\ne", 4);
+        assert_eq!(slides, vec!["a\nb\nc".to_string(), "d\ne".to_string()]);
+    }
+
+    #[test]
+    fn split_respects_blank_line_stanza_breaks() {
+        // Two couplets separated by a blank line stay on separate slides.
+        let slides = split_lyrics_to_slides("a\nb\n\nc\nd", 4);
+        assert_eq!(slides, vec!["a\nb".to_string(), "c\nd".to_string()]);
+    }
+
+    #[test]
+    fn split_handles_multiple_blank_lines_as_single_break() {
+        let slides = split_lyrics_to_slides("a\nb\n\n\n\nc\nd", 4);
+        assert_eq!(slides, vec!["a\nb".to_string(), "c\nd".to_string()]);
+    }
+
+    #[test]
+    fn split_empty_lyrics_returns_no_slides() {
+        assert!(split_lyrics_to_slides("\n\n  \n", 4).is_empty());
+    }
+
+    const DEAREST_SHEPHERD: &str = "\
+ Dearest Shepherd
+Artist: Loveworld Singers
+
+Verse 1
+Lord, you're our dearest
+shepherd
+And so we shall not want
+
+Chorus (once)
+Lord God, you are with us
+We will not be dismayed
+
+Verse 2
+We're not afraid of what's
+before us
+Choir: Every day is a glorious
+Solo: The glory we have is not
+
+Chorus (twice)
+Lord God, you are with us
+We will not be dismayedOutro:
+
+Solo:
+All we've known
+Is your voice
+";
+
+    #[test]
+    fn parse_detects_bare_headers_and_types() {
+        let parsed = parse_song_from_text(DEAREST_SHEPHERD);
+        let labels: Vec<&str> = parsed.sections.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(labels, vec!["Verse 1", "Chorus", "Verse 2", "Outro"]);
+        let types: Vec<&str> = parsed
+            .sections
+            .iter()
+            .map(|s| s.section_type.as_str())
+            .collect();
+        assert_eq!(types, vec!["verse", "chorus", "verse", "ending"]);
+    }
+
+    #[test]
+    fn parse_extracts_title_and_artist_from_content() {
+        let parsed = parse_song_from_text(DEAREST_SHEPHERD);
+        assert_eq!(parsed.title.as_deref(), Some("Dearest Shepherd"));
+        assert_eq!(parsed.artist.as_deref(), Some("Loveworld Singers"));
+    }
+
+    #[test]
+    fn parse_dedupes_identical_choruses_and_repeats_in_arrangement() {
+        let parsed = parse_song_from_text(DEAREST_SHEPHERD);
+        // 4 unique sections, but arrangement has 5 slots (chorus appears twice).
+        assert_eq!(parsed.sections.len(), 4);
+        assert_eq!(parsed.arrangement.len(), 5);
+        let chorus_id = parsed
+            .sections
+            .iter()
+            .find(|s| s.section_type == "chorus")
+            .and_then(|s| s.id.clone())
+            .unwrap();
+        let repeats = parsed
+            .arrangement
+            .iter()
+            .filter(|id| **id == chorus_id)
+            .count();
+        assert_eq!(repeats, 2);
+    }
+
+    #[test]
+    fn parse_recovers_glued_outro_header() {
+        let parsed = parse_song_from_text(DEAREST_SHEPHERD);
+        let outro = parsed
+            .sections
+            .iter()
+            .find(|s| s.section_type == "ending")
+            .expect("outro section");
+        // The lyric welded to "Outro:" stays with the chorus, not the outro.
+        assert!(!outro.lyrics.contains("dismayed"));
+        // Vocal cues are kept as lyric text inside the outro.
+        assert!(outro.lyrics.contains("Solo:"));
+        assert!(outro.lyrics.contains("All we've known"));
+    }
+
+    #[test]
+    fn parse_keeps_vocal_cues_as_lyrics() {
+        let parsed = parse_song_from_text(DEAREST_SHEPHERD);
+        let verse2 = &parsed.sections[2];
+        assert!(verse2.lyrics.contains("Choir: Every day is a glorious"));
+        assert!(verse2.lyrics.contains("Solo: The glory we have is not"));
+    }
+
+    #[test]
+    fn parse_strips_parenthetical_note_from_chorus_label() {
+        let parsed = parse_song_from_text("Chorus (twice)\nsing it loud\n");
+        assert_eq!(parsed.sections[0].label, "Chorus");
+        assert_eq!(parsed.sections[0].section_type, "chorus");
+    }
+
+    #[test]
+    fn parse_bracketed_headers_still_work() {
+        let parsed = parse_song_from_text("[Pre-Chorus]\nlift him up\n");
+        assert_eq!(parsed.sections[0].label, "Pre-Chorus");
+        assert_eq!(parsed.sections[0].section_type, "pre_chorus");
+    }
+
+    #[test]
+    fn parse_unstructured_text_does_not_steal_title() {
+        // No headers anywhere: keep everything as a single verse, no title theft.
+        let parsed = parse_song_from_text("just a line\nanother line\n");
+        assert_eq!(parsed.title, None);
+        assert_eq!(parsed.sections.len(), 1);
+        assert_eq!(parsed.sections[0].section_type, "verse");
     }
 
     #[test]

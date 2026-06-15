@@ -148,23 +148,59 @@ export function copyrightLine(copyright?: SongCopyright | null): string {
   return parts.join(" · ");
 }
 
+/** Split text into stanzas on blank-line boundaries; trims lines, drops empties within a stanza. */
+function splitIntoStanzas(lyrics: string): string[][] {
+  const stanzas: string[][] = [];
+  let current: string[] = [];
+  for (const rawLine of lyrics.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) {
+      if (current.length > 0) {
+        stanzas.push(current);
+        current = [];
+      }
+      continue;
+    }
+    current.push(line);
+  }
+  if (current.length > 0) stanzas.push(current);
+  return stanzas;
+}
+
+/** Distribute `lines` into balanced chunks of at most `linesPerSlide` (avoids orphan single lines). */
+function balancedChunks(lines: string[], linesPerSlide: number): string[][] {
+  if (lines.length <= linesPerSlide) return [lines];
+  const chunkCount = Math.ceil(lines.length / linesPerSlide);
+  const base = Math.floor(lines.length / chunkCount);
+  let remainder = lines.length % chunkCount;
+
+  const chunks: string[][] = [];
+  let index = 0;
+  for (let i = 0; i < chunkCount; i += 1) {
+    const size = base + (remainder > 0 ? 1 : 0);
+    if (remainder > 0) remainder -= 1;
+    chunks.push(lines.slice(index, index + size));
+    index += size;
+  }
+  return chunks;
+}
+
+/**
+ * Stanza-aware slide splitting: respects blank-line breaks, keeps whole stanzas
+ * together when they fit, and balances larger stanzas so no slide is left with a
+ * lonely orphan line.
+ */
 export function splitLyricsToSlides(lyrics: string, linesPerSlide = 4): string[] {
-  const lines = lyrics
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
-  if (lines.length === 0) return [];
+  const perSlide = Math.max(1, linesPerSlide);
+  const stanzas = splitIntoStanzas(lyrics);
+  if (stanzas.length === 0) return [];
 
   const slides: string[] = [];
-  let chunk: string[] = [];
-  for (const line of lines) {
-    chunk.push(line);
-    if (chunk.length >= linesPerSlide) {
+  for (const stanza of stanzas) {
+    for (const chunk of balancedChunks(stanza, perSlide)) {
       slides.push(chunk.join("\n"));
-      chunk = [];
     }
   }
-  if (chunk.length > 0) slides.push(chunk.join("\n"));
   return slides;
 }
 
