@@ -1,6 +1,6 @@
 use tauri::State;
 
-use crate::bible::detection::{self, ScriptureDetectionMatch};
+use crate::bible::detection::{self, DetectionContext, ScriptureDetectionMatch};
 use crate::db::lock_db;
 use crate::transcription::{
     delete_session, get_session, list_sessions, save_session, SaveTranscriptionSessionInput,
@@ -9,8 +9,11 @@ use crate::transcription::{
 use crate::AppState;
 
 #[tauri::command]
-pub fn detect_scripture_in_text(text: String) -> Result<Vec<ScriptureDetectionMatch>, String> {
-    Ok(detection::detect_references_in_text(&text))
+pub fn detect_scripture_in_text(
+    text: String,
+    context: Option<DetectionContext>,
+) -> Result<Vec<ScriptureDetectionMatch>, String> {
+    Ok(detection::detect_references_with_context(&text, context.as_ref()))
 }
 
 #[tauri::command]

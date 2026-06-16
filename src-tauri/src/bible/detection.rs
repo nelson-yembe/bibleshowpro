@@ -2,8 +2,9 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::bible::books::{max_chapters_for_book, resolve_book};
+use crate::bible::books::{max_chapters_for_book, resolve_book, CANONICAL_BOOKS};
 use crate::bible::parser::ParsedReference;
+use crate::bible::spoken_number::normalize_spoken_numbers;
 
 static SPOKEN_CHAPTER_VERSE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
@@ -61,6 +62,38 @@ static CHAPTER_ONLY: Lazy<Regex> = Lazy::new(|| {
     .unwrap()
 });
 
+// "the twenty-third psalm" -> (after number folding) "23 psalm" -> Psalm 23.
+static ORDINAL_PSALM: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\b(?P<chapter>\d{1,3})(?:st|nd|rd|th)?\s+psalms?\b").unwrap()
+});
+
+// "the third chapter of John" -> (after number folding) "3 chapter of John".
+static CHAPTER_OF_BOOK: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?i)\b(?P<chapter>\d{1,3})(?:st|nd|rd|th)?\s+chapter\s+of\s+(?P<book>(?:[1-3]\s+|first\s+|second\s+|third\s+)?[a-z]+(?:\s+(?:of\s+)?[a-z]+)*?)(?:\s*,?\s*(?:verse|verses)\s+(?P<verse>\d{1,3})(?:\s*(?:-|through|to)\s*(?P<verse_end>\d{1,3}))?)?",
+    )
+    .unwrap()
+});
+
+// Context fallbacks (no book spoken): resolve against the active sermon passage.
+static CONTEXT_CHAPTER_VERSE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?i)\bchapter\s+(?P<chapter>\d{1,3})\s*,?\s*(?:verse|verses)\s+(?P<verse>\d{1,3})(?:\s*(?:-|through|to)\s*(?P<verse_end>\d{1,3}))?",
+    )
+    .unwrap()
+});
+
+static CONTEXT_VERSE_ONLY: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?i)\b(?:verse|verses)\s+(?P<verse>\d{1,3})(?:\s*(?:-|through|to)\s*(?P<verse_end>\d{1,3}))?",
+    )
+    .unwrap()
+});
+
+static CONTEXT_CHAPTER_ONLY: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\bchapter\s+(?P<chapter>\d{1,3})\b").unwrap()
+});
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ScriptureDetectionMatch {
     pub matched_text: String,
@@ -68,6 +101,36 @@ pub struct ScriptureDetectionMatch {
     pub parsed: ParsedReference,
     pub confidence: f32,
     pub detection_type: String,
+    /// Other plausible readings the operator can switch to (ambiguous speech).
+    #[serde(default)]
+    pub alternatives: Vec<String>,
+}
+
+/// Optional sermon context so bare references ("verse 16", "chapter 3 verse 16")
+/// can resolve against the book/chapter the preacher is currently in.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetectionContext {
+    pub book_number: i32,
+    pub book_name: String,
+    pub chapter: Option<i32>,
+}
+
+/// How a reference was recognized — drives confidence and ambiguity handling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MatchKind {
+    /// "John 3:16" — explicit colon, highest trust.
+    ExplicitColon,
+    /// "John chapter 3 verse 16" — explicit chapter/verse words.
+    SpokenChapterVerse,
+    /// "John 3 16" — two bare numbers, inherently ambiguous.
+    Spaced,
+    /// "John 316" — merged digits split heuristically.
+    Merged,
+    /// "John 3" — chapter only.
+    ChapterOnly,
+    /// "verse 16" / "chapter 3 verse 16" resolved via sermon context.
+    Context,
 }
 
 fn normalize_book_prefix(raw: &str) -> String {
@@ -93,15 +156,51 @@ fn build_reference(book_name: &str, chapter: i32, verse_start: Option<i32>, vers
     }
 }
 
-fn confidence_for(chapter: i32, verse_start: Option<i32>, spoken: bool) -> f32 {
-    if verse_start.is_some() && !spoken {
-        0.95
-    } else if verse_start.is_some() {
-        0.85
-    } else if chapter > 0 {
-        0.7
+fn has_intro_cue(matched_text: &str) -> bool {
+    let lower = matched_text.to_ascii_lowercase();
+    ["turn", "read", "open", "let's", "lets", "look at", "go to"]
+        .iter()
+        .any(|cue| lower.contains(cue))
+}
+
+fn confidence_for_kind(kind: MatchKind, verse_start: Option<i32>, has_cue: bool) -> f32 {
+    let base: f32 = match kind {
+        MatchKind::ExplicitColon => 0.95,
+        MatchKind::SpokenChapterVerse => 0.9,
+        MatchKind::Spaced => {
+            if verse_start.is_some() {
+                0.8
+            } else {
+                0.68
+            }
+        }
+        MatchKind::Merged => 0.78,
+        MatchKind::ChapterOnly => 0.68,
+        MatchKind::Context => {
+            if verse_start.is_some() {
+                0.8
+            } else {
+                0.66
+            }
+        }
+    };
+    (base + if has_cue { 0.03_f32 } else { 0.0_f32 }).min(0.99)
+}
+
+/// For two bare spoken numbers ("Psalm one twenty one" -> "1 21"), the speaker
+/// may have meant a single chapter ("Psalm 121"). Offer it when valid.
+fn concat_chapter_alternative(
+    book_name: &str,
+    chapter: i32,
+    verse_start: Option<i32>,
+    max_ch: i32,
+) -> Option<String> {
+    let verse = verse_start?;
+    let concat = format!("{chapter}{verse}").parse::<i32>().ok()?;
+    if concat != chapter && (1..=max_ch).contains(&concat) {
+        Some(format!("{book_name} {concat}"))
     } else {
-        0.5
+        None
     }
 }
 
@@ -111,11 +210,30 @@ fn parse_capture(
     verse_start: Option<i32>,
     verse_end: Option<i32>,
     matched_text: &str,
-    spoken: bool,
+    kind: MatchKind,
 ) -> Option<ScriptureDetectionMatch> {
     let book_key = normalize_book_prefix(book_raw);
     let (book_number, book_name) = resolve_book(&book_key)?;
+    finalize_capture(
+        book_number,
+        book_name,
+        chapter,
+        verse_start,
+        verse_end,
+        matched_text,
+        kind,
+    )
+}
 
+fn finalize_capture(
+    book_number: i32,
+    book_name: &'static str,
+    chapter: i32,
+    verse_start: Option<i32>,
+    verse_end: Option<i32>,
+    matched_text: &str,
+    kind: MatchKind,
+) -> Option<ScriptureDetectionMatch> {
     let max_ch = max_chapters_for_book(book_number);
     let (chapter, verse_start, verse_end) = if chapter > max_ch && verse_start.is_none() {
         if let Some((split_ch, split_vs)) = split_merged_digits(&chapter.to_string()) {
@@ -139,6 +257,13 @@ fn parse_capture(
         }
     }
 
+    let mut alternatives = Vec::new();
+    if matches!(kind, MatchKind::Spaced | MatchKind::Context) {
+        if let Some(alt) = concat_chapter_alternative(book_name, chapter, verse_start, max_ch) {
+            alternatives.push(alt);
+        }
+    }
+
     let parsed = ParsedReference {
         book_number,
         book_name: book_name.to_string(),
@@ -151,8 +276,9 @@ fn parse_capture(
         matched_text: matched_text.to_string(),
         normalized_reference,
         parsed,
-        confidence: confidence_for(chapter, verse_start, spoken),
+        confidence: confidence_for_kind(kind, verse_start, has_intro_cue(matched_text)),
         detection_type: "explicit".to_string(),
+        alternatives,
     })
 }
 
@@ -161,25 +287,6 @@ fn preprocess_spoken_text(text: &str) -> String {
     let mut s = text.to_lowercase();
     s = s.replace(',', " ");
     s = s.replace('.', " ");
-    // Keep numeric ranges like "1-2"; only split spoken compounds such as "forty-seven".
-    {
-        let chars: Vec<char> = s.chars().collect();
-        let mut out = String::with_capacity(s.len());
-        for (i, ch) in chars.iter().enumerate() {
-            if *ch == '-' {
-                let prev_digit = i > 0 && chars[i - 1].is_ascii_digit();
-                let next_digit = i + 1 < chars.len() && chars[i + 1].is_ascii_digit();
-                if prev_digit && next_digit {
-                    out.push('-');
-                } else {
-                    out.push(' ');
-                }
-            } else {
-                out.push(*ch);
-            }
-        }
-        s = out;
-    }
 
     let fillers = [
         "turn with me to ",
@@ -218,54 +325,9 @@ fn preprocess_spoken_text(text: &str) -> String {
         s = format!("john {}", &s[5..]);
     }
 
-    const WORDS: &[(&str, &str)] = &[
-        ("twenty first", "21"),
-        ("twenty second", "22"),
-        ("twenty third", "23"),
-        ("twenty fourth", "24"),
-        ("twenty fifth", "25"),
-        ("twenty sixth", "26"),
-        ("twenty seventh", "27"),
-        ("twenty eighth", "28"),
-        ("twenty ninth", "29"),
-        ("thirty first", "31"),
-        ("twenty", "20"),
-        ("thirty", "30"),
-        ("forty", "40"),
-        ("fifty", "50"),
-        ("fourteen", "14"),
-        ("fifteen", "15"),
-        ("sixteen", "16"),
-        ("seventeen", "17"),
-        ("eighteen", "18"),
-        ("nineteen", "19"),
-        ("thirteen", "13"),
-        ("twelve", "12"),
-        ("eleven", "11"),
-        ("ten", "10"),
-        ("first", "1"),
-        ("second", "2"),
-        ("third", "3"),
-        ("fourth", "4"),
-        ("fifth", "5"),
-        ("sixth", "6"),
-        ("seventh", "7"),
-        ("eighth", "8"),
-        ("ninth", "9"),
-        ("one", "1"),
-        ("two", "2"),
-        ("three", "3"),
-        ("four", "4"),
-        ("five", "5"),
-        ("six", "6"),
-        ("seven", "7"),
-        ("eight", "8"),
-        ("nine", "9"),
-    ];
-
-    for (word, num) in WORDS {
-        s = s.replace(word, num);
-    }
+    // Fold spoken numbers ("eight twenty eight" -> "8 28") without corrupting
+    // ordinary words that merely contain a number word.
+    s = normalize_spoken_numbers(&s);
 
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -300,6 +362,39 @@ fn text_has_spoken_chapter_verse(text: &str) -> bool {
 }
 
 fn collect_from_patterns(text: &str, matches: &mut Vec<ScriptureDetectionMatch>) {
+    for caps in CHAPTER_OF_BOOK.captures_iter(text) {
+        let Some(book_raw) = caps.name("book").map(|m| m.as_str()) else {
+            continue;
+        };
+        let Some(chapter) = caps.name("chapter").and_then(|m| m.as_str().parse().ok()) else {
+            continue;
+        };
+        let verse_start = caps.name("verse").and_then(|m| m.as_str().parse().ok());
+        let verse_end = caps.name("verse_end").and_then(|m| m.as_str().parse().ok());
+        let matched = caps.get(0).map(|m| m.as_str().trim()).unwrap_or("");
+        let kind = if verse_start.is_some() {
+            MatchKind::SpokenChapterVerse
+        } else {
+            MatchKind::ChapterOnly
+        };
+        if let Some(found) = parse_capture(book_raw, chapter, verse_start, verse_end, matched, kind) {
+            matches.push(found);
+        }
+    }
+
+    for caps in ORDINAL_PSALM.captures_iter(text) {
+        let Some(chapter) = caps.name("chapter").and_then(|m| m.as_str().parse::<i32>().ok()) else {
+            continue;
+        };
+        if !(1..=150).contains(&chapter) {
+            continue;
+        }
+        let matched = caps.get(0).map(|m| m.as_str().trim()).unwrap_or("");
+        if let Some(found) = parse_capture("psalm", chapter, None, None, matched, MatchKind::ChapterOnly) {
+            matches.push(found);
+        }
+    }
+
     for caps in SPOKEN_CHAPTER_VERSE.captures_iter(text) {
         let Some(book_raw) = caps.name("book").map(|m| m.as_str()) else {
             continue;
@@ -310,7 +405,7 @@ fn collect_from_patterns(text: &str, matches: &mut Vec<ScriptureDetectionMatch>)
         let verse_start = caps.name("verse").and_then(|m| m.as_str().parse().ok());
         let verse_end = caps.name("verse_end").and_then(|m| m.as_str().parse().ok());
         let matched = caps.get(0).map(|m| m.as_str().trim()).unwrap_or("");
-        if let Some(found) = parse_capture(book_raw, chapter, verse_start, verse_end, matched, true) {
+        if let Some(found) = parse_capture(book_raw, chapter, verse_start, verse_end, matched, MatchKind::SpokenChapterVerse) {
             matches.push(found);
         }
     }
@@ -325,7 +420,7 @@ fn collect_from_patterns(text: &str, matches: &mut Vec<ScriptureDetectionMatch>)
         let verse_start = caps.name("verse").and_then(|m| m.as_str().parse().ok());
         let verse_end = caps.name("verse_end").and_then(|m| m.as_str().parse().ok());
         let matched = caps.get(0).map(|m| m.as_str().trim()).unwrap_or("");
-        if let Some(found) = parse_capture(book_raw, chapter, verse_start, verse_end, matched, false) {
+        if let Some(found) = parse_capture(book_raw, chapter, verse_start, verse_end, matched, MatchKind::ExplicitColon) {
             matches.push(found);
         }
     }
@@ -340,7 +435,7 @@ fn collect_from_patterns(text: &str, matches: &mut Vec<ScriptureDetectionMatch>)
         let verse_start = caps.name("verse").and_then(|m| m.as_str().parse().ok());
         let verse_end = caps.name("verse_end").and_then(|m| m.as_str().parse().ok());
         let matched = caps.get(0).map(|m| m.as_str().trim()).unwrap_or("");
-        if let Some(found) = parse_capture(book_raw, chapter, verse_start, verse_end, matched, true) {
+        if let Some(found) = parse_capture(book_raw, chapter, verse_start, verse_end, matched, MatchKind::SpokenChapterVerse) {
             matches.push(found);
         }
     }
@@ -355,7 +450,7 @@ fn collect_from_patterns(text: &str, matches: &mut Vec<ScriptureDetectionMatch>)
         let verse_start = caps.name("verse").and_then(|m| m.as_str().parse().ok());
         let verse_end = caps.name("verse_end").and_then(|m| m.as_str().parse().ok());
         let matched = caps.get(0).map(|m| m.as_str().trim()).unwrap_or("");
-        if let Some(found) = parse_capture(book_raw, chapter, verse_start, verse_end, matched, true) {
+        if let Some(found) = parse_capture(book_raw, chapter, verse_start, verse_end, matched, MatchKind::Spaced) {
             matches.push(found);
         }
     }
@@ -397,6 +492,7 @@ fn collect_from_patterns(text: &str, matches: &mut Vec<ScriptureDetectionMatch>)
             parsed,
             confidence: 0.75,
             detection_type: "explicit".to_string(),
+            alternatives: Vec::new(),
         });
     }
 
@@ -410,7 +506,7 @@ fn collect_from_patterns(text: &str, matches: &mut Vec<ScriptureDetectionMatch>)
         let verse_start = caps.name("verse").and_then(|m| m.as_str().parse().ok());
         let verse_end = caps.name("verse_end").and_then(|m| m.as_str().parse().ok());
         let matched = caps.get(0).map(|m| m.as_str().trim()).unwrap_or("");
-        if let Some(found) = parse_capture(book_raw, chapter, verse_start, verse_end, matched, true) {
+        if let Some(found) = parse_capture(book_raw, chapter, verse_start, verse_end, matched, MatchKind::SpokenChapterVerse) {
             matches.push(found);
         }
     }
@@ -427,7 +523,7 @@ fn collect_from_patterns(text: &str, matches: &mut Vec<ScriptureDetectionMatch>)
             continue;
         };
         let matched = caps.get(0).map(|m| m.as_str().trim()).unwrap_or("");
-        if let Some(found) = parse_capture(book_raw, chapter, Some(verse), None, matched, true) {
+        if let Some(found) = parse_capture(book_raw, chapter, Some(verse), None, matched, MatchKind::Merged) {
             matches.push(found);
         }
         }
@@ -453,13 +549,99 @@ fn collect_from_patterns(text: &str, matches: &mut Vec<ScriptureDetectionMatch>)
             continue;
         }
         let matched = full.as_str().trim();
-        if let Some(found) = parse_capture(book_raw, chapter, None, None, matched, false) {
+        if let Some(found) = parse_capture(book_raw, chapter, None, None, matched, MatchKind::ChapterOnly) {
+            matches.push(found);
+        }
+    }
+}
+
+/// Resolve a static book name reference so context matches can reuse the
+/// canonical `&'static str` required by `finalize_capture`.
+fn resolve_context_book(ctx: &DetectionContext) -> Option<(i32, &'static str)> {
+    resolve_book(&ctx.book_name).or_else(|| {
+        CANONICAL_BOOKS
+            .iter()
+            .find(|b| b.number == ctx.book_number)
+            .map(|b| (b.number, b.name))
+    })
+}
+
+/// Resolve bare "chapter/verse" phrases against the active sermon passage.
+fn collect_context_matches(
+    text: &str,
+    ctx: &DetectionContext,
+    matches: &mut Vec<ScriptureDetectionMatch>,
+) {
+    let Some((book_number, book_name)) = resolve_context_book(ctx) else {
+        return;
+    };
+
+    for caps in CONTEXT_CHAPTER_VERSE.captures_iter(text) {
+        let Some(chapter) = caps.name("chapter").and_then(|m| m.as_str().parse().ok()) else {
+            continue;
+        };
+        let verse_start = caps.name("verse").and_then(|m| m.as_str().parse().ok());
+        let verse_end = caps.name("verse_end").and_then(|m| m.as_str().parse().ok());
+        let matched = caps.get(0).map(|m| m.as_str().trim()).unwrap_or("");
+        if let Some(found) = finalize_capture(
+            book_number,
+            book_name,
+            chapter,
+            verse_start,
+            verse_end,
+            matched,
+            MatchKind::Context,
+        ) {
+            matches.push(found);
+        }
+    }
+
+    if let Some(chapter) = ctx.chapter {
+        for caps in CONTEXT_VERSE_ONLY.captures_iter(text) {
+            let verse_start = caps.name("verse").and_then(|m| m.as_str().parse().ok());
+            let verse_end = caps.name("verse_end").and_then(|m| m.as_str().parse().ok());
+            let matched = caps.get(0).map(|m| m.as_str().trim()).unwrap_or("");
+            if let Some(found) = finalize_capture(
+                book_number,
+                book_name,
+                chapter,
+                verse_start,
+                verse_end,
+                matched,
+                MatchKind::Context,
+            ) {
+                matches.push(found);
+            }
+        }
+    }
+
+    for caps in CONTEXT_CHAPTER_ONLY.captures_iter(text) {
+        let Some(chapter) = caps.name("chapter").and_then(|m| m.as_str().parse().ok()) else {
+            continue;
+        };
+        let matched = caps.get(0).map(|m| m.as_str().trim()).unwrap_or("");
+        if let Some(found) = finalize_capture(
+            book_number,
+            book_name,
+            chapter,
+            None,
+            None,
+            matched,
+            MatchKind::Context,
+        ) {
             matches.push(found);
         }
     }
 }
 
 pub fn detect_references_in_text(text: &str) -> Vec<ScriptureDetectionMatch> {
+    detect_references_with_context(text, None)
+}
+
+pub fn detect_references_with_context(
+    text: &str,
+    context: Option<&DetectionContext>,
+) -> Vec<ScriptureDetectionMatch> {
     let mut matches = Vec::new();
     let preprocessed = preprocess_spoken_text(text);
 
@@ -469,6 +651,14 @@ pub fn detect_references_in_text(text: &str) -> Vec<ScriptureDetectionMatch> {
     }
     if matches.is_empty() && !preprocessed.is_empty() {
         collect_from_patterns(&preprocessed, &mut matches);
+    }
+
+    // Bare "verse N" / "chapter N verse M" only resolve via context, and only
+    // when no explicit book reference was found in the same window.
+    if matches.is_empty() {
+        if let Some(ctx) = context {
+            collect_context_matches(&preprocessed, ctx, &mut matches);
+        }
     }
 
     dedupe_matches(matches)
@@ -613,5 +803,125 @@ mod tests {
         let found = detect_references_in_text("Matthew chapter 4 8.");
         assert!(!found.is_empty());
         assert_eq!(found[0].normalized_reference, "Matthew 4:8");
+    }
+
+    #[test]
+    fn detects_compound_spoken_numbers() {
+        let found = detect_references_in_text("Turn with me to Romans chapter eight verse twenty eight.");
+        assert!(!found.is_empty());
+        assert_eq!(found[0].normalized_reference, "Romans 8:28");
+    }
+
+    #[test]
+    fn detects_spoken_spaced_chapter_verse() {
+        let found = detect_references_in_text("Let's read Romans eight twenty eight this morning.");
+        assert!(found.iter().any(|m| m.normalized_reference == "Romans 8:28"));
+    }
+
+    #[test]
+    fn detects_spoken_ordinal_book() {
+        let found = detect_references_in_text("Let's read one Corinthians thirteen verse four.");
+        assert!(found.iter().any(|m| m.normalized_reference == "1 Corinthians 13:4"));
+    }
+
+    #[test]
+    fn detects_twenty_third_psalm() {
+        let found = detect_references_in_text("Let us read the twenty-third Psalm together.");
+        assert!(found.iter().any(|m| m.normalized_reference == "Psalms 23"));
+    }
+
+    #[test]
+    fn detects_nth_chapter_of_book() {
+        let found = detect_references_in_text("Turn to the third chapter of John.");
+        assert!(found.iter().any(|m| m.normalized_reference == "John 3"));
+    }
+
+    #[test]
+    fn detects_gospel_according_to() {
+        let found =
+            detect_references_in_text("Turn to the gospel according to John, chapter three, verse sixteen.");
+        assert!(found.iter().any(|m| m.normalized_reference == "John 3:16"));
+    }
+
+    #[test]
+    fn does_not_corrupt_everyone() {
+        let found = detect_references_in_text("Everyone should read John 3:16 today.");
+        assert!(found.iter().any(|m| m.normalized_reference == "John 3:16"));
+    }
+
+    #[test]
+    fn resolves_saint_john_prefix() {
+        let found = detect_references_in_text("Saint John chapter 3 verse 16.");
+        assert!(found.iter().any(|m| m.normalized_reference == "John 3:16"));
+    }
+
+    #[test]
+    fn explicit_colon_outranks_spaced() {
+        let colon = detect_references_in_text("John 3:16");
+        let spaced = detect_references_in_text("John 3 16");
+        let colon_conf = colon[0].confidence;
+        let spaced_conf = spaced
+            .iter()
+            .find(|m| m.normalized_reference == "John 3:16")
+            .map(|m| m.confidence)
+            .unwrap();
+        assert!(colon_conf >= 0.9);
+        assert!(colon_conf > spaced_conf);
+    }
+
+    #[test]
+    fn offers_concat_alternative_for_ambiguous_psalm() {
+        let found = detect_references_in_text("Let's read Psalm one twenty one.");
+        let primary = found
+            .iter()
+            .find(|m| m.normalized_reference == "Psalms 1:21")
+            .expect("primary reading present");
+        assert!(primary.alternatives.iter().any(|a| a == "Psalms 121"));
+    }
+
+    #[test]
+    fn no_alternative_when_concat_invalid() {
+        let found = detect_references_in_text("Romans eight twenty eight.");
+        let primary = found
+            .iter()
+            .find(|m| m.normalized_reference == "Romans 8:28")
+            .expect("primary reading present");
+        assert!(primary.alternatives.is_empty());
+    }
+
+    fn ctx(book_number: i32, book_name: &str, chapter: Option<i32>) -> DetectionContext {
+        DetectionContext {
+            book_number,
+            book_name: book_name.to_string(),
+            chapter,
+        }
+    }
+
+    #[test]
+    fn context_resolves_bare_verse() {
+        let found = detect_references_with_context(
+            "and in verse sixteen we see",
+            Some(&ctx(43, "John", Some(3))),
+        );
+        assert!(found.iter().any(|m| m.normalized_reference == "John 3:16"));
+    }
+
+    #[test]
+    fn context_resolves_chapter_and_verse() {
+        let found = detect_references_with_context(
+            "now turn to chapter five verse two",
+            Some(&ctx(43, "John", Some(3))),
+        );
+        assert!(found.iter().any(|m| m.normalized_reference == "John 5:2"));
+    }
+
+    #[test]
+    fn context_ignored_when_book_present() {
+        let found = detect_references_with_context(
+            "Romans 8:28 is a promise",
+            Some(&ctx(43, "John", Some(3))),
+        );
+        assert!(found.iter().any(|m| m.normalized_reference == "Romans 8:28"));
+        assert!(!found.iter().any(|m| m.parsed.book_name == "John"));
     }
 }

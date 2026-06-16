@@ -5,6 +5,7 @@ import { preprocessTranscriptForDetection } from "@/lib/transcription/transcript
 import {
   confidenceLevel,
   type ConfidenceLevel,
+  type DetectionContext,
   type DetectionType,
   type ParsedReferenceMatch,
   type ScriptureSuggestion,
@@ -42,6 +43,7 @@ export async function detectScriptureFromText(
     paraphraseEnabled?: boolean;
     existingReferences?: string[];
     allowRepeatReference?: boolean;
+    context?: DetectionContext;
   },
 ): Promise<Omit<ScriptureSuggestion, "id" | "segmentId" | "status" | "createdAt">[]> {
   const trimmed = preprocessTranscriptForDetection(text.trim());
@@ -52,7 +54,7 @@ export async function detectScriptureFromText(
   let matches: ParsedReferenceMatch[] = [];
 
   try {
-    matches = await api.detectScriptureInText(trimmed);
+    matches = await api.detectScriptureInText(trimmed, options?.context);
   } catch {
     matches = clientSideDetect(trimmed);
   }
@@ -145,6 +147,12 @@ async function buildSuggestionFromMatch(
       : ref;
 
     const confidence = match.confidence;
+    const detectionAlternatives = match.alternatives ?? [];
+    const alternatives = Array.from(
+      new Set([...detectionAlternatives, ...lookup.search.suggestions]),
+    )
+      .filter((s) => s && s !== reference)
+      .slice(0, 3);
     return {
       detectedPhrase,
       reference,
@@ -155,7 +163,7 @@ async function buildSuggestionFromMatch(
       detectionType: (match.detection_type === "explicit" ? "explicit" : "quote") as DetectionType,
       versePreview: verses[0]?.text ?? "",
       verses,
-      alternatives: lookup.search.suggestions.filter((s) => s !== reference).slice(0, 3),
+      alternatives,
     };
   } catch {
     return null;

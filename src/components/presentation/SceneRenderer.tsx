@@ -28,7 +28,7 @@ import {
   applyBarColorOpacity,
   clipTextToMaxLines,
   estimateLowerThirdMaxLines,
-  isTransparentOutput,
+  isTransparentLowerThirdOutput,
   lowerThirdAnimationClass,
   lowerThirdBarDimensions,
   lowerThirdContentLayout,
@@ -232,7 +232,7 @@ export function SceneRenderer({
   const isScriptureFullscreen =
     scene.type === "scripture_fullscreen" || scene.type === "scripture_comparison";
 
-  const transparentOutput = isTransparentOutput(scene, themeOverride, compact);
+  const transparentOutput = isTransparentLowerThirdOutput(scene, themeOverride, compact);
   const mediaUnderlay =
     transparentOutput &&
     isLowerThird &&

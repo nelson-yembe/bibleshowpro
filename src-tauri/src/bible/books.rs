@@ -27,7 +27,7 @@ pub const CANONICAL_BOOKS: &[CanonBook] = &[
     CanonBook { number: 19, name: "Psalms", aliases: &["ps", "psa", "psalm", "psm"], chapters: 150 },
     CanonBook { number: 20, name: "Proverbs", aliases: &["prov", "pro", "prv", "pr"], chapters: 31 },
     CanonBook { number: 21, name: "Ecclesiastes", aliases: &["eccl", "ecc", "ec"], chapters: 12 },
-    CanonBook { number: 22, name: "Song of Solomon", aliases: &["song", "sos", "solomon", "song of songs", "canticles"], chapters: 8 },
+    CanonBook { number: 22, name: "Song of Solomon", aliases: &["song", "songs", "sos", "solomon", "song of songs", "songs of solomon", "canticles"], chapters: 8 },
     CanonBook { number: 23, name: "Isaiah", aliases: &["isa", "is"], chapters: 66 },
     CanonBook { number: 24, name: "Jeremiah", aliases: &["jer", "je", "jr"], chapters: 52 },
     CanonBook { number: 25, name: "Lamentations", aliases: &["lam", "la", "lamentation", "lamentations"], chapters: 5 },
@@ -71,18 +71,67 @@ pub const CANONICAL_BOOKS: &[CanonBook] = &[
     CanonBook { number: 63, name: "2 John", aliases: &["2 jn", "2 john", "2john", "2jo"], chapters: 1 },
     CanonBook { number: 64, name: "3 John", aliases: &["3 jn", "3 john", "3john", "3jo"], chapters: 1 },
     CanonBook { number: 65, name: "Jude", aliases: &["jud", "jd"], chapters: 1 },
-    CanonBook { number: 66, name: "Revelation", aliases: &["rev", "re", "revelations", "apocalypse"], chapters: 22 },
+    CanonBook { number: 66, name: "Revelation", aliases: &["rev", "re", "revelations", "apocalypse", "revelation of john"], chapters: 22 },
 ];
 
 pub fn normalize_book_key(input: &str) -> String {
-    input
+    let mut key = input
         .trim()
         .to_lowercase()
         .replace('.', "")
         .replace('-', " ")
         .split_whitespace()
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(" ");
+
+    // Strip descriptive prefixes people speak: "the gospel according to John",
+    // "the book of Psalms", "Saint John", "St. Paul's letter" etc.
+    const PREFIXES: &[&str] = &[
+        "the gospel according to ",
+        "gospel according to ",
+        "the gospel of ",
+        "gospel of ",
+        "the book of ",
+        "book of ",
+        "the letter to the ",
+        "letter to the ",
+        "the epistle to the ",
+        "epistle to the ",
+        "saint ",
+        "st ",
+        "the ",
+    ];
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for prefix in PREFIXES {
+            if key.len() > prefix.len() {
+                if let Some(rest) = key.strip_prefix(prefix) {
+                    key = rest.to_string();
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    // Map a leading spoken ordinal to its digit so "first/one Corinthians"
+    // resolves the same as "1 Corinthians".
+    const ORDINALS: &[(&str, &str)] = &[
+        ("first ", "1 "),
+        ("second ", "2 "),
+        ("third ", "3 "),
+        ("one ", "1 "),
+        ("two ", "2 "),
+        ("three ", "3 "),
+    ];
+    for (word, digit) in ORDINALS {
+        if let Some(rest) = key.strip_prefix(word) {
+            key = format!("{digit}{rest}");
+            break;
+        }
+    }
+
+    key.trim().to_string()
 }
 
 pub fn max_chapters_for_book(book_number: i32) -> i32 {
@@ -91,6 +140,33 @@ pub fn max_chapters_for_book(book_number: i32) -> i32 {
         .find(|book| book.number == book_number)
         .map(|book| book.chapters)
         .unwrap_or(150)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolves_spoken_ordinal_books() {
+        assert_eq!(resolve_book("one Corinthians"), Some((46, "1 Corinthians")));
+        assert_eq!(resolve_book("first Corinthians"), Some((46, "1 Corinthians")));
+        assert_eq!(resolve_book("second Timothy"), Some((55, "2 Timothy")));
+        assert_eq!(resolve_book("three John"), Some((64, "3 John")));
+    }
+
+    #[test]
+    fn strips_descriptive_prefixes() {
+        assert_eq!(resolve_book("the gospel according to John"), Some((43, "John")));
+        assert_eq!(resolve_book("the book of Psalms"), Some((19, "Psalms")));
+        assert_eq!(resolve_book("Saint John"), Some((43, "John")));
+        assert_eq!(resolve_book("St. Mark"), Some((41, "Mark")));
+    }
+
+    #[test]
+    fn resolves_song_aliases() {
+        assert_eq!(resolve_book("songs of solomon"), Some((22, "Song of Solomon")));
+        assert_eq!(resolve_book("song of songs"), Some((22, "Song of Solomon")));
+    }
 }
 
 pub fn resolve_book(name: &str) -> Option<(i32, &'static str)> {

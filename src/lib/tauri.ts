@@ -287,8 +287,14 @@ export const api = {
   markSongUsed: (id: string) => tauriInvoke<void>("mark_song_used", { id }),
   exportSongsLibrary: () => tauriInvoke<string>("export_songs_library"),
 
-  detectScriptureInText: (text: string) =>
-    tauriInvoke<import("@/lib/transcription/types").ParsedReferenceMatch[]>("detect_scripture_in_text", { text }),
+  detectScriptureInText: (
+    text: string,
+    context?: import("@/lib/transcription/types").DetectionContext,
+  ) =>
+    tauriInvoke<import("@/lib/transcription/types").ParsedReferenceMatch[]>("detect_scripture_in_text", {
+      text,
+      context: context ?? null,
+    }),
   listTranscriptionSessions: (limit?: number) =>
     tauriInvoke<import("@/lib/transcription/types").TranscriptionSessionSummary[]>(
       "list_transcription_sessions",

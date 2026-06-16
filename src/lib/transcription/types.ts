@@ -58,6 +58,14 @@ export interface ParsedReferenceMatch {
   };
   confidence: number;
   detection_type: string;
+  alternatives?: string[];
+}
+
+/** Sermon context so bare references ("verse 16") resolve to the active passage. */
+export interface DetectionContext {
+  bookNumber: number;
+  bookName: string;
+  chapter?: number;
 }
 
 export const TRANSCRIPTION_MODELS: TranscriptionModel[] = [

@@ -7,6 +7,7 @@ pub mod install;
 pub mod parser;
 pub mod search;
 pub mod search_query;
+pub mod spoken_number;
 pub use detection::ScriptureDetectionMatch;
 pub use parser::ParsedReference;
 pub use search::{SearchResult, VerseResult};

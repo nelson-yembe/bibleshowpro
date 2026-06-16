@@ -37,6 +37,7 @@ import {
 import { isSpeechRecognitionSupported } from "@/lib/transcription/speechTypes";
 import {
   TRANSCRIPTION_MODELS,
+  type DetectionContext,
   type ListeningStatus,
   type ScriptureSuggestion,
   type TranscriptSegment,
@@ -279,13 +280,28 @@ function activeSuggestions(state: TranscriptionState): ScriptureSuggestion[] {
   return state.suggestions.filter((s) => s.status !== "ignored");
 }
 
+/**
+ * Auto-go-live is only safe for references the preacher actually cited. We only
+ * project automatically when ALL of the following hold:
+ *   1. the detection came from finalized transcript text, not a transient
+ *      partial (mis-heard partials get revised away and were the main cause of
+ *      "phantom" verses appearing on the projector), and
+ *   2. it is an explicit reference (not a paraphrase/quote guess) that cleared
+ *      the low-confidence bar.
+ * Everything else is staged as a preview for the operator to confirm.
+ */
 async function applySuggestionOutput(
   suggestion: ScriptureSuggestion,
   get: () => TranscriptionState,
   set: (partial: Partial<TranscriptionState> | ((s: TranscriptionState) => Partial<TranscriptionState>)) => void,
+  options?: { allowAutoLive?: boolean },
 ) {
   const state = get();
-  if (state.autoGoLive) {
+  const allowAutoLive = options?.allowAutoLive ?? false;
+  const isConfidentExplicit =
+    suggestion.detectionType === "explicit" && suggestion.confidenceLevel !== "low";
+
+  if (allowAutoLive && state.autoGoLive && isConfidentExplicit) {
     const session = await presentDetectedScripture(suggestion, state.previewLayout);
     set({
       verseSession: session,
@@ -340,10 +356,11 @@ async function mergeDetections(
   segmentId: string | undefined,
   get: () => TranscriptionState,
   set: (partial: Partial<TranscriptionState> | ((s: TranscriptionState) => Partial<TranscriptionState>)) => void,
-  options?: { allowRepeatReference?: boolean },
+  options?: { allowRepeatReference?: boolean; allowAutoLive?: boolean },
 ) {
   if (detected.length === 0) return;
 
+  const allowAutoLive = options?.allowAutoLive ?? false;
   const state = get();
   const filtered = detected.filter((d) => passesConfidenceFilter(d.confidenceLevel, state.minConfidence));
   if (filtered.length === 0) return;
@@ -372,7 +389,7 @@ async function mergeDetections(
         suggestions: s.suggestions.map((item) => (item.id === existing.id ? refreshed : item)),
         selectedSuggestionId: existing.id,
       }));
-      await applySuggestionOutput(refreshed, get, set);
+      await applySuggestionOutput(refreshed, get, set, { allowAutoLive });
       return;
     }
   }
@@ -395,8 +412,25 @@ async function mergeDetections(
 
   const top = newSuggestions.find((s) => s.detectionType === "explicit") ?? newSuggestions[0];
   if (top) {
-    await applySuggestionOutput(top, get, set);
+    await applySuggestionOutput(top, get, set, { allowAutoLive });
   }
+}
+
+/** Sermon context so bare references ("verse 16") resolve to the active passage. */
+function resolveDetectionContext(state: TranscriptionState): DetectionContext | undefined {
+  const session = state.verseSession;
+  if (session) {
+    const verse = session.verses[session.verseIndex] ?? session.verses[0];
+    if (verse) {
+      return { bookNumber: verse.book_number, bookName: verse.book_name, chapter: verse.chapter };
+    }
+  }
+  const recent = state.suggestions.find((s) => s.status !== "ignored" && s.verses.length > 0);
+  const verse = recent?.verses[0];
+  if (verse) {
+    return { bookNumber: verse.book_number, bookName: verse.book_name, chapter: verse.chapter };
+  }
+  return undefined;
 }
 
 function resolveActiveVerseSession(state: TranscriptionState): ActiveVerseSession | null {
@@ -495,8 +529,13 @@ async function runSegmentScan(
     paraphraseEnabled: get().paraphraseEnabled,
     existingReferences,
     allowRepeatReference: true,
+    context: resolveDetectionContext(get()),
   });
-  await mergeDetections(detected, segmentId, get, set, { allowRepeatReference: true });
+  // Final transcript text — safe to auto-go-live for high-confidence explicit refs.
+  await mergeDetections(detected, segmentId, get, set, {
+    allowRepeatReference: true,
+    allowAutoLive: true,
+  });
 }
 
 async function runContextScan(
@@ -527,8 +566,13 @@ async function runContextScan(
     const detected = await detectScriptureFromText(context, translationId, {
       paraphraseEnabled: get().paraphraseEnabled,
       existingReferences,
+      context: resolveDetectionContext(get()),
     });
-    await mergeDetections(detected, segmentId, get, set);
+    // Context scans run on live partial text too; only auto-go-live when this
+    // scan was triggered by a finalized segment (segmentId present).
+    await mergeDetections(detected, segmentId, get, set, {
+      allowAutoLive: Boolean(segmentId),
+    });
   } finally {
     set({ scanning: false });
   }
