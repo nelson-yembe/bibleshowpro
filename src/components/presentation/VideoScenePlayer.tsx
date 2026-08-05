@@ -16,6 +16,8 @@ interface VideoScenePlayerProps {
   isProgram?: boolean;
   autoPlay?: boolean;
   showTitle?: boolean;
+  /** How the frame fills the output — cover fills the projection screen. */
+  fit?: "cover" | "contain";
 }
 
 export function VideoScenePlayer({
@@ -26,6 +28,7 @@ export function VideoScenePlayer({
   isProgram = false,
   autoPlay = true,
   showTitle = true,
+  fit = "cover",
 }: VideoScenePlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastSeekToken = useRef(-1);
@@ -94,7 +97,10 @@ export function VideoScenePlayer({
         src={src}
         playsInline
         preload="auto"
-        className="h-full w-full object-contain"
+        className={cn(
+          "absolute inset-0 h-full w-full",
+          fit === "contain" ? "object-contain" : "object-cover",
+        )}
         onLoadedMetadata={(e) => {
           const el = e.currentTarget;
           if (role === "master") reportTime(el.currentTime, el.duration || 0);

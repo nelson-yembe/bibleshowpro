@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 
+import { mediaUrl } from "@/lib/mediaUrl";
 import { DEFAULT_VECTOR_DESIGN, mergeVectorDesign, type VectorDesign } from "@/lib/vectorDesign";
 
 /** Extended presentation theme — stored as JSON in themes.config_json */
@@ -209,10 +210,11 @@ export function themeBackgroundStyle(theme: ThemeConfig): CSSProperties {
         ...base,
         backgroundImage: `linear-gradient(${theme.backgroundGradient.angle}deg, ${theme.backgroundGradient.from}, ${theme.backgroundGradient.to})`,
       };
-    case "image":
-      return theme.backgroundImage
-        ? { ...base, backgroundImage: `url(${theme.backgroundImage})` }
-        : base;
+    case "image": {
+      if (!theme.backgroundImage) return base;
+      const src = mediaUrl(theme.backgroundImage);
+      return src ? { ...base, backgroundImage: `url("${src}")` } : base;
+    }
     case "video":
       return base;
     default:

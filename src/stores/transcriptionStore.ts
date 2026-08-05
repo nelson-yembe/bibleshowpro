@@ -103,6 +103,8 @@ interface TranscriptionState {
   setMinConfidence: (level: ConfidenceLevel) => void;
   setAutoGoLive: (enabled: boolean) => void;
   setSelectedSuggestion: (id: string | null) => void;
+  /** Select a detection and stage it — takes live when Auto is on or transcription is already on air. */
+  selectAndPresentSuggestion: (suggestion: ScriptureSuggestion) => Promise<void>;
   previewSuggestion: (suggestion: ScriptureSuggestion) => Promise<void>;
   refreshPreviewOutput: () => Promise<void>;
   goLiveSelectedSuggestion: () => Promise<void>;
@@ -271,6 +273,7 @@ function newSuggestionId() {
 function resolveTranslationId(): string {
   const bible = useBibleStore.getState();
   return (
+    bible.selectedTranslationIds[0] ??
     bible.selectedTranslationId ??
     bible.translations.find((t) => t.is_default)?.id ??
     bible.translations[0]?.id ??
@@ -787,6 +790,25 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
   },
   setSelectedSuggestion: (id) => set({ selectedSuggestionId: id }),
 
+  selectAndPresentSuggestion: async (suggestion) => {
+    set({ selectedSuggestionId: suggestion.id });
+    const state = get();
+    const takeLive = shouldPresentVerseToProgram(state.autoGoLive);
+
+    if (takeLive) {
+      const session = await presentDetectedScripture(suggestion, state.previewLayout);
+      set({
+        verseSession: session,
+        selectedSuggestionId: suggestion.id,
+        lastVoiceAction: `Live — ${sessionProgressLabel(session)}`,
+      });
+      get().markSuggestionStatus(suggestion.id, "live");
+      return;
+    }
+
+    await applySuggestionOutput(suggestion, get, set);
+  },
+
   previewSuggestion: async (suggestion) => {
     await applySuggestionOutput(suggestion, get, set);
   },
@@ -805,10 +827,19 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
     if (!session && suggestion) {
       session = await createExpandedVerseSessionFromSuggestion(suggestion);
     }
+    if (!session && !suggestion) {
+      set({ lastVoiceAction: "Nothing staged — select a scripture first" });
+      return;
+    }
+
+    if (suggestion) {
+      session = await presentDetectedScripture(suggestion, state.previewLayout);
+    } else if (session) {
+      await presentVerseSession(session, state.previewLayout, true);
+    }
+
     if (!session) return;
 
-    await presentVerseSession(session, state.previewLayout, false);
-    await usePresentationStore.getState().goLive();
     set({
       verseSession: session,
       selectedSuggestionId: suggestion?.id ?? state.selectedSuggestionId,

@@ -33,6 +33,11 @@ export interface SceneContent {
   speakerName?: string;
   speakerTitle?: string;
   layout?: "fullscreen" | "lower_third";
+  /** Operator presentation overlays — travel with the scene to the output window. */
+  highlightPhrase?: string;
+  highlightColor?: string;
+  emphasis?: "none" | "bold" | "glow";
+  backgroundPreset?: "theme" | "ridge-dark" | "hymnal" | "plain-black";
 }
 
 export interface Scene {
@@ -95,6 +100,29 @@ export function sceneFromVersesWithLayout(
     return { ...scene, type: "scripture_lower_third", theme: mergedTheme };
   }
   return scene;
+}
+
+/** Bake live operator overlays into a scene so the projector can render them. */
+export function sceneWithPresentationOverlays(
+  scene: Scene,
+  overlays: {
+    highlightPhrase?: string;
+    highlightColor?: string;
+    emphasis?: "none" | "bold" | "glow";
+    backgroundPreset?: "theme" | "ridge-dark" | "hymnal" | "plain-black";
+  },
+): Scene {
+  const phrase = overlays.highlightPhrase?.trim() ?? "";
+  return {
+    ...scene,
+    content: {
+      ...scene.content,
+      highlightPhrase: phrase || undefined,
+      highlightColor: overlays.highlightColor,
+      emphasis: overlays.emphasis,
+      backgroundPreset: overlays.backgroundPreset,
+    },
+  };
 }
 
 export function sceneFromVerseComparison(

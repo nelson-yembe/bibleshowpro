@@ -35,6 +35,7 @@ import {
   lowerThirdMaxFontSize,
 } from "@/lib/lowerThird";
 import { LocalMediaImage } from "@/components/presentation/LocalMediaImage";
+import { mediaUrl } from "@/lib/mediaUrl";
 import { VideoScenePlayer } from "@/components/presentation/VideoScenePlayer";
 import { WorshipLowerThirdBar, worshipTextStyle } from "@/components/presentation/WorshipLowerThirdBar";
 
@@ -65,7 +66,22 @@ export function SceneRenderer({
   hideVectorLayers = false,
 }: SceneRendererProps) {
   const rawTheme = mergeThemeConfig({ ...(scene?.theme ?? DEFAULT_THEME), ...themeOverride });
-  const opts = mergeDisplayWithTheme(rawTheme, displayOptions);
+  // Scene-baked overlays reach the projector; prop displayOptions override for operator monitors.
+  // Only set defined keys so cleared overlays don't wipe theme/defaults via object spread.
+  const sceneOverlays: Partial<DisplayOptions> = {};
+  if (scene?.content.highlightPhrase) {
+    sceneOverlays.highlightPhrase = scene.content.highlightPhrase;
+  }
+  if (scene?.content.highlightColor != null) {
+    sceneOverlays.highlightColor = scene.content.highlightColor;
+  }
+  if (scene?.content.emphasis != null) {
+    sceneOverlays.emphasis = scene.content.emphasis;
+  }
+  if (scene?.content.backgroundPreset != null) {
+    sceneOverlays.backgroundPreset = scene.content.backgroundPreset;
+  }
+  const opts = mergeDisplayWithTheme(rawTheme, { ...sceneOverlays, ...displayOptions });
   const theme = rawTheme;
 
   const fontSize = compact
@@ -120,13 +136,14 @@ export function SceneRenderer({
         <LocalMediaImage
           path={scene.content.imagePath}
           alt={scene.content.title ?? "Image"}
-          className="h-full w-full object-contain"
+          className="absolute inset-0 h-full w-full object-cover"
         />
-        {scene.content.title && (
-          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-4 pb-4 pt-10">
+        {/* Filename labels stay on operator monitors only — never on the projector. */}
+        {compact && scene.content.title ? (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/80 to-transparent px-4 pb-4 pt-10">
             <p className="text-sm font-semibold text-white">{scene.content.title}</p>
           </div>
-        )}
+        ) : null}
       </div>
     );
   }
@@ -150,6 +167,7 @@ export function SceneRenderer({
         role={role}
         isProgram={!compact}
         autoPlay
+        fit="cover"
         showTitle={Boolean(compact && scene.content.title)}
       />
     );
@@ -161,18 +179,25 @@ export function SceneRenderer({
         className={cn("relative flex h-full items-center justify-center overflow-hidden", className)}
         style={themeBackgroundStyle(theme)}
       >
-        {(theme.backgroundType === "image" || theme.backgroundType === "video") && theme.backgroundOverlay > 0 && (
-          <div className="absolute inset-0" style={{ backgroundColor: `rgba(0,0,0,${theme.backgroundOverlay})` }} />
+        {theme.backgroundType === "image" && theme.backgroundImage && (
+          <LocalMediaImage
+            path={theme.backgroundImage}
+            alt=""
+            className="absolute inset-0 h-full w-full object-cover"
+          />
         )}
         {theme.backgroundVideo && theme.backgroundType === "video" && (
           <video
             className="absolute inset-0 h-full w-full object-cover"
-            src={theme.backgroundVideo}
+            src={mediaUrl(theme.backgroundVideo)}
             autoPlay
             loop
             muted
             playsInline
           />
+        )}
+        {(theme.backgroundType === "image" || theme.backgroundType === "video") && theme.backgroundOverlay > 0 && (
+          <div className="absolute inset-0 z-[1]" style={{ backgroundColor: `rgba(0,0,0,${theme.backgroundOverlay})` }} />
         )}
         {!hideVectorLayers && (
           <VectorOverlay
@@ -267,8 +292,8 @@ export function SceneRenderer({
       }}
     >
       {mediaUnderlay && theme.backgroundType === "image" && theme.backgroundImage && (
-        <img
-          src={theme.backgroundImage}
+        <LocalMediaImage
+          path={theme.backgroundImage}
           alt=""
           className="absolute inset-0 z-0 h-full w-full object-cover"
         />
@@ -276,7 +301,7 @@ export function SceneRenderer({
       {mediaUnderlay && theme.backgroundVideo && theme.backgroundType === "video" && (
         <video
           className="absolute inset-0 z-0 h-full w-full object-cover"
-          src={theme.backgroundVideo}
+          src={mediaUrl(theme.backgroundVideo)}
           autoPlay
           loop
           muted
@@ -284,12 +309,9 @@ export function SceneRenderer({
         />
       )}
 
-      {!transparentOutput && (theme.backgroundType === "image" || theme.backgroundType === "video") && theme.backgroundOverlay > 0 && (
-        <div className="absolute inset-0 z-[1]" style={{ backgroundColor: `rgba(0,0,0,${theme.backgroundOverlay})` }} />
-      )}
       {!transparentOutput && theme.backgroundType === "image" && theme.backgroundImage && (
-        <img
-          src={theme.backgroundImage}
+        <LocalMediaImage
+          path={theme.backgroundImage}
           alt=""
           className="absolute inset-0 z-0 h-full w-full object-cover"
         />
@@ -297,12 +319,15 @@ export function SceneRenderer({
       {!transparentOutput && theme.backgroundType === "video" && theme.backgroundVideo && (
         <video
           className="absolute inset-0 z-0 h-full w-full object-cover"
-          src={theme.backgroundVideo}
+          src={mediaUrl(theme.backgroundVideo)}
           autoPlay
           loop
           muted
           playsInline
         />
+      )}
+      {!transparentOutput && (theme.backgroundType === "image" || theme.backgroundType === "video") && theme.backgroundOverlay > 0 && (
+        <div className="absolute inset-0 z-[1]" style={{ backgroundColor: `rgba(0,0,0,${theme.backgroundOverlay})` }} />
       )}
 
       {!transparentOutput && !hideVectorLayers && (

@@ -89,6 +89,23 @@ export function BibleSearchPage() {
     [effectiveTheme, localDisplay],
   );
 
+  const presentationOverlays = useMemo(
+    () => ({
+      highlightPhrase: localDisplay.highlightPhrase,
+      highlightColor: localDisplay.highlightColor,
+      emphasis: localDisplay.emphasis,
+      backgroundPreset: localDisplay.backgroundPreset,
+    }),
+    [
+      localDisplay.highlightPhrase,
+      localDisplay.highlightColor,
+      localDisplay.emphasis,
+      localDisplay.backgroundPreset,
+    ],
+  );
+  const presentationOverlaysRef = useRef(presentationOverlays);
+  presentationOverlaysRef.current = presentationOverlays;
+
   const effectiveLowerThird = effectiveTheme.lowerThird;
   const isLowerThirdMode = viewMode === "lower_third";
 
@@ -125,18 +142,18 @@ export function BibleSearchPage() {
       if (ids.length >= 2) {
         const { primary, secondary } = await lookupVersePairInTranslations(verse, ids[0], ids[1]);
         if (primary && secondary) {
-          stageVerseComparison(primary, secondary, effectiveTheme, layout);
+          stageVerseComparison(primary, secondary, effectiveTheme, layout, presentationOverlaysRef.current);
           return;
         }
         if (primary) {
-          stageVerses([primary], effectiveTheme, layout);
+          stageVerses([primary], effectiveTheme, layout, presentationOverlaysRef.current);
           return;
         }
       }
 
       const primaryId = ids[0];
       const resolved = primaryId ? await lookupVerseInTranslation(verse, primaryId) : verse;
-      stageVerses([resolved ?? verse], effectiveTheme, layout);
+      stageVerses([resolved ?? verse], effectiveTheme, layout, presentationOverlaysRef.current);
     },
     [stageVerses, stageVerseComparison, effectiveTheme, verseLayout],
   );
@@ -165,9 +182,16 @@ export function BibleSearchPage() {
     const wantsLowerThird = layout === "lower_third";
     if (sceneIsLowerThird === wantsLowerThird) return;
     const theme = wantsLowerThird ? buildLowerThirdTheme(activeTheme) : activeTheme;
-    useBibleStagingStore.getState().stageVerses(staged.content.verses, theme, layout);
+    useBibleStagingStore
+      .getState()
+      .stageVerses(staged.content.verses, theme, layout, presentationOverlaysRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- bible staging only
   }, [viewMode, verseLayout, themeRevision]);
+
+  // Keep highlight / emphasis / background on stage + live projector in sync.
+  useEffect(() => {
+    useBibleStagingStore.getState().applyOverlays(presentationOverlays);
+  }, [presentationOverlays]);
 
   useEffect(() => {
     const refreshForTranslations = async () => {
@@ -302,6 +326,7 @@ export function BibleSearchPage() {
       canNext: navigableLength > 0 && navigableIndex < navigableLength - 1,
       label: "Bible slides",
       beforeGoLive: async () => {
+        useBibleStagingStore.getState().applyOverlays(presentationOverlaysRef.current);
         const scene = useBibleStagingStore.getState().stagedScene;
         if (scene) {
           preparePreviewForGoLive(scene, "bible");
@@ -407,7 +432,9 @@ export function BibleSearchPage() {
                     const verses = stored?.content.verses;
                     if (!verses?.length) return;
                     const theme = layout === "lower_third" ? buildLowerThirdTheme(activeTheme) : activeTheme;
-                    useBibleStagingStore.getState().stageVerses(verses, theme, layout);
+                    useBibleStagingStore
+                      .getState()
+                      .stageVerses(verses, theme, layout, presentationOverlaysRef.current);
                   }}
                   className={cn(
                     "rounded-md px-3 py-1.5 text-[11px] font-medium transition-colors",

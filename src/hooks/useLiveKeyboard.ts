@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useLiveNavigationStore } from "@/stores/liveNavigationStore";
 import { usePresentationStore } from "@/stores/presentationStore";
+import { useTranscriptionStore } from "@/stores/transcriptionStore";
 
 /** Global presentation shortcuts: Space = go live, arrows = prev/next (from active screen). */
 export function useLiveKeyboard() {
@@ -12,7 +13,12 @@ export function useLiveKeyboard() {
 
       if (event.key === " " && !event.shiftKey) {
         event.preventDefault();
-        void usePresentationStore.getState().goLive();
+        const presentation = usePresentationStore.getState();
+        if (presentation.previewSource === "transcription") {
+          void useTranscriptionStore.getState().goLiveSelectedSuggestion();
+          return;
+        }
+        void presentation.goLive();
         return;
       }
 

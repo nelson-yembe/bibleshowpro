@@ -80,10 +80,10 @@ export function stepVerseSession(session: ActiveVerseSession, delta: number): Ac
   return { ...session, verseIndex: session.verseIndex + delta };
 }
 
-export function sessionProgressLabel(session: ActiveVerseSession): string {
+export function sessionProgressLabel(session: ActiveVerseSession, translationLabel?: string): string {
   const verse = getCurrentVerse(session);
-  if (!verse) return session.passageReference;
-  return `${verse.reference} · ${session.translationAbbr}`;
+  const ref = verse?.reference ?? session.passageReference;
+  return `${ref} · ${translationLabel || session.translationAbbr}`;
 }
 
 export function singleVerseReference(verse: VerseResult): string {

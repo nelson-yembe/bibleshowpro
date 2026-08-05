@@ -59,7 +59,10 @@ export function LocalMediaImage({ path, alt = "", className, preferAsset = true 
       key={src}
       src={src}
       alt={alt}
+      draggable={false}
+      decoding="async"
       className={cn(className)}
+      style={{ imageRendering: "auto" }}
       onError={() => {
         if (preferAsset && path && !src.startsWith("data:")) {
           void api

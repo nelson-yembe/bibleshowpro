@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import {
   api,
+  type MediaRecord,
   type ThemeRecord,
   type ThemeVersionRecord,
   type ThemeAssetRecord,
@@ -10,6 +11,7 @@ import {
   mergeThemeConfig,
   type ThemeConfig,
 } from "@/lib/themeConfig";
+import { themePatchFromMedia } from "@/lib/themeBackgroundMedia";
 import {
   createThemeDocument,
   mergeThemeDocument,
@@ -59,6 +61,8 @@ interface ThemeState {
   duplicateTheme: (id: string) => Promise<void>;
   setDefaultTheme: (id: string) => Promise<void>;
   applyThemeLive: (config: ThemeConfig) => void;
+  /** Use a media-library image/video as the active theme projection background (persists when possible). */
+  setBackgroundFromMedia: (item: MediaRecord) => Promise<boolean>;
   exportThemeJson: (id: string) => string | null;
   importThemeFromJson: (json: string, name?: string) => Promise<void>;
   toggleFavorite: (id: string) => Promise<void>;
@@ -161,6 +165,39 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
       activeTheme: mergeThemeConfig(config),
       themeRevision: s.themeRevision + 1,
     }));
+  },
+
+  setBackgroundFromMedia: async (item) => {
+    const patch = themePatchFromMedia(item);
+    if (!patch) return false;
+
+    const state = get();
+    const nextBase = mergeThemeConfig({ ...state.activeTheme, ...patch });
+    const themeId = state.activeThemeId;
+    const record = themeId ? state.themes.find((t) => t.id === themeId) : undefined;
+
+    if (record) {
+      const doc = parseThemeDocument(record.config_json);
+      await get().saveThemeDocument(record.name, { ...doc, base: nextBase }, record.id, record.is_default);
+    } else {
+      get().applyThemeLive(nextBase);
+    }
+
+    // Retheme staged/live scenes so the projector picks up the new background immediately.
+    const { usePresentationStore } = await import("@/stores/presentationStore");
+    const presentation = usePresentationStore.getState();
+    const withTheme = <T extends { theme?: ThemeConfig }>(scene: T | null): T | null =>
+      scene ? { ...scene, theme: nextBase } : null;
+    const nextPreview = withTheme(presentation.preview);
+    const nextProgram = withTheme(presentation.program);
+    if (presentation.liveFollow && nextProgram) {
+      presentation.pushSceneLive(nextProgram, presentation.previewSource ?? "service");
+    } else if (nextPreview) {
+      presentation.previewScene(nextPreview, presentation.previewSource);
+    } else if (nextProgram && !presentation.liveFollow) {
+      usePresentationStore.setState({ program: nextProgram });
+    }
+    return true;
   },
 
   exportThemeJson: (id) => {

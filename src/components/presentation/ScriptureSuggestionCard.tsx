@@ -6,9 +6,10 @@ import {
   MoreHorizontal,
   Volume2,
   X,
+  Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { queueDetectedScripture } from "@/lib/transcriptionLive";
+import { presentationTranslationLabel, queueDetectedScripture } from "@/lib/transcriptionLive";
 import type { ConfidenceLevel, ScriptureSuggestion } from "@/lib/transcription/types";
 import { useTranscriptionStore } from "@/stores/transcriptionStore";
 import { useNavigate } from "react-router-dom";
@@ -22,12 +23,13 @@ const confidenceStyles: Record<ConfidenceLevel, string> = {
   low: "border-[var(--color-border-light)] bg-[var(--color-panel)] opacity-80",
 };
 
-const typeLabels = {
+const typeLabels: Record<string, string> = {
   explicit: "Explicit reference",
   paraphrase: "Possible paraphrase",
   quote: "Possible quote",
   topic: "Topic suggestion",
-} as const;
+  inferred: "Inferred reference",
+};
 
 interface ScriptureSuggestionCardProps {
   suggestion: ScriptureSuggestion;
@@ -38,18 +40,30 @@ interface ScriptureSuggestionCardProps {
 export function ScriptureSuggestionCard({ suggestion, selected, onSelect }: ScriptureSuggestionCardProps) {
   const navigate = useNavigate();
   const previewSuggestion = useTranscriptionStore((s) => s.previewSuggestion);
+  const goLiveSelectedSuggestion = useTranscriptionStore((s) => s.goLiveSelectedSuggestion);
   const markStatus = useTranscriptionStore((s) => s.markSuggestionStatus);
   const ignore = useTranscriptionStore((s) => s.ignoreSuggestion);
   const [busy, setBusy] = useState(false);
   const [showAlternatives, setShowAlternatives] = useState(false);
+  const translationLabel = presentationTranslationLabel();
 
   if (suggestion.status === "ignored") return null;
 
   const preview = async () => {
     setBusy(true);
     try {
-      onSelect?.();
       await previewSuggestion(suggestion);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const takeLive = async () => {
+    setBusy(true);
+    try {
+      // Always force to program, even when Auto is off.
+      useTranscriptionStore.getState().setSelectedSuggestion(suggestion.id);
+      await goLiveSelectedSuggestion();
     } finally {
       setBusy(false);
     }
@@ -116,7 +130,7 @@ export function ScriptureSuggestionCard({ suggestion, selected, onSelect }: Scri
           </p>
           <h3 className="text-sm font-semibold text-[var(--color-foreground)]">{suggestion.reference}</h3>
           <p className="text-[10px] text-[var(--color-muted-foreground)]">
-            {suggestion.translationAbbr} · {Math.round(suggestion.confidence * 100)}% confidence
+            {translationLabel} · {Math.round(suggestion.confidence * 100)}% confidence
           </p>
         </div>
         <button
@@ -137,6 +151,18 @@ export function ScriptureSuggestionCard({ suggestion, selected, onSelect }: Scri
       </p>
 
       <div className="flex flex-wrap gap-1.5">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={(e) => {
+            e.stopPropagation();
+            void takeLive();
+          }}
+          className="inline-flex items-center gap-1 rounded-md bg-red-600 px-2.5 py-1.5 text-[11px] font-medium text-white hover:bg-red-500 disabled:opacity-50"
+        >
+          <Zap className="h-3 w-3 fill-current" />
+          Go live
+        </button>
         <button
           type="button"
           disabled={busy}

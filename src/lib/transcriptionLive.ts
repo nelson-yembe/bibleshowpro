@@ -1,4 +1,10 @@
-import { sceneFromVersesWithLayout, type Scene } from "@/engine/scene";
+import {
+  sceneFromVerseComparison,
+  sceneFromVersesWithLayout,
+  type Scene,
+  type VerseLayout,
+} from "@/engine/scene";
+import { lookupVerseInTranslation, lookupVersePairInTranslations } from "@/lib/bibleCompare";
 import { api, type VerseResult } from "@/lib/tauri";
 import { buildLowerThirdTheme, isLowerThirdScene } from "@/lib/lowerThird";
 import { isTranscriptionOnAir } from "@/lib/transcription/transcriptionLiveFollow";
@@ -7,10 +13,11 @@ import {
   getCurrentVerse,
   type ActiveVerseSession,
 } from "@/lib/transcription/verseSession";
-import { usePresentationStore } from "@/stores/presentationStore";
+import type { ScriptureSuggestion } from "@/lib/transcription/types";
+import { useBibleStore } from "@/stores/bibleStore";
+import { isPresentationOnAir, usePresentationStore } from "@/stores/presentationStore";
 import { useServiceStore } from "@/stores/serviceStore";
 import { useThemeStore } from "@/stores/themeStore";
-import type { ScriptureSuggestion } from "@/lib/transcription/types";
 
 export function projectionThemeForLayout(layout: "fullscreen" | "lower_third" = "fullscreen") {
   const base = useThemeStore.getState().activeTheme;
@@ -19,6 +26,27 @@ export function projectionThemeForLayout(layout: "fullscreen" | "lower_third" = 
 
 function projectionTheme(layout: "fullscreen" | "lower_third" = "fullscreen") {
   return projectionThemeForLayout(layout);
+}
+
+/** Same translation order as Bible Search (primary first, optional compare second). */
+export function resolvePresentationTranslationIds(): string[] {
+  const bible = useBibleStore.getState();
+  if (bible.selectedTranslationIds.length > 0) {
+    return bible.selectedTranslationIds.slice(0, 2);
+  }
+  if (bible.selectedTranslationId) return [bible.selectedTranslationId];
+  const fallback =
+    bible.translations.find((t) => t.is_default)?.id ?? bible.translations[0]?.id ?? "";
+  return fallback ? [fallback] : [];
+}
+
+export function presentationTranslationLabel(): string {
+  const bible = useBibleStore.getState();
+  const ids = resolvePresentationTranslationIds();
+  const abbrs = ids
+    .map((id) => bible.translations.find((t) => t.id === id)?.abbreviation)
+    .filter(Boolean);
+  return abbrs.length > 0 ? abbrs.join(" · ") : "Bible";
 }
 
 function versesFromScene(scene: Scene | null | undefined): VerseResult[] {
@@ -44,22 +72,61 @@ export function resolveTranscriptionVerses(options: {
   return versesFromScene(options.program);
 }
 
+/** Build a projection scene using the Bible Search translation selection (incl. dual). */
+export async function buildTranscriptionVerseScene(
+  verse: VerseResult,
+  layout: VerseLayout = "fullscreen",
+): Promise<Scene> {
+  const theme = projectionTheme(layout);
+  const ids = resolvePresentationTranslationIds();
+
+  if (ids.length >= 2) {
+    const { primary, secondary } = await lookupVersePairInTranslations(verse, ids[0]!, ids[1]!);
+    if (primary && secondary) {
+      return sceneFromVerseComparison(primary, secondary, theme, layout);
+    }
+    if (primary) {
+      return sceneFromVersesWithLayout([primary], theme, layout);
+    }
+  }
+
+  const primaryId = ids[0];
+  if (primaryId && verse.translation_id !== primaryId) {
+    const resolved = await lookupVerseInTranslation(verse, primaryId);
+    if (resolved) {
+      return sceneFromVersesWithLayout([resolved], theme, layout);
+    }
+  }
+
+  return sceneFromVersesWithLayout([verse], theme, layout);
+}
+
+async function pushTranscriptionScene(scene: Scene, toProgram: boolean) {
+  const store = usePresentationStore.getState();
+  if (!toProgram) {
+    store.previewScene(scene, "transcription");
+    return;
+  }
+
+  // Already on air (any source that we'll take over) — update program directly.
+  if (isPresentationOnAir(store) || store.liveFollow) {
+    store.pushSceneLive(scene, "transcription");
+    return;
+  }
+
+  store.previewScene(scene, "transcription");
+  await store.goLive();
+}
+
 export async function representTranscriptionVerses(
   verses: VerseResult[],
   layout: "fullscreen" | "lower_third",
   toProgram: boolean,
 ) {
-  if (verses.length === 0) return;
-
-  const theme = projectionTheme(layout);
-  const store = usePresentationStore.getState();
-
-  if (toProgram) {
-    store.showVerses(verses, theme, layout);
-  } else {
-    store.previewVerses(verses, theme, layout);
-  }
-  usePresentationStore.setState({ previewSource: "transcription" });
+  const verse = verses[0];
+  if (!verse) return;
+  const scene = await buildTranscriptionVerseScene(verse, layout);
+  await pushTranscriptionScene(scene, toProgram);
 }
 
 export function transcriptionSceneMatchesLayout(
@@ -76,17 +143,8 @@ export async function presentSingleVerse(
   layout: "fullscreen" | "lower_third" = "fullscreen",
   toProgram = false,
 ) {
-  const theme = projectionTheme(layout);
-  const store = usePresentationStore.getState();
-
-  if (toProgram) {
-    store.showVerses([verse], theme, layout);
-    usePresentationStore.setState({ previewSource: "transcription" });
-    return;
-  }
-
-  store.previewVerses([verse], theme, layout);
-  usePresentationStore.setState({ previewSource: "transcription" });
+  const scene = await buildTranscriptionVerseScene(verse, layout);
+  await pushTranscriptionScene(scene, toProgram);
 }
 
 export async function presentVerseSession(
@@ -112,14 +170,13 @@ export async function previewDetectedScripture(
   return session;
 }
 
-/** Stage preview then take to program output. */
+/** Stage preview then take to program output (opens projector if needed). */
 export async function presentDetectedScripture(
   suggestion: ScriptureSuggestion,
   layout: "fullscreen" | "lower_third" = "fullscreen",
 ): Promise<ActiveVerseSession> {
   const session = await createExpandedVerseSessionFromSuggestion(suggestion);
-  await presentVerseSession(session, layout, false);
-  await usePresentationStore.getState().goLive();
+  await presentVerseSession(session, layout, true);
   return session;
 }
 

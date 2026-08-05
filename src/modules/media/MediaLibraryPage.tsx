@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Layers, Plus, Search, Trash2, Upload } from "lucide-react";
+import { ImageIcon, Layers, Plus, Search, Trash2, Upload } from "lucide-react";
 import { Link } from "react-router-dom";
 import { TopBar } from "@/components/layout/TopBar";
 import { StatusBadge } from "@/components/ui/pill";
@@ -11,6 +11,7 @@ import { useMediaStore, type MediaFilter } from "@/stores/mediaStore";
 import { useLiveNavigationStore } from "@/stores/liveNavigationStore";
 import { usePresentationStore } from "@/stores/presentationStore";
 import { useServiceStore } from "@/stores/serviceStore";
+import { useThemeStore } from "@/stores/themeStore";
 import { useToastStore } from "@/stores/toastStore";
 
 const sidebarFilters: { id: MediaFilter; label: string }[] = [
@@ -32,9 +33,11 @@ export function MediaLibraryPage() {
   const program = usePresentationStore((s) => s.program);
   const liveFollow = usePresentationStore((s) => s.liveFollow);
   const activePlan = useServiceStore((s) => s.activePlan);
+  const setBackgroundFromMedia = useThemeStore((s) => s.setBackgroundFromMedia);
 
   const [tagInput, setTagInput] = useState("");
   const [dragOver, setDragOver] = useState(false);
+  const [settingBackground, setSettingBackground] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -75,6 +78,28 @@ export function MediaLibraryPage() {
   const missingCount = store.items.filter((item) => !item.file_exists).length;
   const isLive = liveFollow && program && program.type !== "blackout";
   const selectedTags = selected ? parseMediaTags(selected.tags_json) : [];
+  const canSetThemeBackground =
+    !!selected &&
+    selected.file_exists &&
+    (selected.media_type === "image" || selected.media_type === "video");
+
+  const setAsThemeBackground = async () => {
+    if (!selected || !canSetThemeBackground) {
+      useToastStore.getState().push({ message: "Only images and videos can be theme backgrounds." });
+      return;
+    }
+    setSettingBackground(true);
+    try {
+      const ok = await setBackgroundFromMedia(selected);
+      useToastStore.getState().push({
+        message: ok
+          ? `“${selected.name}” set as theme background for projections`
+          : "Could not set background — file may be missing.",
+      });
+    } finally {
+      setSettingBackground(false);
+    }
+  };
 
   const typeCounts = useMemo(() => {
     return store.items.reduce(
@@ -397,6 +422,18 @@ export function MediaLibraryPage() {
                   <Layers className="h-3.5 w-3.5" />
                   Add to service plan
                 </button>
+
+                {canSetThemeBackground ? (
+                  <button
+                    type="button"
+                    disabled={settingBackground}
+                    onClick={() => void setAsThemeBackground()}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--color-border-light)] py-2 text-xs font-medium text-[var(--color-muted-foreground)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] disabled:opacity-50"
+                  >
+                    <ImageIcon className="h-3.5 w-3.5" />
+                    {settingBackground ? "Setting…" : "Set as theme background"}
+                  </button>
+                ) : null}
               </div>
               <div className="border-t border-[var(--color-border)] p-3">
                 <button

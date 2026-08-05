@@ -3,10 +3,14 @@ import { LowerThirdSettingsModal } from "@/components/presentation/LowerThirdSet
 import { LowerThirdSettingsTrigger } from "@/components/presentation/LowerThirdSettingsTrigger";
 import { ChromaPreviewGrid, SafeMarginOverlay } from "@/components/presentation/SafeMarginOverlay";
 import { buildLowerThirdTheme, isTransparentLowerThirdOutput } from "@/lib/lowerThird";
-import { transcriptionSceneMatchesLayout } from "@/lib/transcriptionLive";
+import {
+  presentationTranslationLabel,
+  transcriptionSceneMatchesLayout,
+} from "@/lib/transcriptionLive";
 import { useLowerThirdSettings } from "@/hooks/useLowerThirdSettings";
 import { cn } from "@/lib/utils";
 import { canStepVerse, sessionProgressLabel } from "@/lib/transcription/verseSession";
+import { useBibleStore } from "@/stores/bibleStore";
 import { usePresentationStore } from "@/stores/presentationStore";
 import { useTranscriptionStore } from "@/stores/transcriptionStore";
 import { useThemeStore } from "@/stores/themeStore";
@@ -68,15 +72,23 @@ export function ListenPreviewPanel() {
     suggestions.find((s) => s.id === selectedSuggestionId) ??
     suggestions.find((s) => s.status !== "ignored");
 
+  const selectedTranslationIds = useBibleStore((s) => s.selectedTranslationIds);
+  const selectedTranslationId = useBibleStore((s) => s.selectedTranslationId);
+  const translationLabel = useMemo(
+    () => presentationTranslationLabel(),
+    [selectedTranslationIds, selectedTranslationId],
+  );
+
   const progressLabel = verseSession
-    ? sessionProgressLabel(verseSession)
+    ? sessionProgressLabel(verseSession, translationLabel)
     : selected
-      ? `${selected.reference} · ${selected.translationAbbr}`
+      ? `${selected.reference} · ${translationLabel}`
       : null;
 
   const previewReference = preview?.content.reference ?? preview?.content.title ?? null;
   const isOnAir = liveFollow && previewSource === "transcription";
-  const canGoLive = !autoGoLive && Boolean(verseSession || selected);
+  // Manual Go Live stays available even when Auto is on (Auto only auto-takes confident explicits).
+  const canGoLive = Boolean(verseSession || selected || preview);
 
   const isLowerThird = previewLayout === "lower_third";
   const transparentOverlay =
@@ -90,7 +102,14 @@ export function ListenPreviewPanel() {
 
   useEffect(() => {
     void refreshPreviewOutput();
-  }, [activeTheme.lowerThird, themeRevision, previewLayout, refreshPreviewOutput]);
+  }, [
+    activeTheme.lowerThird,
+    themeRevision,
+    previewLayout,
+    selectedTranslationIds,
+    selectedTranslationId,
+    refreshPreviewOutput,
+  ]);
 
   useEffect(() => {
     if (!preview) return;
@@ -237,9 +256,14 @@ export function ListenPreviewPanel() {
                 ? "cursor-not-allowed border border-[var(--color-border-light)] bg-[var(--color-panel)] text-[var(--color-subtle)] opacity-60"
                 : "bg-red-600 text-white hover:bg-red-500",
             )}
+            title={
+              autoGoLive
+                ? "Take the staged verse live now (Auto still handles confident detections)"
+                : "Send staged verse to projection"
+            }
           >
             <Zap className="h-3.5 w-3.5 fill-current" />
-            Go live
+            {isOnAir ? "Take live" : "Go live"}
           </button>
         </div>
 

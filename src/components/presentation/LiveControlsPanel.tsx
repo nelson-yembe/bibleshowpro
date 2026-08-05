@@ -45,7 +45,9 @@ function formatProgramLabel(scene: ReturnType<typeof usePresentationStore.getSta
   }
   const ref = scene.content.reference ?? "";
   const abbr = scene.content.translationAbbr;
-  return abbr ? `${ref} · ${abbr}` : ref || scene.content.title || "Ready";
+  const compareAbbr = scene.content.comparisonVerse?.translation_abbr;
+  const abbrLabel = [abbr, compareAbbr].filter(Boolean).join(" · ");
+  return abbrLabel ? `${ref} · ${abbrLabel}` : ref || scene.content.title || "Ready";
 }
 
 export function LiveControlsPanel({ displayOptions }: LiveControlsPanelProps) {
@@ -88,7 +90,13 @@ export function LiveControlsPanel({ displayOptions }: LiveControlsPanelProps) {
   const isBlackout = program?.type === "blackout";
   const isOnAir = liveFollow && program && !isBlackout;
   const autoGoLive = useTranscriptionStore((s) => s.autoGoLive);
-  const transcriptionAutoLive = previewSource === "transcription" && autoGoLive;
+  const goLiveSelectedSuggestion = useTranscriptionStore((s) => s.goLiveSelectedSuggestion);
+  const transcriptionSelectedId = useTranscriptionStore((s) => s.selectedSuggestionId);
+  const transcriptionSession = useTranscriptionStore((s) => s.verseSession);
+  const isTranscriptionContext = previewSource === "transcription";
+  const canTakeTranscriptionLive = Boolean(
+    transcriptionSession || transcriptionSelectedId || (isTranscriptionContext && preview),
+  );
   const isSongLive = previewSource === "song" && songSlides.length > 0;
   const programLabel = formatProgramLabel(program);
   const externalDisplays = displays.filter((display) => !display.is_primary);
@@ -192,17 +200,23 @@ export function LiveControlsPanel({ displayOptions }: LiveControlsPanelProps) {
         <button
           type="button"
           className="go-live-btn"
-          onClick={() => void goLive()}
-          disabled={!preview || transcriptionAutoLive}
+          onClick={() => {
+            if (isTranscriptionContext) {
+              void goLiveSelectedSuggestion();
+              return;
+            }
+            void goLive();
+          }}
+          disabled={isTranscriptionContext ? !canTakeTranscriptionLive : !preview}
         >
           <Zap className="h-4 w-4 fill-current" />
           GO LIVE
           <span className="ml-auto rounded bg-black/25 px-2 py-0.5 text-[10px] font-normal tracking-wide">SPACE</span>
         </button>
         <p className="text-center text-[10px] text-[var(--color-subtle)]">
-          {transcriptionAutoLive
-            ? "Auto live is on — Live Listen sends scripture directly to projection"
-            : preview
+          {isTranscriptionContext && autoGoLive
+            ? "Auto takes confident references — GO LIVE still works for staged verses"
+            : preview || canTakeTranscriptionLive
               ? "Send preview to projection"
               : "Stage content in the center panel first"}
         </p>

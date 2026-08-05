@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Copy,
   Download,
+  FolderOpen,
   MoreVertical,
   Plus,
   Save,
@@ -11,9 +12,17 @@ import {
   Zap,
 } from "lucide-react";
 import { TopBar } from "@/components/layout/TopBar";
+import { MediaPickerModal } from "@/components/service/MediaPickerModal";
 import { Segmented } from "@/components/ui/pill";
+import { pickMediaFiles } from "@/lib/importMedia";
+import {
+  mediaBackgroundLabel,
+  themePatchFromMedia,
+} from "@/lib/themeBackgroundMedia";
 import { contrastRatio, cn } from "@/lib/utils";
+import { useMediaStore } from "@/stores/mediaStore";
 import { useThemeStore } from "@/stores/themeStore";
+import { useToastStore } from "@/stores/toastStore";
 import type { ThemeConfig } from "@/lib/themeConfig";
 import {
   FONT_OPTIONS,
@@ -46,6 +55,7 @@ import {
   reorderVectorElement,
   updateVectorElement,
 } from "@/lib/vectorDesign";
+import type { MediaRecord } from "@/lib/tauri";
 
 const PROJECTOR_MODE: OutputMode = "projectorFullscreen";
 
@@ -172,10 +182,11 @@ export function ThemeEditorPage() {
   const [vectorTool, setVectorTool] = useState<VectorTool>("select");
   const [selectedVectorId, setSelectedVectorId] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
+  const [libraryPicker, setLibraryPicker] = useState<"image" | "video" | null>(null);
+  const [importingBg, setImportingBg] = useState(false);
   const importRef = useRef<HTMLInputElement>(null);
-  const imageRef = useRef<HTMLInputElement>(null);
-  const videoRef = useRef<HTMLInputElement>(null);
   const loadedThemeIdRef = useRef<string | undefined>(undefined);
+  const importMediaFiles = useMediaStore((s) => s.importFiles);
 
   const patch = useCallback((partial: Partial<ThemeConfig>) => {
     setDraft((prev) => mergeThemeConfig({ ...prev, ...partial }));
@@ -295,15 +306,33 @@ export function ThemeEditorPage() {
     await saveThemeDocument(name, doc, asNew ? undefined : activeThemeId);
   };
 
-  const handleMediaPick = (type: "image" | "video", file?: File | null) => {
-    if (!file) return;
-    const url = URL.createObjectURL(file);
-    patch({
-      backgroundType: type,
-      ...(type === "image"
-        ? { backgroundImage: url, backgroundVideo: undefined }
-        : { backgroundVideo: url, backgroundImage: undefined }),
+  const applyLibraryBackground = (item: MediaRecord) => {
+    const mediaPatch = themePatchFromMedia(item);
+    if (!mediaPatch) {
+      useToastStore.getState().push({ message: "That media file is missing from disk." });
+      return;
+    }
+    patch(mediaPatch);
+    useToastStore.getState().push({
+      message: `Background set to “${item.name}” — save the theme to keep it.`,
     });
+  };
+
+  const importBackgroundFromDisk = async (type: "image" | "video") => {
+    setImportingBg(true);
+    try {
+      const paths = await pickMediaFiles(type);
+      if (paths.length === 0) return;
+      const imported = await importMediaFiles(paths);
+      const match = imported.find((item) => item.media_type === type) ?? imported[0];
+      if (!match) {
+        useToastStore.getState().push({ message: `No ${type} was imported.` });
+        return;
+      }
+      applyLibraryBackground(match);
+    } finally {
+      setImportingBg(false);
+    }
   };
 
   return (
@@ -699,30 +728,36 @@ export function ThemeEditorPage() {
             )}
             {(draft.backgroundType === "image" || draft.backgroundType === "video") && (
               <>
-                <div className="flex gap-2">
+                <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
-                    onClick={() => imageRef.current?.click()}
-                    className="flex-1 rounded-md border border-[var(--color-border-light)] py-1.5 text-[11px]"
+                    onClick={() => setLibraryPicker(draft.backgroundType === "video" ? "video" : "image")}
+                    className="flex items-center justify-center gap-1.5 rounded-md border border-[var(--color-border-light)] py-1.5 text-[11px] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
                   >
-                    Pick image
+                    <FolderOpen className="h-3 w-3" />
+                    From media library
                   </button>
                   <button
                     type="button"
-                    onClick={() => videoRef.current?.click()}
-                    className="flex-1 rounded-md border border-[var(--color-border-light)] py-1.5 text-[11px]"
+                    disabled={importingBg}
+                    onClick={() =>
+                      void importBackgroundFromDisk(draft.backgroundType === "video" ? "video" : "image")
+                    }
+                    className="flex items-center justify-center gap-1.5 rounded-md border border-[var(--color-border-light)] py-1.5 text-[11px] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] disabled:opacity-50"
                   >
-                    Pick video
+                    <Upload className="h-3 w-3" />
+                    {importingBg ? "Importing…" : "Import file"}
                   </button>
                 </div>
+                <p className="text-[10px] leading-relaxed text-[var(--color-subtle)]">
+                  Library media is stored with the theme so projection backgrounds survive restarts.
+                </p>
                 {(draft.backgroundImage || draft.backgroundVideo) && (
-                  <div className="flex items-center justify-between rounded-md border border-[var(--color-border-light)] px-2 py-1.5 text-[10px] text-[var(--color-subtle)]">
+                  <div className="flex items-center justify-between gap-2 rounded-md border border-[var(--color-border-light)] px-2 py-1.5 text-[10px] text-[var(--color-subtle)]">
                     <span className="truncate">
-                      {draft.backgroundType === "video" && draft.backgroundVideo
-                        ? "Video background loaded"
-                        : draft.backgroundImage
-                          ? "Image background loaded"
-                          : "No media selected"}
+                      {mediaBackgroundLabel(
+                        draft.backgroundType === "video" ? draft.backgroundVideo : draft.backgroundImage,
+                      )}
                     </span>
                     <button
                       type="button"
@@ -739,8 +774,6 @@ export function ThemeEditorPage() {
                     </button>
                   </div>
                 )}
-                <input ref={imageRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleMediaPick("image", e.target.files?.[0])} />
-                <input ref={videoRef} type="file" accept="video/*" className="hidden" onChange={(e) => handleMediaPick("video", e.target.files?.[0])} />
                 <SliderField
                   label="Overlay darkness"
                   value={Math.round(draft.backgroundOverlay * 100)}
@@ -877,6 +910,13 @@ export function ThemeEditorPage() {
           )}
         </aside>
       </div>
+
+      <MediaPickerModal
+        open={libraryPicker != null}
+        mediaType={libraryPicker ?? "image"}
+        onClose={() => setLibraryPicker(null)}
+        onSelect={applyLibraryBackground}
+      />
     </div>
   );
 }

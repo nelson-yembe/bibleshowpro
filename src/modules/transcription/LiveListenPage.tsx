@@ -51,6 +51,7 @@ export function LiveListenPage() {
 
   const translations = useBibleStore((s) => s.translations);
   const selectedTranslationId = useBibleStore((s) => s.selectedTranslationId);
+  const selectedTranslationIds = useBibleStore((s) => s.selectedTranslationIds);
 
   // Per-field selectors — avoid subscribing to the whole store, which is written
   // to at ~60fps (audioLevel) and on every partial result while listening.
@@ -80,7 +81,7 @@ export function LiveListenPage() {
   const setAudioDeviceId = useTranscriptionStore((s) => s.setAudioDeviceId);
   const setParaphraseEnabled = useTranscriptionStore((s) => s.setParaphraseEnabled);
   const setMinConfidence = useTranscriptionStore((s) => s.setMinConfidence);
-  const setSelectedSuggestion = useTranscriptionStore((s) => s.setSelectedSuggestion);
+  const selectAndPresentSuggestion = useTranscriptionStore((s) => s.selectAndPresentSuggestion);
   const startListening = useTranscriptionStore((s) => s.startListening);
   const pauseListening = useTranscriptionStore((s) => s.pauseListening);
   const resumeListening = useTranscriptionStore((s) => s.resumeListening);
@@ -257,8 +258,11 @@ export function LiveListenPage() {
             </p>
           </div>
           <TranscriptionAudioMeter />
-          <span className="text-[10px] text-[var(--color-subtle)]">
-            {translations.find((t) => t.id === selectedTranslationId)?.abbreviation ?? "Bible"}
+          <span className="text-[10px] text-[var(--color-subtle)]" title="Bible Search translation selection">
+            {(selectedTranslationIds.length > 0 ? selectedTranslationIds : selectedTranslationId ? [selectedTranslationId] : [])
+              .map((id) => translations.find((t) => t.id === id)?.abbreviation)
+              .filter(Boolean)
+              .join(" · ") || "Bible"}
           </span>
         </div>
       </div>
@@ -446,7 +450,7 @@ export function LiveListenPage() {
                     key={s.id}
                     suggestion={s}
                     selected={s.id === selectedSuggestionId}
-                    onSelect={() => setSelectedSuggestion(s.id)}
+                    onSelect={() => void selectAndPresentSuggestion(s)}
                   />
                 ))
               )}
