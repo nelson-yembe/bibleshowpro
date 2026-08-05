@@ -42,6 +42,8 @@ export function defaultContentForType(type: string): ServiceItemContent {
       return { speakerName: "Speaker Name", speakerTitle: "Role or title" };
     case "logo":
       return { body: "Bible Show Pro" };
+    case "section":
+      return {};
     default:
       return {};
   }

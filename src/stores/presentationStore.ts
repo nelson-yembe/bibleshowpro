@@ -20,6 +20,7 @@ import {
 } from "@/engine/liveOutput";
 import {
   logoScene,
+  sceneContentEqual,
   sceneFromServiceItem,
   sceneFromVerseComparison,
   sceneFromVersesWithLayout,
@@ -29,6 +30,7 @@ import {
 import type { ServiceItem, ThemeConfig, VerseResult, DisplayInfo } from "@/lib/tauri";
 import { api } from "@/lib/tauri";
 import { syncNdiPreview, useNdiStore } from "@/stores/ndiStore";
+import { useVideoPlaybackStore } from "@/stores/videoPlaybackStore";
 
 export type PreviewSource = "bible" | "service" | "media" | "song" | "transcription" | null;
 
@@ -51,6 +53,10 @@ interface PresentationState extends PresentationSnapshot {
   ) => void;
   previewItem: (item: ServiceItem, theme?: ThemeConfig) => void;
   previewScene: (scene: Scene | null, source?: PreviewSource) => void;
+  /** Copy a module-local staged scene into presentation preview before GO LIVE. */
+  preparePreviewForGoLive: (scene: Scene, source: PreviewSource) => void;
+  /** Push a scene to program output and broadcast (when already live). */
+  pushSceneLive: (scene: Scene, source?: PreviewSource) => void;
   goLive: () => Promise<void>;
   enqueue: (scene: Scene) => void;
   undo: () => void;
@@ -153,7 +159,10 @@ export const usePresentationStore = create<PresentationState>((set, get) => ({
 
   previewVerses: (verses, theme, layout) => {
     const preview = sceneFromVersesWithLayout(verses, theme, layout);
-    const next = setPreview(get(), preview);
+    const state = get();
+    // Skip redundant restage to avoid unnecessary re-renders.
+    if (state.previewSource === "bible" && sceneContentEqual(state.preview, preview)) return;
+    const next = setPreview(state, preview);
     persistSnapshot(next);
     set({ ...next, previewSource: "bible" });
   },
@@ -162,6 +171,9 @@ export const usePresentationStore = create<PresentationState>((set, get) => ({
     const scene = sceneFromVersesWithLayout(verses, theme, layout);
     set((state) => {
       const onAir = isOnAir(state);
+      // Skip redundant restage/broadcast when the target slot already shows this scene.
+      const current = onAir ? state.program : state.preview;
+      if (state.previewSource === "bible" && sceneContentEqual(current, scene)) return state;
       const next: PresentationSnapshot = onAir
         ? {
             ...state,
@@ -183,6 +195,8 @@ export const usePresentationStore = create<PresentationState>((set, get) => ({
     const scene = sceneFromVerseComparison(primary, secondary, theme, layout);
     set((state) => {
       const onAir = isOnAir(state);
+      const current = onAir ? state.program : state.preview;
+      if (state.previewSource === "bible" && sceneContentEqual(current, scene)) return state;
       const next: PresentationSnapshot = onAir
         ? {
             ...state,
@@ -214,6 +228,29 @@ export const usePresentationStore = create<PresentationState>((set, get) => ({
     syncNdiPreview(scene);
   },
 
+  preparePreviewForGoLive: (scene, source) => {
+    const state = get();
+    if (state.previewSource === source && sceneContentEqual(state.preview, scene)) return;
+    const next = setPreview(state, scene);
+    persistSnapshot(next);
+    set({ ...next, previewSource: source });
+  },
+
+  pushSceneLive: (scene, source = "bible") => {
+    set((state) => {
+      if (sceneContentEqual(state.program, scene)) return state;
+      const next: PresentationSnapshot = {
+        ...state,
+        preview: scene,
+        program: scene,
+        history: state.program ? [state.program, ...state.history].slice(0, 20) : state.history,
+      };
+      persistSnapshot(next);
+      void syncOutputReliable({ ...next, liveFollow: true });
+      return { ...next, previewSource: source, liveFollow: true };
+    });
+  },
+
   goLive: async () => {
     try {
       await ensureOutputOpen();
@@ -236,6 +273,10 @@ export const usePresentationStore = create<PresentationState>((set, get) => ({
     set(live);
     persistSnapshot(live);
     await syncOutputReliable(live);
+    if (staged.type === "video" && staged.content.videoPath) {
+      useVideoPlaybackStore.getState().bind(staged.content.videoPath, { autoPlay: true });
+      useVideoPlaybackStore.getState().play();
+    }
     void syncKeepAwake(true);
     void useNdiStore.getState().maybeAutoStartOnGoLive();
   },
@@ -253,6 +294,7 @@ export const usePresentationStore = create<PresentationState>((set, get) => ({
     const cleared = { ...next, liveFollow: false, previewSource: null };
     set(cleared);
     syncOutput(cleared);
+    useVideoPlaybackStore.getState().pause();
     void syncKeepAwake(false);
   },
 
@@ -268,6 +310,7 @@ export const usePresentationStore = create<PresentationState>((set, get) => ({
     const state = { ...next, liveFollow: false };
     set(state);
     syncOutput(state);
+    useVideoPlaybackStore.getState().pause();
     void syncKeepAwake(false);
   },
 
@@ -279,10 +322,15 @@ export const usePresentationStore = create<PresentationState>((set, get) => ({
     set(state);
     persistSnapshot(state);
     await syncOutputReliable(state);
+    useVideoPlaybackStore.getState().pause();
     void syncKeepAwake(true);
   },
 
-  freeze: () => set(toggleFreeze(get())),
+  freeze: () => {
+    const next = toggleFreeze(get());
+    set(next);
+    if (next.frozen) useVideoPlaybackStore.getState().pause();
+  },
 
   openOutput: async () => {
     try {

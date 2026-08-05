@@ -4,6 +4,55 @@ export type VectorElementType = "rect" | "ellipse" | "line" | "text" | "path";
 export type VectorLayer = "background" | "foreground";
 export type VectorTool = "select" | "rect" | "ellipse" | "line" | "text" | "pen";
 
+/** Dynamic content slots a layer can bind to when driven by live content. */
+export type PlaceholderType =
+  | "scriptureBody"
+  | "scriptureReference"
+  | "bibleVersion"
+  | "songTitle"
+  | "lyricLine"
+  | "songSection"
+  | "songCopyright"
+  | "announcementTitle"
+  | "announcementBody"
+  | "speakerName"
+  | "speakerRole"
+  | "sermonTitle"
+  | "countdownTime"
+  | "serviceDate"
+  | "churchName"
+  | "churchLogo"
+  | "backgroundMedia"
+  | "lowerThirdTitle"
+  | "lowerThirdSubtitle";
+
+export type OverflowBehavior = "shrink" | "clip" | "ellipsis" | "scroll";
+export type StrokeStyle = "solid" | "dashed" | "dotted";
+export type ImageFitMode = "cover" | "contain" | "fill" | "original";
+export type BlendMode =
+  | "normal"
+  | "multiply"
+  | "screen"
+  | "overlay"
+  | "darken"
+  | "lighten"
+  | "color-dodge"
+  | "soft-light";
+
+export interface VectorGradient {
+  type: "linear" | "radial";
+  from: string;
+  to: string;
+  angle: number;
+}
+
+export interface VectorShadow {
+  x: number;
+  y: number;
+  blur: number;
+  color: string;
+}
+
 export interface VectorElement {
   id: string;
   name: string;
@@ -32,6 +81,41 @@ export interface VectorElement {
   textAnchor?: "start" | "middle" | "end";
   /** SVG path d — coordinates in viewBox space */
   d?: string;
+
+  // --- Advanced design (all optional, additive; older themes omit them) ---
+  /** Parent group id for nested grouping. */
+  parentId?: string;
+  /** Dash/dot styling for strokes. */
+  strokeStyle?: StrokeStyle;
+  /** Gradient fill — overrides flat `fill` when present. */
+  gradient?: VectorGradient;
+  /** Drop shadow. */
+  shadow?: VectorShadow;
+  /** Gaussian blur radius in viewBox units. */
+  blur?: number;
+  /** CSS mix-blend-mode. */
+  blendMode?: BlendMode;
+  flipX?: boolean;
+  flipY?: boolean;
+  /** Italic text. */
+  italic?: boolean;
+  letterSpacing?: number;
+  lineHeight?: number;
+  textTransform?: "none" | "uppercase" | "lowercase" | "capitalize";
+  /** Image element source (path or url). */
+  src?: string;
+  fitMode?: ImageFitMode;
+  tint?: string;
+
+  // --- Dynamic placeholder binding ---
+  /** When set, this layer renders live content of the given type. */
+  placeholderType?: PlaceholderType;
+  /** Optional explicit content mapping key (defaults to placeholderType). */
+  contentMapping?: string;
+  fallbackText?: string;
+  overflowBehavior?: OverflowBehavior;
+  minFontSize?: number;
+  maxFontSize?: number;
 }
 
 export interface VectorDesign {

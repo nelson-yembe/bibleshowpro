@@ -3,7 +3,7 @@ import { Layers, Plus, Search, Trash2, Upload } from "lucide-react";
 import { Link } from "react-router-dom";
 import { TopBar } from "@/components/layout/TopBar";
 import { StatusBadge } from "@/components/ui/pill";
-import { pickMediaFiles, isMediaDragEvent } from "@/lib/importMedia";
+import { pickMediaFiles, isMediaDragEvent, pathsFromFileList, type MediaPickKind } from "@/lib/importMedia";
 import { parseMediaTags } from "@/lib/mediaUrl";
 import { cn } from "@/lib/utils";
 import { MediaPreview, MediaThumbnail } from "@/modules/media/MediaThumbnail";
@@ -11,6 +11,7 @@ import { useMediaStore, type MediaFilter } from "@/stores/mediaStore";
 import { useLiveNavigationStore } from "@/stores/liveNavigationStore";
 import { usePresentationStore } from "@/stores/presentationStore";
 import { useServiceStore } from "@/stores/serviceStore";
+import { useToastStore } from "@/stores/toastStore";
 
 const sidebarFilters: { id: MediaFilter; label: string }[] = [
   { id: "all", label: "All media" },
@@ -20,6 +21,11 @@ const sidebarFilters: { id: MediaFilter; label: string }[] = [
   { id: "audio", label: "Audio" },
   { id: "missing", label: "Missing files" },
 ];
+
+function pickKindForFilter(filter: MediaFilter): MediaPickKind {
+  if (filter === "image" || filter === "video" || filter === "audio") return filter;
+  return "all";
+}
 
 export function MediaLibraryPage() {
   const store = useMediaStore();
@@ -81,19 +87,53 @@ export function MediaLibraryPage() {
   }, [store.items]);
 
   const handleImport = useCallback(async () => {
-    const paths = await pickMediaFiles();
-    if (paths.length > 0) await store.importFiles(paths);
+    const kind = pickKindForFilter(store.filter);
+    const paths = await pickMediaFiles(kind);
+    if (paths.length === 0) return;
+    try {
+      const imported = await store.importFiles(paths);
+      if (imported.length > 0) {
+        useToastStore.getState().push({
+          message:
+            imported.length === 1
+              ? `Imported “${imported[0]!.name}”`
+              : `Imported ${imported.length} files`,
+        });
+      }
+    } catch (err) {
+      useToastStore.getState().push({
+        message: err instanceof Error ? err.message : "Import failed",
+      });
+    }
   }, [store]);
 
   const handleDrop = useCallback(
     async (event: React.DragEvent) => {
       event.preventDefault();
       setDragOver(false);
-      const paths = Array.from(event.dataTransfer.files).map((file) => {
-        const withPath = file as File & { path?: string };
-        return withPath.path ?? file.name;
-      });
-      if (paths.length > 0) await store.importFiles(paths);
+      const kind = pickKindForFilter(store.filter);
+      const paths = pathsFromFileList(event.dataTransfer.files, kind === "all" ? "all" : kind);
+      if (paths.length === 0) {
+        useToastStore.getState().push({
+          message: "No supported media files in that drop (need real file paths from disk).",
+        });
+        return;
+      }
+      try {
+        const imported = await store.importFiles(paths);
+        if (imported.length > 0) {
+          useToastStore.getState().push({
+            message:
+              imported.length === 1
+                ? `Imported “${imported[0]!.name}”`
+                : `Imported ${imported.length} files`,
+          });
+        }
+      } catch (err) {
+        useToastStore.getState().push({
+          message: err instanceof Error ? err.message : "Import failed",
+        });
+      }
     },
     [store],
   );
@@ -181,7 +221,7 @@ export function MediaLibraryPage() {
                 <p className="font-medium text-[var(--color-foreground)]">{activePlan.title}</p>
                 <p className="mt-0.5 text-[var(--color-subtle)]">{activePlan.items.length} items</p>
                 <Link to="/service" className="mt-1 inline-block text-[var(--color-primary)] hover:underline">
-                  Open Library
+                  Open Service
                 </Link>
               </div>
             ) : (
@@ -271,11 +311,24 @@ export function MediaLibraryPage() {
             multiple
             className="hidden"
             onChange={(event) => {
-              const paths = Array.from(event.target.files ?? []).map((file) => {
-                const withPath = file as File & { path?: string };
-                return withPath.path ?? file.name;
-              });
-              if (paths.length > 0) void store.importFiles(paths);
+              const kind = pickKindForFilter(store.filter);
+              const paths = pathsFromFileList(event.target.files ?? [], kind === "all" ? "all" : kind);
+              if (paths.length === 0) {
+                useToastStore.getState().push({
+                  message: "Use Import files to pick from disk — browser picks need filesystem paths.",
+                });
+              } else {
+                void store.importFiles(paths).then((imported) => {
+                  if (imported.length > 0) {
+                    useToastStore.getState().push({
+                      message:
+                        imported.length === 1
+                          ? `Imported “${imported[0]!.name}”`
+                          : `Imported ${imported.length} files`,
+                    });
+                  }
+                });
+              }
               event.target.value = "";
             }}
           />

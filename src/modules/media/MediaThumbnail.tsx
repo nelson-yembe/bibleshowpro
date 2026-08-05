@@ -1,7 +1,13 @@
+import { useState } from "react";
 import { AlertTriangle, Film, Image as ImageIcon, Music } from "lucide-react";
+import { LocalMediaImage } from "@/components/presentation/LocalMediaImage";
+import { VideoPlaybackControls } from "@/components/presentation/VideoPlaybackControls";
+import { VideoPosterThumb } from "@/components/presentation/VideoPosterThumb";
+import { VideoScenePlayer } from "@/components/presentation/VideoScenePlayer";
 import type { MediaRecord } from "@/lib/tauri";
 import { mediaUrl } from "@/lib/mediaUrl";
 import { cn } from "@/lib/utils";
+import { useMediaStore } from "@/stores/mediaStore";
 
 interface MediaThumbnailProps {
   item: MediaRecord;
@@ -12,8 +18,8 @@ interface MediaThumbnailProps {
 }
 
 export function MediaThumbnail({ item, selected, compact, onClick, onDoubleClick }: MediaThumbnailProps) {
-  const previewPath = item.thumbnail_path ?? (item.media_type === "image" ? item.file_path : null);
-  const src = previewPath ? mediaUrl(previewPath) : null;
+  const patchLocalThumbnail = useMediaStore((s) => s.patchLocalThumbnail);
+  const imagePreviewPath = item.thumbnail_path ?? (item.media_type === "image" ? item.file_path : null);
 
   return (
     <button
@@ -27,9 +33,18 @@ export function MediaThumbnail({ item, selected, compact, onClick, onDoubleClick
           : "border-[var(--color-border-light)] hover:border-[var(--color-border)]",
       )}
     >
-      <div className={cn("relative bg-gradient-to-br from-slate-900 to-black", compact ? "aspect-video" : "aspect-video")}>
-        {src && item.file_exists ? (
-          <img src={src} alt={item.name} className="h-full w-full object-cover" loading="lazy" />
+      <div className="relative aspect-video bg-gradient-to-br from-slate-900 to-black">
+        {item.file_exists && item.media_type === "image" && imagePreviewPath ? (
+          <LocalMediaImage path={imagePreviewPath} alt={item.name} className="h-full w-full object-cover" />
+        ) : item.file_exists && item.media_type === "video" ? (
+          <VideoPosterThumb
+            mediaId={item.id}
+            videoPath={item.file_path}
+            thumbnailPath={item.thumbnail_path}
+            alt={item.name}
+            className="h-full w-full object-cover"
+            onThumbnailReady={(path) => patchLocalThumbnail(item.id, path)}
+          />
         ) : (
           <div className="flex h-full items-center justify-center">
             {item.media_type === "video" ? (
@@ -78,12 +93,13 @@ interface MediaPreviewProps {
 
 export function MediaPreview({ item, className }: MediaPreviewProps) {
   const src = mediaUrl(item.file_path);
+  const [broken, setBroken] = useState(false);
 
-  if (!item.file_exists) {
+  if (!item.file_exists || broken) {
     return (
       <div className={cn("flex aspect-video flex-col items-center justify-center gap-2 rounded-lg bg-amber-950/20 p-4 text-center", className)}>
         <AlertTriangle className="h-8 w-8 text-amber-400" />
-        <p className="text-xs text-amber-200">File missing on disk</p>
+        <p className="text-xs text-amber-200">{!item.file_exists ? "File missing on disk" : "Could not load preview"}</p>
         <p className="text-[10px] text-[var(--color-subtle)]">{item.file_path}</p>
       </div>
     );
@@ -91,16 +107,20 @@ export function MediaPreview({ item, className }: MediaPreviewProps) {
 
   if (item.media_type === "video") {
     return (
-      <video
-        key={item.id}
-        src={src}
-        controls
-        autoPlay
-        loop
-        muted
-        playsInline
-        className={cn("aspect-video w-full rounded-lg bg-black object-contain", className)}
-      />
+      <div className={cn("space-y-2", className)}>
+        <div className="aspect-video overflow-hidden rounded-lg bg-black">
+          <VideoScenePlayer
+            path={item.file_path}
+            title={item.name}
+            role="master"
+            isProgram={false}
+            autoPlay={false}
+            showTitle={false}
+            className="h-full w-full"
+          />
+        </div>
+        <VideoPlaybackControls dense hideWhenIdle={false} />
+      </div>
     );
   }
 
@@ -109,15 +129,14 @@ export function MediaPreview({ item, className }: MediaPreviewProps) {
       <div className={cn("flex aspect-video flex-col items-center justify-center gap-4 rounded-lg bg-[var(--color-panel)] p-6", className)}>
         <Music className="h-12 w-12 text-[var(--color-primary)]" />
         <p className="text-sm font-medium">{item.name}</p>
-        <audio key={item.id} src={src} controls className="w-full" />
+        <audio key={item.id} src={src} controls className="w-full" onError={() => setBroken(true)} />
       </div>
     );
   }
 
   return (
-    <img
-      key={item.id}
-      src={src}
+    <LocalMediaImage
+      path={item.file_path}
       alt={item.name}
       className={cn("aspect-video w-full rounded-lg bg-black object-contain", className)}
     />

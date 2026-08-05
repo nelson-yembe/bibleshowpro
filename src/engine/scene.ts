@@ -1,6 +1,6 @@
-import type { ThemeConfig, VerseResult } from "@/lib/tauri";
+import { mergeThemeConfig, DEFAULT_THEME, type ThemeConfig } from "@/lib/themeConfig";
+import type { VerseResult } from "@/lib/tauri";
 import { resolveVerseLayout, themeForLowerThirdLayout } from "@/lib/lowerThird";
-import { DEFAULT_THEME } from "@/lib/themeConfig";
 import type { ServiceItemContent } from "@/lib/serviceItemContent";
 
 export { DEFAULT_THEME };
@@ -41,6 +41,20 @@ export interface Scene {
   content: SceneContent;
   theme?: ThemeConfig;
   transition?: "fade" | "none";
+}
+
+/**
+ * Structural equality for scenes, ignoring the volatile random `id`.
+ * Used to suppress redundant re-stages / output broadcasts.
+ */
+export function sceneContentEqual(a: Scene | null, b: Scene | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (a.type !== b.type) return false;
+  if (JSON.stringify(a.content) !== JSON.stringify(b.content)) return false;
+  const themeA = mergeThemeConfig(a.theme ?? undefined);
+  const themeB = mergeThemeConfig(b.theme ?? undefined);
+  return JSON.stringify(themeA) === JSON.stringify(themeB);
 }
 
 export function sceneFromVerses(verses: VerseResult[], theme?: ThemeConfig): Scene {
@@ -137,6 +151,7 @@ export function sceneFromServiceItem(itemType: string, title: string, contentJso
     blackout: "blackout",
     logo: "logo",
     sermon_note: "announcement",
+    section: "blank",
   };
 
   const sceneType = typeMap[itemType] ?? "announcement";

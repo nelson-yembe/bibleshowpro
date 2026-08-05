@@ -23,7 +23,7 @@ interface MediaState {
   loadMedia: () => Promise<void>;
   init: () => Promise<void>;
   selectItem: (id: string | null, options?: { preview?: boolean }) => Promise<void>;
-  importFiles: (paths: string[]) => Promise<void>;
+  importFiles: (paths: string[]) => Promise<MediaRecord[]>;
   updateItem: (id: string, patch: { name?: string; tags?: string[] }) => Promise<void>;
   removeItem: (id: string) => Promise<void>;
   setSearch: (value: string) => void;
@@ -33,6 +33,8 @@ interface MediaState {
   addSelectedToService: () => Promise<void>;
   filteredItems: () => MediaRecord[];
   selectedItem: () => MediaRecord | null;
+  patchLocalThumbnail: (id: string, thumbnailPath: string) => void;
+  backfillThumbnails: () => Promise<void>;
 }
 
 function loadContext(): MediaContext {
@@ -72,6 +74,8 @@ export const useMediaStore = create<MediaState>((set, get) => ({
           : items[0]?.id ?? null;
       set({ items, selectedId });
       saveContext(selectedId);
+      // Fire-and-forget poster backfill for older videos.
+      void get().backfillThumbnails();
     } finally {
       set({ loading: false });
     }
@@ -93,7 +97,7 @@ export const useMediaStore = create<MediaState>((set, get) => ({
   },
 
   importFiles: async (paths) => {
-    if (paths.length === 0) return;
+    if (paths.length === 0) return [];
     set({ importing: true });
     try {
       const imported = await api.importMediaFiles(paths);
@@ -101,6 +105,7 @@ export const useMediaStore = create<MediaState>((set, get) => ({
       if (imported[0]) {
         await get().selectItem(imported[0].id);
       }
+      return imported;
     } finally {
       set({ importing: false });
     }
@@ -184,5 +189,28 @@ export const useMediaStore = create<MediaState>((set, get) => ({
   selectedItem: () => {
     const { items, selectedId } = get();
     return items.find((item) => item.id === selectedId) ?? null;
+  },
+
+  patchLocalThumbnail: (id, thumbnailPath) => {
+    set((state) => ({
+      items: state.items.map((item) =>
+        item.id === id ? { ...item, thumbnail_path: thumbnailPath } : item,
+      ),
+    }));
+  },
+
+  backfillThumbnails: async () => {
+    try {
+      const updated = await api.backfillVideoThumbnails();
+      if (updated.length === 0) return;
+      set((state) => {
+        const byId = new Map(updated.map((item) => [item.id, item]));
+        return {
+          items: state.items.map((item) => byId.get(item.id) ?? item),
+        };
+      });
+    } catch {
+      // ffmpeg may be unavailable; VideoPosterThumb will capture in-browser.
+    }
   },
 }));

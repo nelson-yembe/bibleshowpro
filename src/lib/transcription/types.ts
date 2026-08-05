@@ -7,7 +7,7 @@ export type ListeningStatus =
   | "reconnecting"
   | "unavailable";
 
-export type DetectionType = "explicit" | "paraphrase" | "quote" | "topic";
+export type DetectionType = "explicit" | "paraphrase" | "quote" | "topic" | "inferred";
 export type ConfidenceLevel = "high" | "medium" | "low";
 export type SuggestionStatus = "pending" | "preview" | "queued" | "ignored" | "live";
 

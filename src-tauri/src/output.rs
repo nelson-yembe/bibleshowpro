@@ -67,7 +67,8 @@ fn schedule_output_visibility_retries(app: &AppHandle) {
                 break;
             };
             if let Ok(monitor) = display::pick_output_monitor(&app) {
-                if let Err(error) = display::place_output_on_monitor(&window, &monitor) {
+                // Focus-free: the explicit open already grabbed focus once.
+                if let Err(error) = display::reposition_output_on_monitor(&window, &monitor) {
                     eprintln!("[output] visibility retry failed: {error}");
                 }
             }
@@ -135,7 +136,8 @@ pub async fn refresh_output_window(app: AppHandle) -> Result<Option<DisplayInfo>
     };
 
     let monitor = display::pick_output_monitor(&app)?;
-    display::place_output_on_monitor(&window, &monitor)?;
+    // Use the focus-free reposition: routine refreshes must never steal OS focus.
+    display::reposition_output_on_monitor(&window, &monitor)?;
     let primary = app.primary_monitor().map_err(|e| e.to_string())?;
     let display = display::display_info_from_monitor(0, &monitor, &primary);
     let _ = app.emit("output-opened", &display);
@@ -189,14 +191,18 @@ pub fn start_display_watcher(app: AppHandle) {
             };
 
             let signature = display::display_signature(&displays);
+            // Only act when the display topology actually changes. Previously this
+            // refreshed (and re-placed/re-focused) the output window every 2s,
+            // which stole foreground focus from other apps and closed native
+            // dropdowns in our own window on a ~2s cadence.
             if signature != last_signature {
                 last_signature = signature;
                 let _ = app.emit("display-changed", &displays);
-            }
 
-            if app.get_webview_window("output").is_some() {
-                if let Err(error) = refresh_output_window(app.clone()).await {
-                    eprintln!("[display-watcher] refresh output failed: {error}");
+                if app.get_webview_window("output").is_some() {
+                    if let Err(error) = refresh_output_window(app.clone()).await {
+                        eprintln!("[display-watcher] refresh output failed: {error}");
+                    }
                 }
             }
         }

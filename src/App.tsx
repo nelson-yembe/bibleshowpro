@@ -19,6 +19,7 @@ import { useMediaStore } from "@/stores/mediaStore";
 import { useThemeStore } from "@/stores/themeStore";
 import { useOutputDisplayManager } from "@/hooks/useOutputDisplayManager";
 import { useNdiStore } from "@/stores/ndiStore";
+import { startVideoPlaybackBridge } from "@/stores/videoPlaybackStore";
 
 function AppBootstrap({ children }: { children: React.ReactNode }) {
   const hydrate = usePresentationStore((s) => s.hydrate);
@@ -36,6 +37,8 @@ function AppBootstrap({ children }: { children: React.ReactNode }) {
     void loadMedia();
     void loadNdi();
   }, [hydrate, initService, loadMedia, loadThemes, loadNdi]);
+
+  useEffect(() => startVideoPlaybackBridge({ applyRemote: false }), []);
 
   return (
     <>

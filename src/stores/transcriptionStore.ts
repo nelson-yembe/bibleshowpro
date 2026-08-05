@@ -128,7 +128,11 @@ let segmentCounter = 0;
 let partialScanTimer: number | undefined;
 let noSignalTimer: number | undefined;
 let lastReportedAudioLevel = 0;
+let lastAudioLevelEmit = 0;
 let sessionPeakAudioLevel = 0;
+
+/** Cap meter updates to ~20fps so the level monitor doesn't thrash React state. */
+const AUDIO_LEVEL_MIN_INTERVAL_MS = 50;
 
 async function stopLevelMonitor() {
   window.clearTimeout(noSignalTimer);
@@ -156,6 +160,9 @@ async function startLevelMonitor(
       sessionPeakAudioLevel = Math.max(sessionPeakAudioLevel, level);
       const levelChanged = Math.abs(level - lastReportedAudioLevel) >= 0.015;
       if (!levelChanged) return;
+      const now = Date.now();
+      if (now - lastAudioLevelEmit < AUDIO_LEVEL_MIN_INTERVAL_MS) return;
+      lastAudioLevelEmit = now;
       lastReportedAudioLevel = level;
       set({ audioLevel: level });
     },
@@ -425,7 +432,16 @@ function resolveDetectionContext(state: TranscriptionState): DetectionContext | 
       return { bookNumber: verse.book_number, bookName: verse.book_name, chapter: verse.chapter };
     }
   }
-  const recent = state.suggestions.find((s) => s.status !== "ignored" && s.verses.length > 0);
+  // Prefer the operator-selected suggestion so retellings resolve against the
+  // confirmed sermon passage rather than an older accidental hit.
+  const selected =
+    state.selectedSuggestionId != null
+      ? state.suggestions.find(
+          (s) => s.id === state.selectedSuggestionId && s.status !== "ignored" && s.verses.length > 0,
+        )
+      : undefined;
+  const recent =
+    selected ?? state.suggestions.find((s) => s.status !== "ignored" && s.verses.length > 0);
   const verse = recent?.verses[0];
   if (verse) {
     return { bookNumber: verse.book_number, bookName: verse.book_name, chapter: verse.chapter };

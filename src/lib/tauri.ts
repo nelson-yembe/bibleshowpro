@@ -128,6 +128,29 @@ export interface ThemeRecord {
   name: string;
   config_json: string;
   is_default: boolean;
+  description?: string;
+  tags?: string;
+  version?: number;
+  is_favorite?: boolean;
+  updated_at?: string;
+}
+
+export interface ThemeVersionRecord {
+  id: string;
+  theme_id: string;
+  version_number: number;
+  snapshot_json: string;
+  created_at: string;
+}
+
+export interface ThemeAssetRecord {
+  id: string;
+  theme_id: string;
+  asset_type: string;
+  file_path: string;
+  thumbnail_path?: string | null;
+  metadata_json: string;
+  created_at: string;
 }
 
 export interface MediaRecord {
@@ -220,18 +243,55 @@ export const api = {
     tauriInvoke<ServiceItem[]>("import_scripture_list", { planId, text }),
   exportServicePlan: (id: string) => tauriInvoke<string>("export_service_plan", { id }),
   listThemes: () => tauriInvoke<ThemeRecord[]>("list_themes"),
-  saveTheme: (args: { id?: string; name: string; configJson: string; isDefault?: boolean }) =>
+  saveTheme: (args: {
+    id?: string;
+    name: string;
+    configJson: string;
+    isDefault?: boolean;
+    description?: string;
+    tags?: string;
+    isFavorite?: boolean;
+  }) =>
     tauriInvoke<ThemeRecord>("save_theme", {
       id: args.id,
       name: args.name,
       configJson: args.configJson,
       isDefault: args.isDefault,
+      description: args.description,
+      tags: args.tags,
+      isFavorite: args.isFavorite,
     }),
   deleteTheme: (id: string) => tauriInvoke<void>("delete_theme", { id }),
+  listThemeVersions: (themeId: string) =>
+    tauriInvoke<ThemeVersionRecord[]>("list_theme_versions", { themeId }),
+  restoreThemeVersion: (themeId: string, versionNumber: number) =>
+    tauriInvoke<ThemeRecord>("restore_theme_version", { themeId, versionNumber }),
+  listThemeAssets: (themeId: string) =>
+    tauriInvoke<ThemeAssetRecord[]>("list_theme_assets", { themeId }),
+  addThemeAsset: (args: {
+    themeId: string;
+    assetType: string;
+    filePath: string;
+    thumbnailPath?: string;
+    metadataJson?: string;
+  }) =>
+    tauriInvoke<ThemeAssetRecord>("add_theme_asset", {
+      themeId: args.themeId,
+      assetType: args.assetType,
+      filePath: args.filePath,
+      thumbnailPath: args.thumbnailPath,
+      metadataJson: args.metadataJson,
+    }),
+  deleteThemeAsset: (id: string) => tauriInvoke<void>("delete_theme_asset", { id }),
   listMedia: () => tauriInvoke<MediaRecord[]>("list_media"),
   addMedia: (name: string, filePath: string, mediaType: string) =>
     tauriInvoke<MediaRecord>("add_media", { name, filePath, mediaType }),
   importMediaFiles: (paths: string[]) => tauriInvoke<MediaRecord[]>("import_media_files", { paths }),
+  readMediaDataUrl: (path: string) => tauriInvoke<string>("read_media_data_url", { path }),
+  ensureVideoThumbnail: (id: string) => tauriInvoke<MediaRecord>("ensure_video_thumbnail", { id }),
+  backfillVideoThumbnails: () => tauriInvoke<MediaRecord[]>("backfill_video_thumbnails"),
+  saveMediaThumbnailJpeg: (id: string, jpegBase64: string) =>
+    tauriInvoke<MediaRecord>("save_media_thumbnail_jpeg", { id, jpegBase64 }),
   updateMedia: (args: { id: string; name?: string; tagsJson?: string }) =>
     tauriInvoke<MediaRecord>("update_media", {
       id: args.id,

@@ -7,6 +7,7 @@ import { logoScene } from "@/engine/scene";
 import { isTransparentLowerThirdOutput } from "@/lib/lowerThird";
 import { api } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
+import { startVideoPlaybackBridge } from "@/stores/videoPlaybackStore";
 import "../index.css";
 
 function useOutputWakeLock() {
@@ -58,6 +59,8 @@ function OutputApp() {
   const [scene, setScene] = useState<Scene | null>(() => logoScene());
   useOutputWakeLock();
   useTransparentOutput(scene);
+
+  useEffect(() => startVideoPlaybackBridge({ applyRemote: true }), []);
 
   const transparent = isTransparentLowerThirdOutput(scene, null, false);
 

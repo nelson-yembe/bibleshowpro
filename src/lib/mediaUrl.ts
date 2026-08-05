@@ -3,13 +3,25 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 /** Turn a local filesystem path into a URL the webview can load. */
 export function mediaUrl(filePath: string | null | undefined): string {
   if (!filePath) return "";
-  if (filePath.startsWith("http://") || filePath.startsWith("https://") || filePath.startsWith("data:")) {
+  if (
+    filePath.startsWith("http://") ||
+    filePath.startsWith("https://") ||
+    filePath.startsWith("data:") ||
+    filePath.startsWith("blob:") ||
+    filePath.startsWith("asset:")
+  ) {
     return filePath;
   }
   try {
-    return convertFileSrc(filePath);
+    // WebView2 is happier with consistent separators; convertFileSrc still needs a real path.
+    const normalized = filePath.replace(/\//g, "\\");
+    return convertFileSrc(normalized);
   } catch {
-    return filePath;
+    try {
+      return convertFileSrc(filePath);
+    } catch {
+      return filePath;
+    }
   }
 }
 

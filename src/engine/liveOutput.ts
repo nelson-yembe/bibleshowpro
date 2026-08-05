@@ -1,6 +1,7 @@
 import type { Scene } from "@/engine/scene";
 import { useLiveNavigationStore } from "@/stores/liveNavigationStore";
 import type { PreviewSource } from "@/stores/presentationStore";
+import { usePresentationStore } from "@/stores/presentationStore";
 
 export function isPlaceholderScene(scene: Scene | null | undefined): boolean {
   if (!scene) return true;
@@ -49,6 +50,15 @@ export async function refreshPreviewBeforeGoLive(source: PreviewSource): Promise
 
   if (source === "transcription") {
     // Preview is already staged from Live Listen suggestion cards.
+    return;
+  }
+
+  if (source === "bible") {
+    const { useBibleStagingStore } = await import("@/stores/bibleStagingStore");
+    const scene = useBibleStagingStore.getState().stagedScene;
+    if (scene) {
+      usePresentationStore.getState().preparePreviewForGoLive(scene, "bible");
+    }
     return;
   }
 }

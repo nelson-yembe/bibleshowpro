@@ -26,6 +26,13 @@ export function useOutputDisplayManager() {
       unlisteners.push(
         listen<DisplayInfo>("output-opened", () => {
           if (cancelled) return;
+          // #region agent log
+          {
+            const __g = globalThis as unknown as { __ooCount?: number };
+            __g.__ooCount = (__g.__ooCount ?? 0) + 1;
+            fetch('http://127.0.0.1:7738/ingest/e670e04f-991d-4bfa-a718-ab18cda6626f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'1b94a6'},body:JSON.stringify({sessionId:'1b94a6',hypothesisId:'F',location:'useOutputDisplayManager.ts:output-opened',message:'output-opened received (watcher refresh)',data:{count:__g.__ooCount},timestamp:Date.now()})}).catch(()=>{});
+          }
+          // #endregion
           void syncOutputStatus();
         }),
       );

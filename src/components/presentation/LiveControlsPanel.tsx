@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Zap } from "lucide-react";
 import { SceneRenderer } from "@/components/presentation/SceneRenderer";
 import { ServiceQueueStrip } from "@/components/presentation/ServiceQueueStrip";
+import { VideoPlaybackControls } from "@/components/presentation/VideoPlaybackControls";
 import type { DisplayOptions } from "@/components/presentation/displayOptions";
 import { buildSlidesFromSong } from "@/lib/songTypes";
 import { cn } from "@/lib/utils";
@@ -22,7 +23,7 @@ interface ControlButton {
 
 const sourceLabels = {
   bible: "Bible",
-  service: "Service plan",
+  service: "Service",
   media: "Media",
   song: "Song lyrics",
   transcription: "Live listen",
@@ -48,26 +49,24 @@ function formatProgramLabel(scene: ReturnType<typeof usePresentationStore.getSta
 }
 
 export function LiveControlsPanel({ displayOptions }: LiveControlsPanelProps) {
-  const {
-    program,
-    preview,
-    frozen,
-    liveFollow,
-    previewSource,
-    goLive,
-    undo,
-    clear,
-    blackout,
-    showLogo,
-    freeze,
-    outputOpen,
-    outputError,
-    displays,
-    activeDisplay,
-    openOutput,
-    closeOutput,
-    refreshOutput,
-  } = usePresentationStore();
+  const program = usePresentationStore((s) => s.program);
+  const preview = usePresentationStore((s) => s.preview);
+  const frozen = usePresentationStore((s) => s.frozen);
+  const liveFollow = usePresentationStore((s) => s.liveFollow);
+  const previewSource = usePresentationStore((s) => s.previewSource);
+  const goLive = usePresentationStore((s) => s.goLive);
+  const undo = usePresentationStore((s) => s.undo);
+  const clear = usePresentationStore((s) => s.clear);
+  const blackout = usePresentationStore((s) => s.blackout);
+  const showLogo = usePresentationStore((s) => s.showLogo);
+  const freeze = usePresentationStore((s) => s.freeze);
+  const outputOpen = usePresentationStore((s) => s.outputOpen);
+  const outputError = usePresentationStore((s) => s.outputError);
+  const displays = usePresentationStore((s) => s.displays);
+  const activeDisplay = usePresentationStore((s) => s.activeDisplay);
+  const openOutput = usePresentationStore((s) => s.openOutput);
+  const closeOutput = usePresentationStore((s) => s.closeOutput);
+  const refreshOutput = usePresentationStore((s) => s.refreshOutput);
 
   const handlers = useLiveNavigationStore((s) => s.handlers);
   const activeSong = useSongStore((s) => s.activeSong);
@@ -93,6 +92,10 @@ export function LiveControlsPanel({ displayOptions }: LiveControlsPanelProps) {
   const isSongLive = previewSource === "song" && songSlides.length > 0;
   const programLabel = formatProgramLabel(program);
   const externalDisplays = displays.filter((display) => !display.is_primary);
+  const activeVideoScene =
+    (isOnAir && program?.type === "video" && program) ||
+    (preview?.type === "video" ? preview : null);
+  const showVideoControls = Boolean(activeVideoScene?.content.videoPath);
 
   const buttons: ControlButton[] = [
     {
@@ -181,6 +184,8 @@ export function LiveControlsPanel({ displayOptions }: LiveControlsPanelProps) {
             </div>
           </div>
         )}
+
+        {showVideoControls && <VideoPlaybackControls className="mt-2" dense />}
       </div>
 
       <div className="flex flex-col gap-3 p-4">

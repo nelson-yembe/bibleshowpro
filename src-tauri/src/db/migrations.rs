@@ -113,6 +113,30 @@ CREATE INDEX IF NOT EXISTS idx_scripture_detections_session
   ON scripture_detections (session_id, created_at);
 ";
 
+const THEME_STUDIO_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS theme_versions (
+  id TEXT PRIMARY KEY,
+  theme_id TEXT NOT NULL REFERENCES themes(id) ON DELETE CASCADE,
+  version_number INTEGER NOT NULL,
+  snapshot_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_by TEXT
+);
+
+CREATE TABLE IF NOT EXISTS theme_assets (
+  id TEXT PRIMARY KEY,
+  theme_id TEXT NOT NULL REFERENCES themes(id) ON DELETE CASCADE,
+  asset_type TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  thumbnail_path TEXT,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_theme_versions_theme ON theme_versions (theme_id, version_number DESC);
+CREATE INDEX IF NOT EXISTS idx_theme_assets_theme ON theme_assets (theme_id);
+";
+
 /// Runs schema migrations. Returns `true` when the FTS index should be rebuilt
 /// in the background (never block app startup on a full repopulate).
 pub fn run_migrations(conn: &Connection) -> Result<bool, String> {
@@ -210,6 +234,29 @@ pub fn run_migrations(conn: &Connection) -> Result<bool, String> {
             [],
         )
         .map_err(|e| e.to_string())?;
+    }
+
+    // v8: advanced theme studio — metadata columns, version history, assets.
+    if current < 8 {
+        // Each column added individually; ignore "duplicate column" if a partial
+        // run already added some (keeps re-runs safe).
+        for stmt in [
+            "ALTER TABLE themes ADD COLUMN description TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE themes ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'",
+            "ALTER TABLE themes ADD COLUMN version INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE themes ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0",
+        ] {
+            if let Err(e) = conn.execute(stmt, []) {
+                let msg = e.to_string();
+                if !msg.contains("duplicate column name") {
+                    return Err(msg);
+                }
+            }
+        }
+        conn.execute_batch(THEME_STUDIO_SCHEMA)
+            .map_err(|e| e.to_string())?;
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (8)", [])
+            .map_err(|e| e.to_string())?;
     }
 
     if !needs_fts_rebuild && fts_index_needs_repopulate(conn)? {

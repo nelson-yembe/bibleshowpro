@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
   DndContext,
   closestCenter,
@@ -18,9 +19,14 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   BookOpen,
+  Calendar,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
   GripVertical,
   Image,
-  ListPlus,
+  ListOrdered,
   Megaphone,
   Mic,
   Monitor,
@@ -30,24 +36,38 @@ import {
   Trash2,
   Type,
   Video,
+  Zap,
 } from "lucide-react";
 import { TopBar } from "@/components/layout/TopBar";
+import { StagingPreview } from "@/components/presentation/StagingPreview";
 import { MediaPickerModal } from "@/components/service/MediaPickerModal";
 import { ServiceItemEditor } from "@/components/service/ServiceItemEditor";
 import { SongPickerModal } from "@/components/service/SongPickerModal";
 import { StatusBadge } from "@/components/ui/pill";
-import { defaultContentForType, stringifyServiceItemContent } from "@/lib/serviceItemContent";
+import { defaultContentForType, parseServiceItemContent, stringifyServiceItemContent } from "@/lib/serviceItemContent";
+import {
+  deepLinkForItem,
+  formatItemType,
+  isPresentableServiceItem,
+  itemDurationLabel,
+  neighborPresentableIndex,
+  SERVICE_ITEM_COLORS,
+} from "@/lib/serviceItemMeta";
 import { SERVICE_TEMPLATES } from "@/lib/serviceTemplates";
 import { serviceItemContentFromMedia } from "@/lib/mediaLive";
 import { serviceItemContentFromSong } from "@/lib/songLive";
 import type { MediaRecord, ServiceItem } from "@/lib/tauri";
+import { cn } from "@/lib/utils";
+import { useBibleStore } from "@/stores/bibleStore";
 import { useLiveNavigationStore } from "@/stores/liveNavigationStore";
+import { useMediaStore } from "@/stores/mediaStore";
 import { usePresentationStore } from "@/stores/presentationStore";
 import { useServiceStore } from "@/stores/serviceStore";
+import { useSongStore } from "@/stores/songStore";
 import { useThemeStore } from "@/stores/themeStore";
-import { cn } from "@/lib/utils";
 
 const addItems = [
+  { type: "section", label: "Section", icon: ListOrdered, color: "text-[var(--color-muted-foreground)]" },
   { type: "countdown", label: "Countdown", icon: Timer, color: "text-orange-400" },
   { type: "logo", label: "Logo", icon: Monitor, color: "text-slate-400" },
   { type: "song", label: "Song", icon: Music, color: "text-purple-400" },
@@ -60,44 +80,79 @@ const addItems = [
   { type: "blank", label: "Blank", icon: Plus, color: "text-gray-400" },
 ];
 
-const itemColors: Record<string, string> = {
-  countdown: "bg-orange-500",
-  song: "bg-purple-500",
-  scripture: "bg-sky-500",
-  announcement: "bg-blue-500",
-  sermon_note: "bg-emerald-500",
-  video: "bg-red-500",
-  image: "bg-amber-500",
-  logo: "bg-slate-500",
-  blackout: "bg-gray-700",
-  blank: "bg-gray-600",
-};
-
 type PickerState =
   | { mode: "song"; replaceItemId?: string }
   | { mode: "video"; replaceItemId?: string }
   | { mode: "image"; replaceItemId?: string }
   | null;
 
+function displayIndex(items: ServiceItem[], index: number): string {
+  let n = 0;
+  for (let i = 0; i <= index; i++) {
+    if (isPresentableServiceItem(items[i]!)) n += 1;
+  }
+  return String(n).padStart(2, "0");
+}
+
 function SortableRow({
   item,
   index,
+  items,
   selected,
-  onAir,
+  role,
   onSelect,
   onDelete,
   onGoLive,
 }: {
   item: ServiceItem;
   index: number;
+  items: ServiceItem[];
   selected: boolean;
-  onAir: boolean;
+  role: "now" | "next" | "preview" | null;
   onSelect: () => void;
   onDelete: (id: string) => void;
   onGoLive: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: item.id });
   const style = { transform: CSS.Transform.toString(transform), transition };
+  const isSection = item.item_type === "section";
+  const duration = itemDurationLabel(item);
+
+  if (isSection) {
+    return (
+      <div
+        ref={setNodeRef}
+        style={style}
+        onClick={onSelect}
+        className={cn(
+          "group flex cursor-pointer items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2",
+          selected && "ring-1 ring-inset ring-[var(--color-primary)]/40",
+        )}
+      >
+        <button
+          type="button"
+          className="cursor-grab text-[var(--color-subtle)] opacity-0 group-hover:opacity-100"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="h-3.5 w-3.5" />
+        </button>
+        <p className="flex-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-subtle)]">
+          {item.title}
+        </p>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(item.id);
+          }}
+          className="text-[var(--color-subtle)] opacity-0 hover:text-red-400 group-hover:opacity-100"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -110,7 +165,10 @@ function SortableRow({
       }}
       className={cn(
         "group flex cursor-pointer items-center gap-3 border-b border-[var(--color-border)] px-4 py-2.5 transition-colors",
-        selected ? "bg-blue-950/20 border-l-2 border-l-[var(--color-primary)]" : "hover:bg-[var(--color-panel-hover)]",
+        role === "now" && "bg-red-950/25 border-l-2 border-l-red-500",
+        role === "next" && "bg-amber-950/15 border-l-2 border-l-amber-500/70",
+        role === "preview" && "bg-blue-950/20 border-l-2 border-l-[var(--color-primary)]",
+        !role && "hover:bg-[var(--color-panel-hover)]",
       )}
     >
       <button
@@ -121,15 +179,21 @@ function SortableRow({
       >
         <GripVertical className="h-4 w-4" />
       </button>
-      <span className="w-5 text-[11px] font-mono text-[var(--color-subtle)]">{String(index + 1).padStart(2, "0")}</span>
-      <div className={cn("h-8 w-1 rounded-full", itemColors[item.item_type] ?? "bg-gray-500")} />
+      <span className="w-5 text-[11px] font-mono text-[var(--color-subtle)]">{displayIndex(items, index)}</span>
+      <div className={cn("h-8 w-1 rounded-full", SERVICE_ITEM_COLORS[item.item_type] ?? "bg-gray-500")} />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{item.title}</p>
-        <p className="text-[11px] capitalize text-[var(--color-subtle)]">{item.item_type.replace("_", " ")}</p>
+        <p className="text-[11px] capitalize text-[var(--color-subtle)]">
+          {formatItemType(item.item_type)}
+          {duration ? ` · ${duration}` : ""}
+          {item.operator_notes ? ` · ${item.operator_notes}` : ""}
+        </p>
       </div>
-      {onAir ? (
-        <StatusBadge variant="live">On air</StatusBadge>
-      ) : selected ? (
+      {role === "now" ? (
+        <StatusBadge variant="live">Now</StatusBadge>
+      ) : role === "next" ? (
+        <StatusBadge variant="preview">Next</StatusBadge>
+      ) : role === "preview" ? (
         <StatusBadge variant="preview">Preview</StatusBadge>
       ) : null}
       <button
@@ -148,8 +212,10 @@ function SortableRow({
 
 export function ServiceBuilderPage() {
   const store = useServiceStore();
+  const navigate = useNavigate();
   const { themeRevision } = useThemeStore();
   const program = usePresentationStore((s) => s.program);
+  const preview = usePresentationStore((s) => s.preview);
   const liveFollow = usePresentationStore((s) => s.liveFollow);
   const isBlackout = program?.type === "blackout";
 
@@ -158,6 +224,8 @@ export function ServiceBuilderPage() {
   const [bulkScripture, setBulkScripture] = useState("");
   const [picker, setPicker] = useState<PickerState>(null);
   const [importing, setImporting] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [plansOpen, setPlansOpen] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -172,7 +240,9 @@ export function ServiceBuilderPage() {
     store.activePlan?.items.find((item) => item.id === store.activeItemId) ?? store.activePlan?.items[0] ?? null;
 
   useEffect(() => {
-    if (selectedItem) void store.previewActiveItem();
+    if (selectedItem && isPresentableServiceItem(selectedItem)) {
+      void store.previewActiveItem();
+    }
   }, [themeRevision, selectedItem?.id, store.previewActiveItem]);
 
   useEffect(() => {
@@ -191,20 +261,45 @@ export function ServiceBuilderPage() {
     return store.activePlan.items.findIndex((item) => item.id === store.activeItemId);
   }, [store.activePlan, store.activeItemId]);
 
-  const itemCount = store.activePlan?.items.length ?? 0;
+  const items = store.activePlan?.items ?? [];
+
+  const nowItem = useMemo(() => {
+    if (!liveFollow || isBlackout || !store.activePlan) return null;
+    if (selectedItem && isPresentableServiceItem(selectedItem)) return selectedItem;
+    // Stay on last presentable cue when operator selects a section header
+    const prevIdx = neighborPresentableIndex(store.activePlan.items, itemIndex, -1);
+    return prevIdx >= 0 ? store.activePlan.items[prevIdx] ?? null : null;
+  }, [liveFollow, isBlackout, selectedItem, store.activePlan, itemIndex]);
+
+  const nextItem = useMemo(() => {
+    if (!store.activePlan) return null;
+    const from = itemIndex >= 0 ? itemIndex : -1;
+    const nextIdx = neighborPresentableIndex(store.activePlan.items, from, 1);
+    return nextIdx >= 0 ? store.activePlan.items[nextIdx] ?? null : null;
+  }, [store.activePlan, itemIndex]);
+
+  const canPrev = useMemo(() => {
+    if (!store.activePlan) return false;
+    return neighborPresentableIndex(store.activePlan.items, itemIndex, -1) >= 0;
+  }, [store.activePlan, itemIndex]);
+
+  const canNext = useMemo(() => {
+    if (!store.activePlan) return false;
+    return neighborPresentableIndex(store.activePlan.items, itemIndex, 1) >= 0;
+  }, [store.activePlan, itemIndex]);
 
   useEffect(() => {
     useLiveNavigationStore.getState().register({
       onPrev: () => void store.prevItem(),
       onNext: () => void store.nextItem(),
-      canPrev: itemIndex > 0,
-      canNext: itemIndex >= 0 && itemIndex < itemCount - 1,
-      label: "Service plan",
+      canPrev,
+      canNext,
+      label: "Service run sheet",
       beforeGoLive: async () => {
         const plan = useServiceStore.getState().activePlan;
         const itemId = useServiceStore.getState().activeItemId;
         const item = plan?.items.find((i) => i.id === itemId);
-        if (item) {
+        if (item && isPresentableServiceItem(item)) {
           const { previewServiceItem } = await import("@/lib/serviceLive");
           const { useThemeStore } = await import("@/stores/themeStore");
           await previewServiceItem(item, useThemeStore.getState().activeTheme);
@@ -212,7 +307,7 @@ export function ServiceBuilderPage() {
       },
     });
     return () => useLiveNavigationStore.getState().unregister();
-  }, [store, itemIndex, itemCount]);
+  }, [store, canPrev, canNext]);
 
   const handleDragEnd = (event: DragEndEvent) => {
     if (!store.activePlan) return;
@@ -234,6 +329,10 @@ export function ServiceBuilderPage() {
     }
     if (type === "image") {
       setPicker({ mode: "image" });
+      return;
+    }
+    if (type === "section") {
+      await store.addItem("section", "Section", stringifyServiceItemContent({}), { notify: false });
       return;
     }
     if (type === "scripture") {
@@ -278,12 +377,46 @@ export function ServiceBuilderPage() {
     await store.addItem(itemType, item.name, contentJson, { notify: false });
   };
 
+  const openDeepLink = async (item: ServiceItem) => {
+    const link = deepLinkForItem(item);
+    if (!link) return;
+    const content = parseServiceItemContent(item.content_json);
+
+    if (item.item_type === "scripture") {
+      const ref = content.reference ?? item.title;
+      useBibleStore.getState().setQuery(ref);
+      void useBibleStore.getState().search(ref);
+      navigate("/bible");
+      return;
+    }
+    if (item.item_type === "song" && content.songId) {
+      await useSongStore.getState().selectSong(content.songId);
+      navigate("/songs");
+      return;
+    }
+    if ((item.item_type === "video" || item.item_type === "image") && content.mediaId) {
+      useMediaStore.getState().selectItem(content.mediaId);
+      navigate("/media");
+      return;
+    }
+    navigate(link.to);
+  };
+
   const isLive = liveFollow && program && !isBlackout;
+  const canGoLive = Boolean(selectedItem && isPresentableServiceItem(selectedItem));
+  const deepLink = selectedItem ? deepLinkForItem(selectedItem) : null;
+
+  const rowRole = (item: ServiceItem): "now" | "next" | "preview" | null => {
+    if (nowItem?.id === item.id) return "now";
+    if (nextItem?.id === item.id && nowItem?.id !== item.id) return "next";
+    if (!isLive && selectedItem?.id === item.id && isPresentableServiceItem(item)) return "preview";
+    return null;
+  };
 
   return (
     <div className="flex h-full flex-col">
       <TopBar
-        breadcrumbs={["Library", store.activePlan?.title ?? "Service plan", selectedItem?.title ?? "No item"]}
+        breadcrumbs={["Service", store.activePlan?.title ?? "Run sheet", selectedItem?.title ?? "No item"]}
         status={isLive ? "live" : "ready"}
         actions={
           store.saving ? (
@@ -298,157 +431,294 @@ export function ServiceBuilderPage() {
         <aside className="flex w-[220px] shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)]">
           <div className="border-b border-[var(--color-border)] p-3">
             <p className="text-[11px] leading-relaxed text-[var(--color-muted-foreground)]">
-              Build your service run sheet. Items you select here preview everywhere — Bible Search, projector, and
-              live controls stay in sync.
+              Run sheet for this service. Stage and take items live — Bible Search, Songs, and Media stay one click
+              away.
             </p>
           </div>
-          <div className="p-3">
-            <p className="section-label mb-2">Add to plan</p>
-            <div className="grid grid-cols-2 gap-1.5">
-              {addItems.map(({ type, label, icon: Icon, color }) => (
-                <button
-                  key={type}
-                  type="button"
-                  onClick={() => void handleAddItem(type, label)}
-                  className="flex flex-col items-center gap-1 rounded-lg border border-[var(--color-border-light)] bg-[var(--color-panel)] p-2.5 text-[10px] font-medium transition-colors hover:border-[var(--color-border)] hover:bg-[var(--color-panel-hover)]"
-                >
-                  <Icon className={cn("h-4 w-4", color)} />
-                  {label}
-                </button>
-              ))}
-            </div>
-            {addItems.some((entry) => entry.type === "scripture") && (
-              <div className="mt-2">
-                <p className="section-label mb-1">Scripture reference</p>
-                <input
-                  value={scriptureRef}
-                  onChange={(e) => setScriptureRef(e.target.value)}
-                  className="h-7 w-full rounded border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 text-[11px]"
-                  placeholder="Romans 8:28"
-                />
+
+          <div className="border-b border-[var(--color-border)]">
+            <button
+              type="button"
+              onClick={() => setAddOpen((v) => !v)}
+              className="flex w-full items-center justify-between px-3 py-2.5 text-left hover:bg-[var(--color-panel)]"
+            >
+              <span className="section-label">Add to run sheet</span>
+              <ChevronDown className={cn("h-3.5 w-3.5 text-[var(--color-subtle)] transition-transform", addOpen && "rotate-180")} />
+            </button>
+            {addOpen && (
+              <div className="space-y-3 px-3 pb-3">
+                <div className="grid grid-cols-2 gap-1.5">
+                  {addItems.map(({ type, label, icon: Icon, color }) => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => void handleAddItem(type, label)}
+                      className="flex flex-col items-center gap-1 rounded-lg border border-[var(--color-border-light)] bg-[var(--color-panel)] p-2.5 text-[10px] font-medium transition-colors hover:border-[var(--color-border)] hover:bg-[var(--color-panel-hover)]"
+                    >
+                      <Icon className={cn("h-4 w-4", color)} />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div>
+                  <p className="section-label mb-1">Scripture reference</p>
+                  <input
+                    value={scriptureRef}
+                    onChange={(e) => setScriptureRef(e.target.value)}
+                    className="h-7 w-full rounded border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 text-[11px]"
+                    placeholder="Romans 8:28"
+                  />
+                </div>
+                <div>
+                  <p className="section-label mb-1">Bulk scripture import</p>
+                  <textarea
+                    value={bulkScripture}
+                    onChange={(e) => setBulkScripture(e.target.value)}
+                    rows={3}
+                    placeholder={"Psalm 23\nJohn 3:16\nRomans 8:28-30"}
+                    className="w-full rounded border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 py-1.5 text-[10px]"
+                  />
+                  <button
+                    type="button"
+                    disabled={!bulkScripture.trim() || importing}
+                    onClick={() => void handleBulkImport()}
+                    className="mt-1.5 w-full rounded bg-[var(--color-primary)] py-1.5 text-[10px] font-semibold text-white disabled:opacity-50"
+                  >
+                    {importing ? "Importing…" : "Import list"}
+                  </button>
+                </div>
+                <div>
+                  <p className="section-label mb-1">Templates</p>
+                  {SERVICE_TEMPLATES.map((template) => (
+                    <button
+                      key={template.id}
+                      type="button"
+                      onClick={() => void store.createPlanFromTemplate(template.id)}
+                      className="mb-1 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-[var(--color-muted-foreground)] hover:bg-[var(--color-panel)]"
+                    >
+                      <Calendar className="h-3 w-3" />
+                      {template.title}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
           </div>
-          <div className="border-t border-[var(--color-border)] p-3">
-            <p className="section-label mb-2 flex items-center gap-1">
-              <ListPlus className="h-3 w-3" />
-              Bulk scripture import
-            </p>
-            <textarea
-              value={bulkScripture}
-              onChange={(e) => setBulkScripture(e.target.value)}
-              rows={4}
-              placeholder={"One reference per line:\nPsalm 23\nJohn 3:16\nRomans 8:28-30"}
-              className="w-full rounded border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 py-1.5 text-[10px]"
-            />
+
+          <div className="mt-auto border-t border-[var(--color-border)]">
             <button
               type="button"
-              disabled={!bulkScripture.trim() || importing}
-              onClick={() => void handleBulkImport()}
-              className="mt-1.5 w-full rounded bg-[var(--color-primary)] py-1.5 text-[10px] font-semibold text-white disabled:opacity-50"
+              onClick={() => setPlansOpen((v) => !v)}
+              className="flex w-full items-center justify-between px-3 py-2.5 text-left hover:bg-[var(--color-panel)]"
             >
-              {importing ? "Importing…" : "Import list"}
+              <span className="section-label">Plans</span>
+              <ChevronDown className={cn("h-3.5 w-3.5 text-[var(--color-subtle)] transition-transform", plansOpen && "rotate-180")} />
             </button>
-          </div>
-          <div className="border-t border-[var(--color-border)] p-3">
-            <p className="section-label mb-2">Templates</p>
-            {SERVICE_TEMPLATES.map((template) => (
-              <button
-                key={template.id}
-                type="button"
-                onClick={() => void store.createPlanFromTemplate(template.id)}
-                className="mb-1 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-[var(--color-muted-foreground)] hover:bg-[var(--color-panel)]"
-              >
-                <Calendar className="h-3 w-3" />
-                {template.title}
-              </button>
-            ))}
-          </div>
-          <div className="mt-auto border-t border-[var(--color-border)] p-3">
-            <p className="section-label mb-2">Plans</p>
-            <div className="max-h-32 space-y-1 overflow-y-auto">
-              {store.plans.map((plan) => (
-                <button
-                  key={plan.id}
-                  type="button"
-                  onClick={() => void store.selectPlan(plan.id)}
-                  className={cn(
-                    "w-full rounded-md px-2 py-1.5 text-left text-xs",
-                    store.activePlan?.id === plan.id
-                      ? "bg-blue-950/30 text-blue-300"
-                      : "text-[var(--color-muted-foreground)] hover:bg-[var(--color-panel)]",
-                  )}
-                >
-                  {plan.title}
-                </button>
-              ))}
-            </div>
-            <div className="mt-2 flex gap-1">
-              <input
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                className="h-7 flex-1 rounded border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 text-[11px]"
-              />
-              <button
-                type="button"
-                onClick={() => void store.createPlan(newTitle)}
-                className="rounded bg-[var(--color-primary)] px-2 text-white"
-              >
-                <Plus className="h-3.5 w-3.5" />
-              </button>
-            </div>
+            {(plansOpen || !store.activePlan) && (
+              <div className="px-3 pb-3">
+                <div className="max-h-36 space-y-1 overflow-y-auto">
+                  {store.plans.map((plan) => (
+                    <button
+                      key={plan.id}
+                      type="button"
+                      onClick={() => void store.selectPlan(plan.id)}
+                      className={cn(
+                        "w-full rounded-md px-2 py-1.5 text-left text-xs",
+                        store.activePlan?.id === plan.id
+                          ? "bg-blue-950/30 text-blue-300"
+                          : "text-[var(--color-muted-foreground)] hover:bg-[var(--color-panel)]",
+                      )}
+                    >
+                      {plan.title}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-2 flex gap-1">
+                  <input
+                    value={newTitle}
+                    onChange={(e) => setNewTitle(e.target.value)}
+                    className="h-7 flex-1 rounded border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 text-[11px]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void store.createPlan(newTitle)}
+                    className="rounded bg-[var(--color-primary)] px-2 text-white"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </aside>
 
         <main className="flex min-w-0 flex-1 flex-col bg-[var(--color-background)]">
           {store.activePlan ? (
             <>
-              <div className="border-b border-[var(--color-border)] px-4 py-3">
-                <h2 className="text-base font-semibold">{store.activePlan.title}</h2>
-                <div className="mt-1 flex flex-wrap items-center gap-3 text-[11px] text-[var(--color-subtle)]">
-                  <span>{store.activePlan.items.length} items</span>
-                  {itemIndex >= 0 && (
-                    <span>
-                      Item {itemIndex + 1} of {store.activePlan.items.length}
-                    </span>
-                  )}
-                  <span className="text-[var(--color-muted-foreground)]">
-                    {liveFollow ? "On air — selecting updates program" : "Double-click a row to go live"}
-                  </span>
+              {/* NOW / NEXT command bar */}
+              <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h2 className="text-base font-semibold">{store.activePlan.title}</h2>
+                    <p className="text-[11px] text-[var(--color-subtle)]">
+                      {items.filter(isPresentableServiceItem).length} cues
+                      {itemIndex >= 0 ? ` · cue ${displayIndex(items, itemIndex)}` : ""}
+                      {isLive ? " · on air follows selection" : " · double-click a row to go live"}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={!canPrev}
+                      onClick={() => void store.prevItem()}
+                      className="inline-flex h-8 items-center gap-1 rounded-md border border-[var(--color-border-light)] px-2.5 text-[11px] font-semibold disabled:opacity-35"
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                      Prev
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!canNext}
+                      onClick={() => void store.nextItem()}
+                      className="inline-flex h-8 items-center gap-1 rounded-md border border-[var(--color-border-light)] px-2.5 text-[11px] font-semibold disabled:opacity-35"
+                    >
+                      Next
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!canGoLive}
+                      onClick={() => void store.goLiveActiveItem()}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-md bg-red-600 px-3 text-[11px] font-bold text-white disabled:opacity-35"
+                    >
+                      <Zap className="h-3.5 w-3.5 fill-current" />
+                      Go live
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div
+                    className={cn(
+                      "rounded-lg border px-3 py-2.5",
+                      nowItem ? "border-red-800/50 bg-red-950/20" : "border-[var(--color-border-light)] bg-[var(--color-panel)]",
+                    )}
+                  >
+                    <p className="text-[9px] font-semibold uppercase tracking-wider text-red-300/80">Now</p>
+                    <p className="mt-0.5 truncate text-sm font-medium">
+                      {nowItem?.title ?? (isLive ? "—" : "Standby — nothing on air")}
+                    </p>
+                    <p className="truncate text-[10px] capitalize text-[var(--color-subtle)]">
+                      {nowItem ? formatItemType(nowItem.item_type) : "Take a cue live to start the run"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={!nextItem}
+                    onClick={() => nextItem && void store.selectItem(nextItem.id).then(() => store.goLiveActiveItem())}
+                    className={cn(
+                      "rounded-lg border px-3 py-2.5 text-left transition-colors",
+                      nextItem
+                        ? "border-amber-800/40 bg-amber-950/15 hover:bg-amber-950/25"
+                        : "border-[var(--color-border-light)] bg-[var(--color-panel)] opacity-60",
+                    )}
+                  >
+                    <p className="text-[9px] font-semibold uppercase tracking-wider text-amber-300/80">
+                      Next {nextItem ? "· click to take" : ""}
+                    </p>
+                    <p className="mt-0.5 truncate text-sm font-medium">{nextItem?.title ?? "End of run sheet"}</p>
+                    <p className="truncate text-[10px] capitalize text-[var(--color-subtle)]">
+                      {nextItem ? formatItemType(nextItem.item_type) : "—"}
+                    </p>
+                  </button>
                 </div>
               </div>
 
-              <div className="min-h-0 flex-1 overflow-y-auto">
-                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                  <SortableContext
-                    items={store.activePlan.items.map((item) => item.id)}
-                    strategy={verticalListSortingStrategy}
-                  >
-                    {store.activePlan.items.map((item, index) => (
-                      <SortableRow
-                        key={item.id}
-                        item={item}
-                        index={index}
-                        selected={store.activeItemId === item.id}
-                        onAir={isLive === true && store.activeItemId === item.id}
-                        onSelect={() => void store.selectItem(item.id)}
-                        onDelete={(id) => void store.removeItem(id)}
-                        onGoLive={() => {
-                          void store.selectItem(item.id).then(() => store.goLiveActiveItem());
-                        }}
+              <div className="grid min-h-0 flex-1 lg:grid-cols-[1fr_280px]">
+                <div className="min-h-0 overflow-y-auto border-r border-[var(--color-border)]">
+                  <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                    <SortableContext items={items.map((item) => item.id)} strategy={verticalListSortingStrategy}>
+                      {items.map((item, index) => (
+                        <SortableRow
+                          key={item.id}
+                          item={item}
+                          index={index}
+                          items={items}
+                          selected={store.activeItemId === item.id}
+                          role={rowRole(item)}
+                          onSelect={() => void store.selectItem(item.id)}
+                          onDelete={(id) => void store.removeItem(id)}
+                          onGoLive={() => {
+                            void store.selectItem(item.id).then(() => store.goLiveActiveItem());
+                          }}
+                        />
+                      ))}
+                    </SortableContext>
+                  </DndContext>
+                  {items.length === 0 && (
+                    <div className="m-4 rounded-lg border border-dashed border-[var(--color-border-light)] py-8 text-center text-xs text-[var(--color-subtle)]">
+                      <p>Empty run sheet</p>
+                      <p className="mt-1">
+                        Add cues here, or send from{" "}
+                        <Link to="/bible" className="text-[var(--color-primary)] hover:underline">
+                          Bible Search
+                        </Link>
+                        ,{" "}
+                        <Link to="/songs" className="text-[var(--color-primary)] hover:underline">
+                          Songs
+                        </Link>
+                        , or{" "}
+                        <Link to="/media" className="text-[var(--color-primary)] hover:underline">
+                          Media
+                        </Link>
+                        .
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setAddOpen(true)}
+                        className="mt-3 rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-[11px] font-semibold text-white"
+                      >
+                        Add first cue
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="hidden min-h-0 flex-col overflow-y-auto lg:flex">
+                  <div className="border-b border-[var(--color-border)] p-3">
+                    <p className="section-label mb-2">Stage</p>
+                    <div className="h-[160px]">
+                      <StagingPreview
+                        scene={preview}
+                        className="!min-h-0 h-full"
+                        label={selectedItem?.title ?? "Preview"}
                       />
-                    ))}
-                  </SortableContext>
-                </DndContext>
-                {store.activePlan.items.length === 0 && (
-                  <div className="m-4 rounded-lg border border-dashed border-[var(--color-border-light)] py-6 text-center text-xs text-[var(--color-subtle)]">
-                    Add items from the left panel to build your service order
+                    </div>
+                    {deepLink && selectedItem && (
+                      <button
+                        type="button"
+                        onClick={() => void openDeepLink(selectedItem)}
+                        className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-[var(--color-border-light)] px-2 py-1.5 text-[10px] font-medium text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                        {deepLink.label}
+                      </button>
+                    )}
                   </div>
-                )}
+                  {selectedItem && (
+                    <div className="p-3">
+                      <ServiceItemEditor
+                        item={selectedItem}
+                        onPickSong={() => setPicker({ mode: "song", replaceItemId: selectedItem.id })}
+                        onPickMedia={(type) => setPicker({ mode: type, replaceItemId: selectedItem.id })}
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
 
               {selectedItem && (
-                <div className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+                <div className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)] p-4 lg:hidden">
                   <ServiceItemEditor
                     item={selectedItem}
                     onPickSong={() => setPicker({ mode: "song", replaceItemId: selectedItem.id })}
@@ -459,7 +729,9 @@ export function ServiceBuilderPage() {
             </>
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
-              <p className="text-sm text-[var(--color-muted-foreground)]">Create or select a service plan to get started</p>
+              <p className="text-sm text-[var(--color-muted-foreground)]">
+                Create or select a service plan to build your run sheet
+              </p>
               <button
                 type="button"
                 onClick={() => void store.createPlan(newTitle)}
@@ -490,16 +762,5 @@ export function ServiceBuilderPage() {
         onSelect={(item) => void handleMediaPick(item)}
       />
     </div>
-  );
-}
-
-function Calendar({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <rect x="3" y="4" width="18" height="18" rx="2" />
-      <line x1="16" y1="2" x2="16" y2="6" />
-      <line x1="8" y1="2" x2="8" y2="6" />
-      <line x1="3" y1="10" x2="21" y2="10" />
-    </svg>
   );
 }

@@ -58,9 +58,45 @@ pub fn pick_output_monitor(app: &AppHandle) -> Result<Monitor, String> {
     primary.ok_or_else(|| "No primary display found".into())
 }
 
+/// Place the projector window and bring it to the foreground (used on first open).
 pub fn place_output_on_monitor(window: &WebviewWindow, monitor: &Monitor) -> Result<(), String> {
+    place_output_on_monitor_inner(window, monitor, true)
+}
+
+/// Keep the projector window on its monitor WITHOUT stealing foreground focus.
+/// Used by the periodic display watcher / refresh so that, while projecting, the
+/// app never yanks focus away from other software (e.g. Word) every few seconds.
+pub fn reposition_output_on_monitor(
+    window: &WebviewWindow,
+    monitor: &Monitor,
+) -> Result<(), String> {
+    place_output_on_monitor_inner(window, monitor, false)
+}
+
+fn place_output_on_monitor_inner(
+    window: &WebviewWindow,
+    monitor: &Monitor,
+    grab_focus: bool,
+) -> Result<(), String> {
     let position = monitor.position();
     let size = monitor.size();
+
+    // If the window is already where it should be and visible, do nothing.
+    // Re-issuing show()/set_fullscreen()/set_focus() needlessly raises the
+    // window and steals OS focus from other applications.
+    let already_positioned = window
+        .outer_position()
+        .map(|p| p.x == position.x && p.y == position.y)
+        .unwrap_or(false);
+    let already_sized = window
+        .inner_size()
+        .map(|s| s.width == size.width && s.height == size.height)
+        .unwrap_or(false);
+    let already_visible = window.is_visible().unwrap_or(false);
+
+    if already_positioned && already_sized && already_visible {
+        return Ok(());
+    }
 
     window
         .set_position(PhysicalPosition::new(position.x, position.y))
@@ -70,8 +106,11 @@ pub fn place_output_on_monitor(window: &WebviewWindow, monitor: &Monitor) -> Res
         .map_err(|e| e.to_string())?;
     window.set_fullscreen(true).map_err(|e| e.to_string())?;
     window.show().map_err(|e| e.to_string())?;
-    // Focus can fail if another app holds it; visibility is what matters for projection.
-    let _ = window.set_focus();
+    // Only grab focus on explicit (re)opens. Routine repositioning must not
+    // pull foreground focus away from whatever app the user is using.
+    if grab_focus {
+        let _ = window.set_focus();
+    }
 
     Ok(())
 }

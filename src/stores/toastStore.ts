@@ -33,6 +33,6 @@ export function notifyServiceItemAdded(title: string, planTitle: string, itemNum
   useToastStore.getState().push({
     message: `Added “${title}” to ${planTitle} (item ${itemNumber})`,
     linkTo: "/service",
-    linkLabel: "Open Library",
+    linkLabel: "Open Service",
   });
 }

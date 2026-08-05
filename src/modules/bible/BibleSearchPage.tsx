@@ -1,7 +1,7 @@
-import { StagingPreview } from "@/components/presentation/StagingPreview";
+import { BibleSearchSidebar } from "@/modules/bible/BibleSearchSidebar";
+import { BibleStagingPanel } from "@/modules/bible/BibleStagingPanel";
 import { FormatControls, DEFAULT_THEME_FIELDS } from "@/components/presentation/FormatControls";
 import {
-  PreviewHighlightMenu,
   readPreviewTextSelection,
   type HighlightMenuState,
 } from "@/components/presentation/PreviewHighlightMenu";
@@ -13,33 +13,26 @@ import {
 } from "@/components/presentation/displayOptions";
 import type { DisplayOptions } from "@/components/presentation/displayOptions";
 import { TopBar } from "@/components/layout/TopBar";
-import { Pill } from "@/components/ui/pill";
 import { TranslationCompare } from "@/modules/bible/TranslationCompare";
-import { ChapterResultsPanel } from "@/modules/bible/ChapterResultsPanel";
 import { LowerThirdSettingsModal } from "@/components/presentation/LowerThirdSettingsModal";
 import { LowerThirdSettingsTrigger } from "@/components/presentation/LowerThirdSettingsTrigger";
-import { ChromaPreviewGrid, SafeMarginOverlay } from "@/components/presentation/SafeMarginOverlay";
 import { buildLowerThirdTheme, isLowerThirdScene } from "@/lib/lowerThird";
 import { useLowerThirdSettings } from "@/hooks/useLowerThirdSettings";
 import { cn } from "@/lib/utils";
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import {
-  Plus,
-  Search,
   SplitSquareHorizontal,
-  X,
 } from "lucide-react";
 import { useBibleStore } from "@/stores/bibleStore";
+import { useBibleStagingStore } from "@/stores/bibleStagingStore";
 import { useLiveNavigationStore } from "@/stores/liveNavigationStore";
 import { useLiveDisplayStore } from "@/stores/liveDisplayStore";
 import { usePresentationStore } from "@/stores/presentationStore";
 import { useServiceStore } from "@/stores/serviceStore";
 import { useThemeStore } from "@/stores/themeStore";
 import { useLowerThirdStore } from "@/stores/lowerThirdStore";
-import type { CatalogEntryView, VerseResult } from "@/lib/tauri";
-import { BIBLE_BOOKS, chapterOptions, verseOptions } from "@/lib/bibleBooks";
+import type { VerseResult } from "@/lib/tauri";
 import { lookupVerseInTranslation, lookupVersePairInTranslations } from "@/lib/bibleCompare";
-import { useBibleVersionsStore } from "@/stores/bibleVersionsStore";
 import type { VerseLayout } from "@/engine/scene";
 
 const viewTabs = [
@@ -49,13 +42,26 @@ const viewTabs = [
   { value: "reader", label: "Reader" },
 ];
 
-const MIN_INSTALLED_VERSES = 1000;
-
 export function BibleSearchPage() {
-  const bible = useBibleStore();
-  const catalog = useBibleVersionsStore((s) => s.catalog);
-  const loadCatalog = useBibleVersionsStore((s) => s.loadCatalog);
-  const { showVerses, showVerseComparison, preview, program, liveFollow, previewVerses } = usePresentationStore();
+  const chapterVerses = useBibleStore((s) => s.chapterVerses);
+  const groups = useBibleStore((s) => s.groups);
+  const activeVerseIndex = useBibleStore((s) => s.activeVerseIndex);
+  const selectedTranslationId = useBibleStore((s) => s.selectedTranslationId);
+  const selectedTranslationIds = useBibleStore((s) => s.selectedTranslationIds);
+  const translations = useBibleStore((s) => s.translations);
+  const setActiveVerseIndex = useBibleStore((s) => s.setActiveVerseIndex);
+  const loadChapterForVerse = useBibleStore((s) => s.loadChapterForVerse);
+  const setQuery = useBibleStore((s) => s.setQuery);
+  const search = useBibleStore((s) => s.search);
+
+  const liveOnAir = usePresentationStore(
+    (s) => s.liveFollow && !!s.program && s.program.type !== "blackout",
+  );
+  const preparePreviewForGoLive = usePresentationStore((s) => s.preparePreviewForGoLive);
+
+  const stageVerses = useBibleStagingStore((s) => s.stageVerses);
+  const stageVerseComparison = useBibleStagingStore((s) => s.stageVerseComparison);
+  const stagedScene = useBibleStagingStore((s) => s.stagedScene);
   const { activePlan, addItem, ensureActivePlan } = useServiceStore();
   const activeTheme = useThemeStore((s) => s.activeTheme);
   const themeRevision = useThemeStore((s) => s.themeRevision);
@@ -63,11 +69,6 @@ export function BibleSearchPage() {
   const [viewMode, setViewMode] = useState("fullscreen");
   const [selectedGroup, setSelectedGroup] = useState<VerseResult[] | null>(null);
   const [selectedVerseId, setSelectedVerseId] = useState<number | null>(null);
-  const [book, setBook] = useState("John");
-  const [chapter, setChapter] = useState("3");
-  const [verse, setVerse] = useState("16");
-  const [exactPhrase, setExactPhrase] = useState(true);
-  const [matchAllWords, setMatchAllWords] = useState(true);
   const [localDisplay, setLocalDisplay] = useState<LocalDisplayOverrides>(defaultLocalDisplayOverrides);
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
   const previewRef = useRef<HTMLDivElement>(null);
@@ -104,14 +105,12 @@ export function BibleSearchPage() {
     }
   }, []);
 
-  const chapters = useMemo(() => chapterOptions(book), [book]);
-  const verses = useMemo(() => verseOptions(book, chapter), [book, chapter]);
   const verseLayout = viewMode === "lower_third" ? "lower_third" : "fullscreen";
 
-  const selectedTranslationIds = useMemo(() => {
-    if (bible.selectedTranslationIds.length > 0) return bible.selectedTranslationIds;
-    return bible.selectedTranslationId ? [bible.selectedTranslationId] : [];
-  }, [bible.selectedTranslationIds, bible.selectedTranslationId]);
+  const resolvedTranslationIds = useMemo(() => {
+    if (selectedTranslationIds.length > 0) return selectedTranslationIds;
+    return selectedTranslationId ? [selectedTranslationId] : [];
+  }, [selectedTranslationIds, selectedTranslationId]);
 
   const presentActiveVerse = useCallback(
     async (verse: VerseResult, layoutOverride?: VerseLayout) => {
@@ -126,43 +125,49 @@ export function BibleSearchPage() {
       if (ids.length >= 2) {
         const { primary, secondary } = await lookupVersePairInTranslations(verse, ids[0], ids[1]);
         if (primary && secondary) {
-          showVerseComparison(primary, secondary, effectiveTheme, layout);
+          stageVerseComparison(primary, secondary, effectiveTheme, layout);
           return;
         }
         if (primary) {
-          showVerses([primary], effectiveTheme, layout);
+          stageVerses([primary], effectiveTheme, layout);
           return;
         }
       }
 
       const primaryId = ids[0];
       const resolved = primaryId ? await lookupVerseInTranslation(verse, primaryId) : verse;
-      showVerses([resolved ?? verse], effectiveTheme, layout);
+      stageVerses([resolved ?? verse], effectiveTheme, layout);
     },
-    [showVerses, showVerseComparison, effectiveTheme, verseLayout],
+    [stageVerses, stageVerseComparison, effectiveTheme, verseLayout],
   );
+
+  const presentActiveVerseRef = useRef(presentActiveVerse);
+  presentActiveVerseRef.current = presentActiveVerse;
 
   useEffect(() => {
     if (!isLowerThirdMode) return;
     const active = useBibleStore.getState().getActiveVerse();
-    if (active) void presentActiveVerse(active);
-  }, [activeTheme.lowerThird, themeRevision, isLowerThirdMode, presentActiveVerse]);
+    if (active) void presentActiveVerseRef.current(active);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- presentActiveVerse read via ref
+  }, [activeTheme.lowerThird, themeRevision, isLowerThirdMode]);
 
+  // Re-stage locally when view mode / layout / theme changes (no presentationStore reads).
   useEffect(() => {
     const layout = verseLayout;
     const active = useBibleStore.getState().getActiveVerse();
     if (active) {
-      void presentActiveVerse(active, layout);
+      void presentActiveVerseRef.current(active, layout);
       return;
     }
-    if (!preview?.content.verses?.length) return;
-    const sceneIsLowerThird = isLowerThirdScene(preview);
+    const staged = useBibleStagingStore.getState().stagedScene;
+    if (!staged?.content.verses?.length) return;
+    const sceneIsLowerThird = isLowerThirdScene(staged);
     const wantsLowerThird = layout === "lower_third";
     if (sceneIsLowerThird === wantsLowerThird) return;
     const theme = wantsLowerThird ? buildLowerThirdTheme(activeTheme) : activeTheme;
-    if (liveFollow) showVerses(preview.content.verses, theme, layout);
-    else previewVerses(preview.content.verses, theme, layout);
-  }, [viewMode, effectiveTheme, themeRevision, presentActiveVerse, preview, verseLayout, liveFollow, activeTheme, showVerses, previewVerses]);
+    useBibleStagingStore.getState().stageVerses(staged.content.verses, theme, layout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- bible staging only
+  }, [viewMode, verseLayout, themeRevision]);
 
   useEffect(() => {
     const refreshForTranslations = async () => {
@@ -171,66 +176,68 @@ export function BibleSearchPage() {
         await store.reloadActiveChapterForPrimary();
       }
       const active = useBibleStore.getState().getActiveVerse();
-      if (active) await presentActiveVerse(active);
+      if (active) await presentActiveVerseRef.current(active);
     };
     void refreshForTranslations();
-  }, [selectedTranslationIds.join(","), presentActiveVerse]);
+  }, [resolvedTranslationIds.join(",")]);
 
-  useEffect(() => {
-    void useBibleStore.getState().loadTranslations();
-    void loadCatalog();
-  }, [loadCatalog]);
-
-  useEffect(() => {
-    void loadCatalog();
-  }, [bible.translations.length, loadCatalog]);
-
-  useEffect(() => {
-    const maxCh = chapters.length;
-    if (Number(chapter) > maxCh) setChapter("1");
-  }, [book, chapters, chapter]);
-
-  useEffect(() => {
-    const maxVerse = verses.length;
-    if (Number(verse) > maxVerse) setVerse(String(maxVerse || 1));
-  }, [book, chapter, verses, verse]);
+  const applyVerseSelection = useCallback((verse: VerseResult, index?: number) => {
+    setSelectedGroup([verse]);
+    setSelectedVerseId(verse.id);
+    if (index !== undefined) setActiveSlideIndex(index);
+    setLocalDisplay((o) => ({
+      ...o,
+      verseStart: String(verse.verse),
+      verseEnd: String(verse.verse),
+    }));
+    void presentActiveVerseRef.current(verse);
+  }, []);
 
   const sendToPreview = useCallback(
     async (verse: VerseResult) => {
-      await bible.loadChapterForVerse(verse);
+      await loadChapterForVerse(verse);
       const index = useBibleStore.getState().activeVerseIndex;
       const active = useBibleStore.getState().chapterVerses[index] ?? verse;
-      setSelectedGroup([active]);
-      setSelectedVerseId(active.id);
-      setActiveSlideIndex(index);
-      setLocalDisplay((o) => ({
-        ...o,
-        verseStart: String(active.verse),
-        verseEnd: String(active.verse),
-      }));
-      await presentActiveVerse(active);
+      applyVerseSelection(active, index);
     },
-    [bible, presentActiveVerse],
+    [loadChapterForVerse, applyVerseSelection],
   );
 
   const goToVerseIndex = useCallback(
     (index: number) => {
       const verses = useBibleStore.getState().chapterVerses;
       if (index < 0 || index >= verses.length) return;
-      bible.setActiveVerseIndex(index);
+      setActiveVerseIndex(index);
       const active = verses[index];
-      setSelectedGroup([active]);
-      setSelectedVerseId(active.id);
-      setActiveSlideIndex(index);
-      setLocalDisplay((o) => ({
-        ...o,
-        verseStart: String(active.verse),
-        verseEnd: String(active.verse),
-      }));
-      void presentActiveVerse(active);
+      applyVerseSelection(active, index);
     },
-    [bible, presentActiveVerse],
+    [setActiveVerseIndex, applyVerseSelection],
   );
+
+  const sidebarHandlersRef = useRef({
+    applyVerseSelection,
+    sendToPreview,
+    goToVerseIndex,
+    addToService: async (_reference: string, _verses?: VerseResult[]) => {},
+  });
+  sidebarHandlersRef.current.applyVerseSelection = applyVerseSelection;
+  sidebarHandlersRef.current.sendToPreview = sendToPreview;
+  sidebarHandlersRef.current.goToVerseIndex = goToVerseIndex;
+
+  const handleVerseFound = useCallback((verse: VerseResult) => {
+    sidebarHandlersRef.current.applyVerseSelection(
+      verse,
+      useBibleStore.getState().activeVerseIndex,
+    );
+  }, []);
+
+  const handleSelectVerseIndex = useCallback((index: number) => {
+    sidebarHandlersRef.current.goToVerseIndex(index);
+  }, []);
+
+  const handleSelectSearchResult = useCallback((verse: VerseResult) => {
+    void sidebarHandlersRef.current.sendToPreview(verse);
+  }, []);
 
   const goToAdjacentVerse = useCallback(
     (delta: number) => {
@@ -253,186 +260,33 @@ export function BibleSearchPage() {
   );
 
   const selectedAbbr =
-    bible.translations.find((t) => t.id === bible.selectedTranslationId)?.abbreviation ?? "ESV";
+    translations.find((t) => t.id === selectedTranslationId)?.abbreviation ?? "ESV";
 
   const selectedAbbrLabel = useMemo(() => {
-    const abbrs = selectedTranslationIds
-      .map((id) => bible.translations.find((t) => t.id === id)?.abbreviation)
+    const abbrs = resolvedTranslationIds
+      .map((id) => translations.find((t) => t.id === id)?.abbreviation)
       .filter(Boolean);
     return abbrs.length > 0 ? abbrs.join(" · ") : selectedAbbr;
-  }, [selectedTranslationIds, bible.translations, selectedAbbr]);
+  }, [resolvedTranslationIds, translations, selectedAbbr]);
 
-  const secondaryTranslationId = selectedTranslationIds[1];
-  const isDualTranslation = selectedTranslationIds.length >= 2;
+  const secondaryTranslationId = resolvedTranslationIds[1];
+  const isDualTranslation = resolvedTranslationIds.length >= 2;
 
-  const installedTranslations = useMemo((): CatalogEntryView[] => {
-    const fromCatalog = catalog.filter(
-      (entry) => entry.installed && entry.verse_count >= MIN_INSTALLED_VERSES,
-    );
-    if (fromCatalog.length > 0) return fromCatalog;
-
-    return bible.translations.map((t) => ({
-      id: t.id,
-      abbreviation: t.abbreviation,
-      name: t.name,
-      language: t.language,
-      copyright: "",
-      license: "",
-      source_format: "",
-      is_default: t.is_default,
-      installed: true,
-      verse_count: 1,
-      install_method: "download",
-    }));
-  }, [catalog, bible.translations]);
-
-  const translationPills = useMemo((): CatalogEntryView[] => {
-    const byId = new Map(installedTranslations.map((entry) => [entry.id, entry]));
-    const visible: CatalogEntryView[] = [];
-    const picked = new Set<string>();
-
-    const add = (entry: CatalogEntryView | undefined) => {
-      if (!entry || picked.has(entry.id)) return;
-      picked.add(entry.id);
-      visible.push(entry);
-    };
-
-    for (const id of selectedTranslationIds) {
-      add(byId.get(id));
-    }
-
-    const remaining = [...installedTranslations].sort((a, b) =>
-      a.abbreviation.localeCompare(b.abbreviation),
-    );
-    for (const entry of remaining) {
-      add(entry);
-    }
-
-    return visible;
-  }, [installedTranslations, selectedTranslationIds]);
-
-  const availableVersionsCount = installedTranslations.length;
-
-  const searchOptions = useMemo(
-    () => ({ exactPhrase, matchAllWords }),
-    [exactPhrase, matchAllWords],
-  );
-
-  const resultVerses = useMemo(() => bible.groups.flat(), [bible.groups]);
-
-  const inChapterMode = bible.chapterVerses.length > 0;
-  const resultCount = inChapterMode ? bible.chapterVerses.length : resultVerses.length;
-
-  const runSearch = async (q?: string) => {
-    const ok = await bible.search(q, searchOptions);
-    const verse = useBibleStore.getState().getActiveVerse();
-    if (verse) {
-      setSelectedGroup([verse]);
-      setSelectedVerseId(verse.id);
-      setActiveSlideIndex(useBibleStore.getState().activeVerseIndex);
-      setLocalDisplay((o) => ({
-        ...o,
-        verseStart: String(verse.verse),
-        verseEnd: String(verse.verse),
-      }));
-      void presentActiveVerse(verse);
-    }
-    return ok;
-  };
-
-  const handleSearch = () => void runSearch();
-
-  const handleGoToPassage = () => {
-    const q = `${book} ${chapter}:${verse}`;
-    bible.setQuery(q);
-    void runSearch(q);
-  };
-
-  const handleBookChange = (nextBook: string) => {
-    setBook(nextBook);
-    setChapter("1");
-    setVerse("1");
-  };
-
-  useEffect(() => {
-    const q = bible.query.trim();
-    if (!q || q.includes(":") || bible.loading) return;
-    void runSearch(q);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-search when filters change
-  }, [exactPhrase, matchAllWords]);
-
-  const highlightQuery = (text: string) => {
-    const q = bible.query.trim();
-    if (!q || q.includes(":")) return text;
-
-    const lowerText = text.toLowerCase();
-    type Span = { start: number; end: number };
-    const spans: Span[] = [];
-
-    const addSpan = (start: number, end: number) => {
-      if (start >= 0 && end > start) spans.push({ start, end });
-    };
-
-    if (exactPhrase) {
-      const phrase = q.replace(/^["']|["']$/g, "");
-      const idx = lowerText.indexOf(phrase.toLowerCase());
-      if (idx !== -1) addSpan(idx, idx + phrase.length);
-    } else {
-      const words = q.split(/\s+/).filter(Boolean);
-      for (const word of words) {
-        let from = 0;
-        const needle = word.toLowerCase();
-        while (from < lowerText.length) {
-          const idx = lowerText.indexOf(needle, from);
-          if (idx === -1) break;
-          addSpan(idx, idx + word.length);
-          from = idx + needle.length;
-        }
-      }
-    }
-
-    if (spans.length === 0) return text;
-
-    spans.sort((a, b) => a.start - b.start || b.end - a.end);
-    const merged: Span[] = [];
-    for (const span of spans) {
-      const last = merged[merged.length - 1];
-      if (!last || span.start > last.end) {
-        merged.push({ ...span });
-      } else if (span.end > last.end) {
-        last.end = span.end;
-      }
-    }
-
-    const parts: ReactNode[] = [];
-    let cursor = 0;
-    merged.forEach((span, i) => {
-      if (cursor < span.start) parts.push(text.slice(cursor, span.start));
-      parts.push(
-        <mark key={`${span.start}-${i}`} className="rounded bg-blue-500/30 px-0.5 text-blue-200">
-          {text.slice(span.start, span.end)}
-        </mark>,
-      );
-      cursor = span.end;
-    });
-    if (cursor < text.length) parts.push(text.slice(cursor));
-    return <>{parts}</>;
-  };
-
-  const isBlackout = program?.type === "blackout";
+  const inChapterMode = chapterVerses.length > 0;
   const isCompare = viewMode === "compare";
   const slideGroups = inChapterMode
-    ? bible.chapterVerses.map((v) => [v])
-    : bible.groups.length > 0
-      ? bible.groups
+    ? chapterVerses.map((v) => [v])
+    : groups.length > 0
+      ? groups
       : selectedGroup
         ? [selectedGroup]
         : [];
-  const activeVerse = bible.getActiveVerse() ?? selectedGroup?.[0] ?? null;
-  const activeReference = activeVerse?.reference ?? preview?.content.reference ?? "Select a passage";
+  const activeVerse =
+    (inChapterMode ? chapterVerses[activeVerseIndex] : null) ?? selectedGroup?.[0] ?? null;
+  const activeReference = activeVerse?.reference ?? stagedScene?.content.reference ?? "Select a passage";
   const activeReferenceUpper = activeReference.toUpperCase();
-  const activeSlideIndexResolved = inChapterMode ? bible.activeVerseIndex : activeSlideIndex;
-  const navigableLength = inChapterMode ? bible.chapterVerses.length : slideGroups.length;
+  const activeSlideIndexResolved = inChapterMode ? activeVerseIndex : activeSlideIndex;
+  const navigableLength = inChapterMode ? chapterVerses.length : slideGroups.length;
   const navigableIndex = activeSlideIndexResolved;
 
   useEffect(() => {
@@ -448,12 +302,17 @@ export function BibleSearchPage() {
       canNext: navigableLength > 0 && navigableIndex < navigableLength - 1,
       label: "Bible slides",
       beforeGoLive: async () => {
+        const scene = useBibleStagingStore.getState().stagedScene;
+        if (scene) {
+          preparePreviewForGoLive(scene, "bible");
+          return;
+        }
         const active = useBibleStore.getState().getActiveVerse();
-        if (active) await presentActiveVerse(active);
+        if (active) await presentActiveVerseRef.current(active);
       },
     });
     return () => useLiveNavigationStore.getState().unregister();
-  }, [goToAdjacentVerse, navigableLength, navigableIndex, presentActiveVerse]);
+  }, [goToAdjacentVerse, navigableLength, navigableIndex, preparePreviewForGoLive]);
 
   const goToSlide = (index: number) => {
     if (inChapterMode) {
@@ -466,33 +325,20 @@ export function BibleSearchPage() {
     setActiveSlideIndex(index);
   };
 
-  const handleSplit = () => {
+  const handleSplit = async () => {
     if (!selectedGroup?.[0]) return;
     const ref = selectedGroup[0];
     const q = `${ref.book_name} ${ref.chapter}:${displayOptions.verseStart}-${displayOptions.verseEnd}`;
-    bible.setQuery(q);
-    void runSearch(q);
+    setQuery(q);
+    const ok = await search(q);
+    const verse = useBibleStore.getState().getActiveVerse();
+    if (ok && verse) handleVerseFound(verse);
   };
 
   const expandVerseRange = () => {
     const end = Number(displayOptions.verseEnd);
     if (Number.isNaN(end)) return;
     setLocalDisplay((o) => ({ ...o, verseEnd: String(end + 1) }));
-  };
-
-  const copyVerse = (text: string) => {
-    void navigator.clipboard.writeText(text);
-  };
-
-  const handlePreviewContextMenu = (event: MouseEvent) => {
-    const selected = readPreviewTextSelection(previewRef.current);
-    if (!selected) return;
-    event.preventDefault();
-    setHighlightMenu({ x: event.clientX, y: event.clientY, text: selected });
-  };
-
-  const toggleTranslationPill = (translationId: string) => {
-    bible.toggleTranslationSelection(translationId);
   };
 
   const addToService = useCallback(
@@ -507,6 +353,19 @@ export function BibleSearchPage() {
     [addItem, ensureActivePlan],
   );
 
+  sidebarHandlersRef.current.addToService = addToService;
+
+  const handleAddToService = useCallback((reference: string, verses?: VerseResult[]) => {
+    void sidebarHandlersRef.current.addToService(reference, verses);
+  }, []);
+
+  const handlePreviewContextMenu = (event: MouseEvent) => {
+    const selected = readPreviewTextSelection(previewRef.current);
+    if (!selected) return;
+    event.preventDefault();
+    setHighlightMenu({ x: event.clientX, y: event.clientY, text: selected });
+  };
+
   return (
     <div className="flex h-full flex-col">
       <TopBar
@@ -515,233 +374,17 @@ export function BibleSearchPage() {
           activePlan?.title ?? "Search",
           activeReference,
         ]}
-        status={liveFollow && program && !isBlackout ? "live" : "ready"}
+        status={liveOnAir ? "live" : "ready"}
       />
 
       <div className="flex min-h-0 flex-1">
-        {/* Left — Search */}
-        <aside className="flex w-[272px] shrink-0 flex-col border-r border-[var(--color-border)] bg-[#0a0c12]">
-          <div className="border-b border-[var(--color-border)] p-3">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-subtle)]" />
-              <input
-                value={bible.query}
-                onChange={(e) => bible.setQuery(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-                placeholder="Search words or passage (e.g. John 3:16)"
-                className="h-9 w-full rounded-md border border-[var(--color-border-light)] bg-[var(--color-panel)] pl-8 pr-8 text-xs focus:border-[var(--color-primary)] focus:outline-none"
-              />
-              {bible.query && (
-                <button
-                  type="button"
-                  onClick={() => bible.setQuery("")}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--color-subtle)]"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="border-b border-[var(--color-border)] p-3">
-            <p className="section-label mb-2">Go to passage</p>
-            <div className="grid grid-cols-3 gap-1.5">
-              <div>
-                <p className="mb-1 text-[9px] text-[var(--color-subtle)]">Book</p>
-                <select
-                  value={book}
-                  onChange={(e) => handleBookChange(e.target.value)}
-                  className="h-8 w-full rounded-md border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 text-xs"
-                >
-                  {BIBLE_BOOKS.map((b) => (
-                    <option key={b.number} value={b.name}>
-                      {b.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <p className="mb-1 text-[9px] text-[var(--color-subtle)]">Ch</p>
-                <select
-                  value={chapter}
-                  onChange={(e) => {
-                    setChapter(e.target.value);
-                    setVerse("1");
-                  }}
-                  className="h-8 w-full rounded-md border border-[var(--color-border-light)] bg-[var(--color-panel)] px-1 text-center text-xs"
-                >
-                  {chapters.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <p className="mb-1 text-[9px] text-[var(--color-subtle)]">V</p>
-                <select
-                  value={verse}
-                  onChange={(e) => setVerse(e.target.value)}
-                  className="h-8 w-full rounded-md border border-[var(--color-border-light)] bg-[var(--color-panel)] px-1 text-center text-xs"
-                >
-                  {verses.map((v) => (
-                    <option key={v} value={v}>
-                      {v}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={handleGoToPassage}
-              disabled={bible.loading}
-              className="mt-2 h-8 w-full rounded-md bg-[var(--color-primary)] text-xs font-semibold text-white hover:bg-[var(--color-primary)]/90 disabled:opacity-50"
-            >
-              {bible.loading ? "Loading…" : "Go"}
-            </button>
-            {bible.lastError && (
-              <p className="mt-2 text-[10px] leading-snug text-amber-400/90">{bible.lastError}</p>
-            )}
-          </div>
-
-          <div className="border-b border-[var(--color-border)] p-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="section-label">Translation</p>
-              <span className="text-[10px] text-[var(--color-subtle)]">
-                {availableVersionsCount} version{availableVersionsCount === 1 ? "" : "s"}
-              </span>
-            </div>
-            <p className="mb-2 text-[10px] leading-snug text-[var(--color-subtle)]">
-              Select up to 2 for side-by-side display. Click a selected pill again to remove it. Picking a
-              third version replaces the compare slot (e.g. KJV+AMP then NIV → AMP+NIV).
-            </p>
-            <div className="flex flex-wrap gap-1">
-              {translationPills.map((entry) => {
-                const slot = selectedTranslationIds.indexOf(entry.id);
-                const active = slot >= 0;
-                const slotLabel = slot === 0 ? "1" : slot === 1 ? "2" : null;
-                return (
-                  <Pill
-                    key={entry.id}
-                    active={active}
-                    onClick={() => toggleTranslationPill(entry.id)}
-                    className={cn(active && slot === 1 && "ring-1 ring-[var(--color-primary)]/50")}
-                    title={
-                      `${entry.name}${slotLabel ? ` (${slotLabel === "1" ? "primary" : "compare"})` : ""}`
-                    }
-                  >
-                    {slotLabel ? `${entry.abbreviation} ${slotLabel}` : entry.abbreviation}
-                  </Pill>
-                );
-              })}
-            </div>
-            {availableVersionsCount === 0 && (
-              <p className="mt-2 text-[10px] text-[var(--color-subtle)]">
-                No Bible versions installed yet. Download or import one in Settings.
-              </p>
-            )}
-          </div>
-
-          <div className="border-b border-[var(--color-border)] p-3">
-            <p className="section-label mb-2">Search options</p>
-            <label className="flex items-center gap-2 text-[11px] text-[var(--color-muted-foreground)]">
-              <input
-                type="checkbox"
-                checked={exactPhrase}
-                onChange={(e) => setExactPhrase(e.target.checked)}
-                className="accent-[var(--color-primary)]"
-              />
-              Exact phrase
-            </label>
-            <label className="mt-1 flex items-center gap-2 text-[11px] text-[var(--color-muted-foreground)]">
-              <input
-                type="checkbox"
-                checked={matchAllWords}
-                onChange={(e) => setMatchAllWords(e.target.checked)}
-                className="accent-[var(--color-primary)]"
-              />
-              Match all words
-            </label>
-          </div>
-
-          <div className="border-b border-[var(--color-border)] px-3 py-2">
-            <p className="section-label">
-              {inChapterMode ? "Chapter" : "Results"} · {resultCount > 0 ? resultCount : bible.loading ? "…" : 0}
-            </p>
-            {inChapterMode && bible.chapterLabel && (
-              <p className="mt-0.5 text-[10px] text-[var(--color-subtle)]">
-                {bible.chapterLabel} · verse {bible.activeVerseIndex + 1} of {bible.chapterVerses.length} · {selectedAbbrLabel}
-              </p>
-            )}
-            {!inChapterMode && resultCount > 0 && (
-              <p className="mt-0.5 text-[10px] text-[var(--color-subtle)]">
-                for &ldquo;{bible.query.includes(":") ? "passage" : bible.query}&rdquo; in {selectedAbbrLabel}
-              </p>
-            )}
-          </div>
-
-          {inChapterMode && bible.chapterLabel ? (
-            <ChapterResultsPanel
-              chapterLabel={bible.chapterLabel}
-              verses={bible.chapterVerses}
-              activeVerseIndex={bible.activeVerseIndex}
-              translationAbbr={selectedAbbr}
-              highlightTerm={bible.query.includes(":") ? undefined : bible.query}
-              onSelectVerse={goToVerseIndex}
-              onCopy={copyVerse}
-              onAddToService={(v) => {
-                void addToService(v.reference, [v]);
-              }}
-            />
-          ) : (
-          <div className="min-h-0 flex-1 overflow-y-auto p-2">
-            {resultVerses.map((v) => {
-              const isSelected = selectedVerseId === v.id;
-              return (
-                <button
-                  key={v.id}
-                  type="button"
-                  onClick={() => void sendToPreview(v)}
-                  className={cn(
-                    "mb-1.5 w-full rounded-lg border p-2.5 text-left transition-colors",
-                    isSelected
-                      ? "border-[var(--color-primary)] bg-blue-950/30"
-                      : "border-[var(--color-border-light)]/50 hover:bg-[var(--color-panel)]",
-                  )}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-semibold">{v.reference}</span>
-                      <span className="rounded bg-[var(--color-panel-hover)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--color-subtle)]">
-                        {v.translation_abbr}
-                      </span>
-                    </div>
-                    <div className="flex shrink-0 text-[var(--color-subtle)]">
-                      <button
-                        type="button"
-                        title="Add to service plan"
-                        className="text-[var(--color-subtle)] hover:text-[var(--color-primary)]"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void addToService(v.reference, [v]);
-                        }}
-                      >
-                        <Plus className="h-3 w-3" />
-                      </button>
-                    </div>
-                  </div>
-                  <p className="mt-1.5 line-clamp-2 text-[11px] leading-relaxed text-[var(--color-muted-foreground)]">
-                    <span className="mr-1 text-[var(--color-subtle)]">[{v.verse}]</span>
-                    {highlightQuery(v.text)}
-                  </p>
-                  <p className="mt-2 text-center text-[10px] font-medium text-[var(--color-subtle)]">{v.translation_abbr}</p>
-                </button>
-              );
-            })}
-          </div>
-          )}
-        </aside>
+        <BibleSearchSidebar
+          selectedVerseId={selectedVerseId}
+          onVerseFound={handleVerseFound}
+          onSelectVerseIndex={handleSelectVerseIndex}
+          onSelectSearchResult={handleSelectSearchResult}
+          onAddToService={handleAddToService}
+        />
 
         {/* Center — staging */}
         <main className="flex min-w-0 flex-1 flex-col bg-[#06080d]">
@@ -760,12 +403,11 @@ export function BibleSearchPage() {
                       return;
                     }
                     if (tab.value === "compare" || tab.value === "reader") return;
-                    const stored = usePresentationStore.getState().preview;
+                    const stored = useBibleStagingStore.getState().stagedScene;
                     const verses = stored?.content.verses;
                     if (!verses?.length) return;
                     const theme = layout === "lower_third" ? buildLowerThirdTheme(activeTheme) : activeTheme;
-                    if (liveFollow) showVerses(verses, theme, layout);
-                    else previewVerses(verses, theme, layout);
+                    useBibleStagingStore.getState().stageVerses(verses, theme, layout);
                   }}
                   className={cn(
                     "rounded-md px-3 py-1.5 text-[11px] font-medium transition-colors",
@@ -796,16 +438,16 @@ export function BibleSearchPage() {
               <div className="min-h-0 flex-1 overflow-y-auto p-3">
                 <TranslationCompare
                   reference={activeReference}
-                  primaryTranslationId={selectedTranslationIds[0] ?? bible.selectedTranslationId}
+                  primaryTranslationId={resolvedTranslationIds[0] ?? selectedTranslationId}
                   secondaryTranslationId={secondaryTranslationId}
-                  translations={bible.translations}
+                  translations={translations}
                 />
               </div>
             ) : viewMode === "reader" && (inChapterMode || selectedGroup) ? (
               <div className="min-h-0 flex-1 overflow-y-auto p-4">
                 <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] p-4">
                   <p className="mb-3 text-sm font-semibold">{activeReferenceUpper}</p>
-                  {(inChapterMode ? bible.chapterVerses : selectedGroup ?? []).map((v) => (
+                  {(inChapterMode ? chapterVerses : selectedGroup ?? []).map((v) => (
                     <p
                       key={v.id}
                       className={cn(
@@ -823,33 +465,19 @@ export function BibleSearchPage() {
               </div>
             ) : (
               <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
-                <StagingPreview
-                  scene={preview}
+                <BibleStagingPanel
                   displayOptions={displayOptions}
                   themeOverride={isLowerThirdMode ? { lowerThird: effectiveLowerThird } : undefined}
-                  label="Preview a passage — GO LIVE on the right panel"
+                  isLowerThirdMode={isLowerThirdMode}
+                  showLowerThirdSafeMargins={showLowerThirdSafeMargins}
+                  lowerThirdChromaPreview={lowerThirdChromaPreview}
+                  effectiveLowerThird={effectiveLowerThird}
                   innerRef={previewRef}
+                  highlightMenu={highlightMenu}
+                  onCloseHighlightMenu={() => setHighlightMenu(null)}
+                  onHighlight={(text) => handleDisplayChange({ highlightPhrase: text })}
                   onContextMenu={handlePreviewContextMenu}
-                  isBlackout={isBlackout}
-                >
-                  {isLowerThirdMode && lowerThirdChromaPreview !== false && effectiveLowerThird.transparentOutput && (
-                    <ChromaPreviewGrid />
-                  )}
-                  {isLowerThirdMode && showLowerThirdSafeMargins && (
-                    <SafeMarginOverlay marginPercent={effectiveLowerThird.safeMarginPercent} />
-                  )}
-                  <PreviewHighlightMenu
-                    menu={highlightMenu}
-                    onClose={() => setHighlightMenu(null)}
-                    onHighlight={(text) => handleDisplayChange({ highlightPhrase: text })}
-                  />
-                  <div className="pointer-events-none absolute left-3 top-3">
-                    {liveFollow && program && !isBlackout ? <span className="live-badge">● ● ON AIR</span> : null}
-                  </div>
-                  <div className="pointer-events-none absolute right-3 top-3 text-[10px] text-[var(--color-subtle)]">
-                    1920 × 1080 · 30 fps
-                  </div>
-                </StagingPreview>
+                />
 
                 {/* Slides strip */}
                 {slideGroups.length > 0 && (

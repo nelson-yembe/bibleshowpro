@@ -26,6 +26,14 @@ export function clearReferenceDedupeCache() {
   recentReferences.clear();
 }
 
+function mapDetectionType(raw: string): DetectionType {
+  if (raw === "explicit") return "explicit";
+  if (raw === "speech_repaired" || raw === "inferred") return "inferred";
+  if (raw === "paraphrase") return "paraphrase";
+  if (raw === "topic") return "topic";
+  return "quote";
+}
+
 export function buildDetectionContext(
   segments: { text: string }[],
   partialText = "",
@@ -160,7 +168,7 @@ async function buildSuggestionFromMatch(
       translationAbbr: verses[0]?.translation_abbr ?? "",
       confidence,
       confidenceLevel: confidenceLevel(confidence),
-      detectionType: (match.detection_type === "explicit" ? "explicit" : "quote") as DetectionType,
+      detectionType: mapDetectionType(match.detection_type),
       versePreview: verses[0]?.text ?? "",
       verses,
       alternatives,

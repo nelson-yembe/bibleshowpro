@@ -1,53 +1,86 @@
 import { open } from "@tauri-apps/plugin-dialog";
+import type { DragEvent } from "react";
 
-const MEDIA_EXTENSIONS = [
-  "png",
-  "jpg",
-  "jpeg",
-  "gif",
-  "webp",
-  "bmp",
-  "svg",
-  "mp4",
-  "webm",
-  "mov",
-  "mkv",
-  "avi",
-  "mp3",
-  "wav",
-  "ogg",
-  "m4a",
-  "aac",
-  "flac",
-];
+export type MediaPickKind = "all" | "image" | "video" | "audio";
 
-export async function pickMediaFiles(): Promise<string[]> {
+export const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"] as const;
+export const VIDEO_EXTENSIONS = ["mp4", "webm", "mov", "mkv", "avi", "m4v"] as const;
+export const AUDIO_EXTENSIONS = ["mp3", "wav", "ogg", "m4a", "aac", "flac"] as const;
+
+const ALL_EXTENSIONS = [...IMAGE_EXTENSIONS, ...VIDEO_EXTENSIONS, ...AUDIO_EXTENSIONS];
+
+const KIND_EXTENSIONS: Record<MediaPickKind, readonly string[]> = {
+  all: ALL_EXTENSIONS,
+  image: IMAGE_EXTENSIONS,
+  video: VIDEO_EXTENSIONS,
+  audio: AUDIO_EXTENSIONS,
+};
+
+const KIND_FILTER_LABEL: Record<MediaPickKind, string> = {
+  all: "Media files",
+  image: "Images",
+  video: "Videos",
+  audio: "Audio",
+};
+
+function extensionsFor(kind: MediaPickKind = "all"): string[] {
+  return [...KIND_EXTENSIONS[kind]];
+}
+
+export function extensionOfPath(path: string): string {
+  const base = path.split(/[/\\]/).pop() ?? path;
+  const dot = base.lastIndexOf(".");
+  if (dot < 0) return "";
+  return base.slice(dot + 1).toLowerCase();
+}
+
+export function pathMatchesKind(path: string, kind: MediaPickKind = "all"): boolean {
+  const ext = extensionOfPath(path);
+  if (!ext) return false;
+  if (kind === "all") return ALL_EXTENSIONS.includes(ext as (typeof ALL_EXTENSIONS)[number]);
+  return KIND_EXTENSIONS[kind].includes(ext);
+}
+
+/** Resolve a real filesystem path from a browser/Tauri File object when possible. */
+export function fileSystemPath(file: File): string | null {
+  const withPath = file as File & { path?: string };
+  if (typeof withPath.path === "string" && withPath.path.length > 0) {
+    return withPath.path;
+  }
+  return null;
+}
+
+export function pathsFromFileList(files: FileList | File[], kind: MediaPickKind = "all"): string[] {
+  return Array.from(files)
+    .map((file) => fileSystemPath(file))
+    .filter((path): path is string => Boolean(path))
+    .filter((path) => pathMatchesKind(path, kind));
+}
+
+export async function pickMediaFiles(kind: MediaPickKind = "all"): Promise<string[]> {
+  const extensions = extensionsFor(kind);
   try {
     const selected = await open({
       multiple: true,
-      filters: [{ name: "Media files", extensions: MEDIA_EXTENSIONS }],
+      title:
+        kind === "image"
+          ? "Import images"
+          : kind === "video"
+            ? "Import videos"
+            : kind === "audio"
+              ? "Import audio"
+              : "Import media files",
+      filters: [{ name: KIND_FILTER_LABEL[kind], extensions }],
     });
     if (!selected) return [];
-    return Array.isArray(selected) ? selected : [selected];
-  } catch {
-    return pickMediaFilesViaInput();
+    const paths = Array.isArray(selected) ? selected : [selected];
+    return paths.filter((path) => pathMatchesKind(path, kind));
+  } catch (error) {
+    console.warn("Native media dialog failed; cannot fall back without filesystem paths.", error);
+    return [];
   }
 }
 
-function pickMediaFilesViaInput(): Promise<string[]> {
-  return new Promise((resolve) => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.multiple = true;
-    input.accept = MEDIA_EXTENSIONS.map((ext) => `.${ext}`).join(",");
-    input.onchange = () => {
-      const files = Array.from(input.files ?? []);
-      resolve(files.map((file) => file.name));
-    };
-    input.click();
-  });
-}
-
-export function isMediaDragEvent(event: React.DragEvent): boolean {
+export function isMediaDragEvent(event: DragEvent): boolean {
   return Array.from(event.dataTransfer.types).includes("Files");
 }

@@ -56,8 +56,9 @@ static CHAPTER_RANGE: Lazy<Regex> = Lazy::new(|| {
 });
 
 static CHAPTER_ONLY: Lazy<Regex> = Lazy::new(|| {
+    // Negative lookahead-free: stop the book token before the words chapter/verse.
     Regex::new(
-        r"(?i)(?:\b(?:turn\s+(?:with\s+me\s+to|to)|read(?:ing)?\s+(?:from\s+)?|in\s+|from\s+))?(?P<book>(?:[1-3]\s+|first\s+|second\s+|third\s+)?[a-z]+(?:\s+(?:of\s+)?[a-z]+)*)\.?\s*(?:,\s*)?(?:chapter\s+)?(?P<chapter>\d{1,3})",
+        r"(?i)(?:\b(?:turn\s+(?:with\s+me\s+to|to)|read(?:ing)?\s+(?:from\s+)?|in\s+|from\s+))?(?P<book>(?:[1-3]\s+|first\s+|second\s+|third\s+)?[a-z]+(?:\s+of\s+[a-z]+)?)\.?\s*(?:,\s*)?(?:chapter\s+)?(?P<chapter>\d{1,3})\b",
     )
     .unwrap()
 });
@@ -131,16 +132,27 @@ enum MatchKind {
     ChapterOnly,
     /// "verse 16" / "chapter 3 verse 16" resolved via sermon context.
     Context,
+    /// Recovered from ASR book/phrase confusion (e.g. "efficient" → Ephesians).
+    /// Shown as a suggestion but must not auto-project.
+    SpeechRepaired,
 }
 
 fn normalize_book_prefix(raw: &str) -> String {
-    raw.trim()
-        .trim_matches(',')
-        .trim()
-        .to_lowercase()
-        .replace("first ", "1 ")
-        .replace("second ", "2 ")
-        .replace("third ", "3 ")
+    let mut s = raw.trim().trim_matches(',').trim().to_lowercase();
+    for (from, to) in [
+        ("1st ", "1 "),
+        ("2nd ", "2 "),
+        ("3rd ", "3 "),
+        ("first ", "1 "),
+        ("second ", "2 "),
+        ("third ", "3 "),
+    ] {
+        if let Some(rest) = s.strip_prefix(from) {
+            s = format!("{to}{rest}");
+            break;
+        }
+    }
+    s
 }
 
 fn build_reference(book_name: &str, chapter: i32, verse_start: Option<i32>, verse_end: Option<i32>) -> String {
@@ -183,8 +195,17 @@ fn confidence_for_kind(kind: MatchKind, verse_start: Option<i32>, has_cue: bool)
                 0.66
             }
         }
+        // Medium — visible in suggestions, never auto-live (non-explicit type).
+        MatchKind::SpeechRepaired => 0.74,
     };
     (base + if has_cue { 0.03_f32 } else { 0.0_f32 }).min(0.99)
+}
+
+fn detection_type_for_kind(kind: MatchKind) -> &'static str {
+    match kind {
+        MatchKind::SpeechRepaired => "speech_repaired",
+        _ => "explicit",
+    }
 }
 
 /// For two bare spoken numbers ("Psalm one twenty one" -> "1 21"), the speaker
@@ -277,13 +298,19 @@ fn finalize_capture(
         normalized_reference,
         parsed,
         confidence: confidence_for_kind(kind, verse_start, has_intro_cue(matched_text)),
-        detection_type: "explicit".to_string(),
+        detection_type: detection_type_for_kind(kind).to_string(),
         alternatives,
     })
 }
 
+/// Result of speech preprocessing: cleaned text + whether ASR confusion repairs ran.
+struct PreprocessResult {
+    text: String,
+    speech_repaired: bool,
+}
+
 /// Convert spoken word numbers and strip punctuation so STT output matches our parsers.
-fn preprocess_spoken_text(text: &str) -> String {
+fn preprocess_spoken_text(text: &str) -> PreprocessResult {
     let mut s = text.to_lowercase();
     s = s.replace(',', " ");
     s = s.replace('.', " ");
@@ -328,8 +355,142 @@ fn preprocess_spoken_text(text: &str) -> String {
     // Fold spoken numbers ("eight twenty eight" -> "8 28") without corrupting
     // ordinary words that merely contain a number word.
     s = normalize_spoken_numbers(&s);
+    s = normalize_ordinal_book_prefixes(&s);
 
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
+    // Structural pulpit repairs (bridge phrases, "was"→verse) stay explicit.
+    s = collapse_verse_bridge_phrases(&s);
+    s = apply_asr_pattern_repairs(&s);
+
+    // Phonetic book confusion only — these must not auto-project.
+    let before_confusion = s.clone();
+    s = apply_speech_confusion_aliases(&s);
+    s = repair_book_that_or_after_chapter(&s);
+    let speech_repaired = s != before_confusion;
+
+    s = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    PreprocessResult {
+        text: s,
+        speech_repaired,
+    }
+}
+
+/// "1st/2nd/3rd Peter" → "1/2/3 Peter" so ordinal STT matches numbered books.
+fn normalize_ordinal_book_prefixes(text: &str) -> String {
+    static ORDINAL_PREFIX: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)\b(1st|2nd|3rd|first|second|third)\s+").unwrap()
+    });
+    ORDINAL_PREFIX
+        .replace_all(text, |caps: &regex::Captures| {
+            let raw = caps.get(1).map(|m| m.as_str().to_ascii_lowercase()).unwrap_or_default();
+            let digit = match raw.as_str() {
+                "1st" | "first" => "1",
+                "2nd" | "second" => "2",
+                "3rd" | "third" => "3",
+                _ => return caps.get(0).map(|m| m.as_str().to_string()).unwrap_or_default(),
+            };
+            format!("{digit} ")
+        })
+        .into_owned()
+}
+
+/// Collapse pulpit bridge phrases so split announcements join into one ref:
+/// "Second Peter chapter 1. We begin from verse one." → "... chapter 1 verse 1"
+fn collapse_verse_bridge_phrases(text: &str) -> String {
+    static LONG_BRIDGES: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(
+            r"(?i)\b(?:(?:we\s+|let'?s\s+|let\s+us\s+)?(?:begin|beginning|start|starting)\s+(?:from|at|in)|(?:we\s+)?(?:look|looking)\s+at|open\s+(?:at|from)|read\s+from)\s+(?:the\s+)?(?:verse|verses)\b",
+        )
+        .expect("long verse bridge regex")
+    });
+    // "chapter 1 from verse 1" / "chapter 1 at verse 1" → keep "verse"
+    static SHORT_CONNECTOR: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)\b(?:from|at|in)\s+(?:the\s+)?(verse|verses)\b")
+            .expect("short verse connector regex")
+    });
+
+    let mut s = LONG_BRIDGES.replace_all(text, "verse").into_owned();
+    s = SHORT_CONNECTOR.replace_all(&s, "$1").into_owned();
+    s
+}
+
+/// Narrow ASR repairs that do not change clean scripture speech.
+fn apply_asr_pattern_repairs(text: &str) -> String {
+    static DOUBLE_CHAPTER: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(
+            r"(?i)\bchapter\s+(\d{1,3})\s+chapter\s+(\d{1,3})\s+(?:from\s+)?(?:verse|verses)\b",
+        )
+        .unwrap()
+    });
+    static CHAPTER_WAS_VERSE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)\bchapter\s+(\d{1,3})\s+was\s+(\d{1,3})\b").unwrap()
+    });
+    static PLUS_BETWEEN_DIGITS: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(\d)\s*\+\s*(\d)").unwrap());
+    static PERCENT_AFTER_DIGIT: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(\d)\s*%").unwrap());
+
+    let mut s = DOUBLE_CHAPTER
+        .replace_all(text, "chapter $2 verse")
+        .into_owned();
+    s = CHAPTER_WAS_VERSE
+        .replace_all(&s, "chapter $1 verse $2")
+        .into_owned();
+    s = PLUS_BETWEEN_DIGITS.replace_all(&s, "$1 $2").into_owned();
+    s = PERCENT_AFTER_DIGIT.replace_all(&s, "$1").into_owned();
+    s
+}
+
+/// Gated phonetic book confusions — only when a scripture cue follows.
+/// (Rust `regex` has no look-ahead, so the cue is captured and preserved.)
+fn apply_speech_confusion_aliases(text: &str) -> String {
+    static CONFUSIONS: Lazy<Vec<(Regex, &'static str)>> = Lazy::new(|| {
+        let cue = r"(\s+(?:chapter|verse|verses|after|that|\d))";
+        [
+            (format!(r"(?i)\befficient\b{cue}"), "ephesians"),
+            (format!(r"(?i)\bephesis\b{cue}"), "ephesians"),
+            (format!(r"(?i)\ba\s+fishing\b{cue}"), "ephesians"),
+            (format!(r"(?i)\brelationship\b{cue}"), "revelation"),
+            (format!(r"(?i)\bmarrakesh\b{cue}"), "malachi"),
+            (format!(r"(?i)\bmalakai\b{cue}"), "malachi"),
+        ]
+        .into_iter()
+        .map(|(pat, repl)| (Regex::new(&pat).expect("speech confusion regex"), repl))
+        .collect()
+    });
+
+    let mut s = text.to_string();
+    for (re, book) in CONFUSIONS.iter() {
+        s = re
+            .replace_all(&s, |caps: &regex::Captures| {
+                let cue = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                format!("{book}{cue}")
+            })
+            .into_owned();
+    }
+    s
+}
+
+/// "Ephesians after 5 …" / "Revelation that 3" / "Malachi after that 3"
+/// → insert the chapter keyword when the leading token is a real book.
+fn repair_book_that_or_after_chapter(text: &str) -> String {
+    static BOOK_AFTER: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(
+            r"(?i)\b((?:[1-3]\s+)?[a-z]+(?:\s+of\s+[a-z]+)?)\s+(?:after\s+that|after|that)\s+(\d{1,3})\b",
+        )
+        .unwrap()
+    });
+
+    BOOK_AFTER
+        .replace_all(text, |caps: &regex::Captures| {
+            let book_raw = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            let chapter = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+            if resolve_book(book_raw).is_some() {
+                format!("{book_raw} chapter {chapter}")
+            } else {
+                caps.get(0).map(|m| m.as_str().to_string()).unwrap_or_default()
+            }
+        })
+        .into_owned()
 }
 
 /// Split merged STT digits like "514" into chapter 5 verse 14.
@@ -643,25 +804,99 @@ pub fn detect_references_with_context(
     context: Option<&DetectionContext>,
 ) -> Vec<ScriptureDetectionMatch> {
     let mut matches = Vec::new();
-    let preprocessed = preprocess_spoken_text(text);
+    let prepared = preprocess_spoken_text(text);
+    let preprocessed = &prepared.text;
 
-    collect_from_patterns(text, &mut matches);
-    if preprocessed != text.to_lowercase() {
-        collect_from_patterns(&preprocessed, &mut matches);
+    let mut raw_matches = Vec::new();
+    collect_from_patterns(text, &mut raw_matches);
+
+    let mut prep_matches = Vec::new();
+    if preprocessed != &text.to_lowercase() {
+        collect_from_patterns(preprocessed, &mut prep_matches);
     }
-    if matches.is_empty() && !preprocessed.is_empty() {
-        collect_from_patterns(&preprocessed, &mut matches);
+    if raw_matches.is_empty() && prep_matches.is_empty() && !preprocessed.is_empty() {
+        collect_from_patterns(preprocessed, &mut prep_matches);
     }
+
+    // Matches that only appear after ASR repairs are suggestions, not auto-live.
+    if prepared.speech_repaired {
+        let raw_refs: std::collections::HashSet<String> = raw_matches
+            .iter()
+            .map(|m| m.normalized_reference.clone())
+            .collect();
+        for m in &mut prep_matches {
+            if !raw_refs.contains(&m.normalized_reference) {
+                m.detection_type = detection_type_for_kind(MatchKind::SpeechRepaired).to_string();
+                m.confidence =
+                    confidence_for_kind(MatchKind::SpeechRepaired, m.parsed.verse_start, false);
+            }
+        }
+    }
+
+    matches.append(&mut raw_matches);
+    matches.append(&mut prep_matches);
+
+    // "Book chapter 1 … verse 1" in one utterance: upgrade chapter-only hits.
+    attach_nearby_verses(preprocessed, &mut matches);
 
     // Bare "verse N" / "chapter N verse M" only resolve via context, and only
     // when no explicit book reference was found in the same window.
     if matches.is_empty() {
         if let Some(ctx) = context {
-            collect_context_matches(&preprocessed, ctx, &mut matches);
+            collect_context_matches(preprocessed, ctx, &mut matches);
         }
     }
 
     dedupe_matches(matches)
+}
+
+/// If we already have "2 Peter 1" (chapter only) and the same window later says
+/// "verse 1", promote to "2 Peter 1:1".
+fn attach_nearby_verses(text: &str, matches: &mut Vec<ScriptureDetectionMatch>) {
+    let mut extras = Vec::new();
+    for m in matches.iter() {
+        if m.parsed.verse_start.is_some() {
+            continue;
+        }
+        let chapter_pat = format!(
+            r"(?i)\bchapter\s+{}\b",
+            regex::escape(&m.parsed.chapter.to_string())
+        );
+        let Ok(chapter_re) = Regex::new(&chapter_pat) else {
+            continue;
+        };
+        let Some(chapter_match) = chapter_re.find(text) else {
+            continue;
+        };
+        let after = &text[chapter_match.end()..];
+        let Some(caps) = CONTEXT_VERSE_ONLY.captures(after) else {
+            continue;
+        };
+        let Some(verse) = caps
+            .name("verse")
+            .and_then(|v| v.as_str().parse::<i32>().ok())
+        else {
+            continue;
+        };
+        let verse_end = caps
+            .name("verse_end")
+            .and_then(|v| v.as_str().parse::<i32>().ok());
+        let Some((book_number, book_name)) = resolve_book(&m.parsed.book_name) else {
+            continue;
+        };
+        if let Some(upgraded) = finalize_capture(
+            book_number,
+            book_name,
+            m.parsed.chapter,
+            Some(verse),
+            verse_end,
+            caps.get(0).map(|c| c.as_str()).unwrap_or(text),
+            MatchKind::SpokenChapterVerse,
+        ) {
+            extras.push(upgraded);
+        }
+    }
+    matches.extend(extras);
 }
 
 fn dedupe_matches(matches: Vec<ScriptureDetectionMatch>) -> Vec<ScriptureDetectionMatch> {
@@ -923,5 +1158,118 @@ mod tests {
         );
         assert!(found.iter().any(|m| m.normalized_reference == "Romans 8:28"));
         assert!(!found.iter().any(|m| m.parsed.book_name == "John"));
+    }
+
+    #[test]
+    fn rejects_impossible_malachi_chapter() {
+        let found = detect_references_in_text("Malachi chapter 8 verse 10.");
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn rejects_impossible_revelation_chapter() {
+        let found = detect_references_in_text("Revelation 60 verse 15.");
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn repairs_efficient_to_ephesians_with_double_chapter_stutter() {
+        let found = detect_references_in_text(
+            "he read from efficient chapter 1, chapter 5, from verse 1 to 14.",
+        );
+        let hit = found
+            .iter()
+            .find(|m| m.normalized_reference == "Ephesians 5:1-14")
+            .expect("Ephesians 5:1-14 recovered");
+        assert_eq!(hit.detection_type, "speech_repaired");
+        assert!(hit.confidence < 0.85);
+    }
+
+    #[test]
+    fn repairs_efficient_after_plus_range() {
+        let found = detect_references_in_text("efficient after 5 + 1 to 14");
+        assert!(found.iter().any(|m| m.normalized_reference == "Ephesians 5:1-14"));
+    }
+
+    #[test]
+    fn repairs_chapter_was_as_verse() {
+        let found = detect_references_in_text("Matthew chapter 24. Was 42");
+        assert!(found.iter().any(|m| m.normalized_reference == "Matthew 24:42"));
+    }
+
+    #[test]
+    fn repairs_relationship_that_to_revelation() {
+        let found = detect_references_in_text("relationship that three");
+        assert!(found.iter().any(|m| m.normalized_reference == "Revelation 3"));
+    }
+
+    #[test]
+    fn repairs_marrakesh_to_malachi() {
+        let found = detect_references_in_text("Marrakesh after that 3");
+        assert!(found.iter().any(|m| {
+            m.parsed.book_name == "Malachi" && m.parsed.chapter == 3
+        }));
+    }
+
+    #[test]
+    fn clean_ephesians_still_explicit_high_confidence() {
+        let found = detect_references_in_text("Ephesians chapter 5 verse 14.");
+        let hit = found
+            .iter()
+            .find(|m| m.normalized_reference == "Ephesians 5:14")
+            .expect("clean Ephesians");
+        assert_eq!(hit.detection_type, "explicit");
+        assert!(hit.confidence >= 0.9);
+    }
+
+    #[test]
+    fn efficient_alone_without_cue_is_not_a_book() {
+        let found = detect_references_in_text("The process was efficient and clear.");
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn detects_second_peter_split_begin_from_verse() {
+        let found = detect_references_in_text(
+            "Second Peter, chapter 1. We begin from verse one.",
+        );
+        let hit = found
+            .iter()
+            .find(|m| m.normalized_reference == "2 Peter 1:1")
+            .expect("2 Peter 1:1 from split announcement");
+        assert_eq!(hit.detection_type, "explicit");
+        assert!(hit.confidence >= 0.85);
+    }
+
+    #[test]
+    fn detects_first_john_starting_at_verse() {
+        let found =
+            detect_references_in_text("First John chapter 3. Starting at verse 16.");
+        assert!(found.iter().any(|m| m.normalized_reference == "1 John 3:16"));
+    }
+
+    #[test]
+    fn detects_second_timothy_lets_begin_in_verse() {
+        let found =
+            detect_references_in_text("Second Timothy, chapter 2. Let's begin in verse 15.");
+        assert!(found.iter().any(|m| m.normalized_reference == "2 Timothy 2:15"));
+    }
+
+    #[test]
+    fn detects_romans_we_start_from_verse() {
+        let found = detect_references_in_text("Romans chapter 8. We start from verse 28.");
+        assert!(found.iter().any(|m| m.normalized_reference == "Romans 8:28"));
+    }
+
+    #[test]
+    fn detects_2nd_peter_ordinal_digits() {
+        let found = detect_references_in_text("2nd Peter chapter 1 verse 1.");
+        assert!(found.iter().any(|m| m.normalized_reference == "2 Peter 1:1"));
+    }
+
+    #[test]
+    fn detects_chapter_from_verse_connector() {
+        let found = detect_references_in_text("Genesis chapter 1 from verse 1.");
+        assert!(found.iter().any(|m| m.normalized_reference == "Genesis 1:1"));
     }
 }

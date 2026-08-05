@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 
 const navItems = [
   { to: "/", icon: Home, label: "Home" },
-  { to: "/service", icon: Layers, label: "Library" },
+  { to: "/service", icon: Layers, label: "Service" },
   { to: "/bible", icon: BookOpen, label: "Bible Search", match: "/bible" },
   { to: "/listen", icon: Mic, label: "Live Listen", match: "/listen" },
   { to: "/songs", icon: Music2, label: "Songs", match: "/songs" },

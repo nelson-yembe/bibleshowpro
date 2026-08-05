@@ -119,9 +119,14 @@ export function ServiceItemEditor({ item, onPickSong, onPickMedia }: ServiceItem
               onClick={() => onPickMedia(item.item_type as "video" | "image")}
               className="shrink-0 rounded-md border border-[var(--color-border-light)] px-2 text-[11px] hover:bg-[var(--color-panel-hover)]"
             >
-              {content.mediaId ? "Change" : "Pick"}
+              {content.mediaId ? "Change" : "Import / Pick"}
             </button>
           </div>
+          {!content.mediaId && (
+            <p className="mt-1 text-[10px] text-[var(--color-subtle)]">
+              Import from your computer or choose an existing file from the Media library.
+            </p>
+          )}
         </Field>
       )}
 

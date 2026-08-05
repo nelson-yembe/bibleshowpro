@@ -117,6 +117,9 @@ pub fn normalize_book_key(input: &str) -> String {
     // Map a leading spoken ordinal to its digit so "first/one Corinthians"
     // resolves the same as "1 Corinthians".
     const ORDINALS: &[(&str, &str)] = &[
+        ("1st ", "1 "),
+        ("2nd ", "2 "),
+        ("3rd ", "3 "),
         ("first ", "1 "),
         ("second ", "2 "),
         ("third ", "3 "),

@@ -4,6 +4,7 @@ import {
   defaultContentForType,
   stringifyServiceItemContent,
 } from "@/lib/serviceItemContent";
+import { isPresentableServiceItem, neighborPresentableIndex } from "@/lib/serviceItemMeta";
 import { getServiceTemplate } from "@/lib/serviceTemplates";
 import { api, type ServiceItem, type ServicePlanDetail, type ServicePlanSummary } from "@/lib/tauri";
 import { usePresentationStore } from "@/stores/presentationStore";
@@ -159,6 +160,7 @@ export const useServiceStore = create<ServiceState>((set, get) => ({
     set({ activeItemId: id });
 
     if (options.preview === false) return;
+    if (!isPresentableServiceItem(item)) return;
 
     const liveFollow = usePresentationStore.getState().liveFollow;
     if (liveFollow) {
@@ -317,7 +319,7 @@ export const useServiceStore = create<ServiceState>((set, get) => ({
 
   goLiveActiveItem: async () => {
     const item = findItem(get().activePlan, get().activeItemId);
-    if (!item) return;
+    if (!item || !isPresentableServiceItem(item)) return;
     await presentServiceItem(item, activeTheme());
   },
 
@@ -326,8 +328,8 @@ export const useServiceStore = create<ServiceState>((set, get) => ({
     if (!activePlan || activePlan.items.length === 0) return;
 
     const index = activePlan.items.findIndex((item) => item.id === activeItemId);
-    const nextIndex = index < 0 ? 0 : Math.min(index + 1, activePlan.items.length - 1);
-    if (activePlan.items[nextIndex]) {
+    const nextIndex = neighborPresentableIndex(activePlan.items, index, 1);
+    if (nextIndex >= 0 && activePlan.items[nextIndex]) {
       await get().selectItem(activePlan.items[nextIndex]!.id);
     }
   },
@@ -337,8 +339,8 @@ export const useServiceStore = create<ServiceState>((set, get) => ({
     if (!activePlan || activePlan.items.length === 0) return;
 
     const index = activePlan.items.findIndex((item) => item.id === activeItemId);
-    const prevIndex = index < 0 ? 0 : Math.max(index - 1, 0);
-    if (activePlan.items[prevIndex]) {
+    const prevIndex = neighborPresentableIndex(activePlan.items, index, -1);
+    if (prevIndex >= 0 && activePlan.items[prevIndex]) {
       await get().selectItem(activePlan.items[prevIndex]!.id);
     }
   },

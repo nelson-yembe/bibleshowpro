@@ -3,7 +3,6 @@ import {
   Copy,
   Download,
   MoreVertical,
-  PenTool,
   Plus,
   Save,
   Star,
@@ -12,7 +11,6 @@ import {
   Zap,
 } from "lucide-react";
 import { TopBar } from "@/components/layout/TopBar";
-import { StagingPreview } from "@/components/presentation/StagingPreview";
 import { Segmented } from "@/components/ui/pill";
 import { contrastRatio, cn } from "@/lib/utils";
 import { useThemeStore } from "@/stores/themeStore";
@@ -23,13 +21,24 @@ import {
   themeToDisplayDefaults,
   colorPickerValue,
 } from "@/lib/themeConfig";
+import {
+  OUTPUT_MODES,
+  createDefaultCanvas,
+  createThemeDocument,
+  outputModeDef,
+  parseThemeDocument,
+  type OutputMode,
+  type ThemeCanvas,
+  type ThemeDocument,
+  type ThemeMeta,
+} from "@/lib/themeDocument";
 import { THEME_PRESETS, presetToConfig } from "@/modules/themes/themePresets";
 import { ThemeLowerThirdPanel } from "@/modules/themes/ThemeLowerThirdPanel";
 import { previewSceneForTab, themeSwatchStyle, type PreviewTab } from "@/modules/themes/themePreview";
 import { VectorDesignPanel, applyVectorTemplate } from "@/modules/themes/vector/VectorDesignPanel";
-import { VectorEditorCanvas } from "@/modules/themes/vector/VectorEditorCanvas";
 import { VectorLayerList, VectorToolbar } from "@/modules/themes/vector/VectorToolbar";
-import type { VectorTool } from "@/lib/vectorDesign";
+import { ThemeStage } from "@/modules/themes/vector/ThemeStage";
+import type { VectorDesign, VectorTool } from "@/lib/vectorDesign";
 import {
   deleteVectorElement,
   duplicateVectorElement,
@@ -37,6 +46,24 @@ import {
   reorderVectorElement,
   updateVectorElement,
 } from "@/lib/vectorDesign";
+
+const PROJECTOR_MODE: OutputMode = "projectorFullscreen";
+
+function outputModePreviewTab(mode: OutputMode): PreviewTab {
+  switch (mode) {
+    case "lyricsSlide":
+      return "Song Lyric";
+    case "announcement":
+      return "Announcement";
+    case "lowerThird":
+    case "speakerLowerThird":
+      return "Lower Third";
+    case "countdown":
+      return "Blank / Logo";
+    default:
+      return "Scripture";
+  }
+}
 
 const previewTabs: PreviewTab[] = [
   "Scripture",
@@ -121,7 +148,7 @@ export function ThemeEditorPage() {
     activeTheme,
     activeThemeId,
     loadThemes,
-    saveTheme,
+    saveThemeDocument,
     selectTheme,
     deleteTheme,
     createTheme,
@@ -132,8 +159,12 @@ export function ThemeEditorPage() {
     importThemeFromJson,
   } = useThemeStore();
 
+  const initialDoc = useMemo(() => createThemeDocument(activeTheme), [activeTheme]);
   const [name, setName] = useState("Untitled theme");
-  const [draft, setDraft] = useState<ThemeConfig>(() => mergeThemeConfig(activeTheme));
+  const [draft, setDraft] = useState<ThemeConfig>(() => initialDoc.base);
+  const [canvases, setCanvases] = useState<ThemeCanvas[]>(() => initialDoc.canvases);
+  const [meta, setMeta] = useState<ThemeMeta>(() => initialDoc.meta);
+  const [outputMode, setOutputMode] = useState<OutputMode>(PROJECTOR_MODE);
   const [previewTab, setPreviewTab] = useState<PreviewTab>("Scripture");
   const [search, setSearch] = useState("");
   const [libraryTab, setLibraryTab] = useState<"themes" | "presets">("themes");
@@ -150,13 +181,67 @@ export function ThemeEditorPage() {
     setDraft((prev) => mergeThemeConfig({ ...prev, ...partial }));
   }, []);
 
-  const patchVector = useCallback((design: import("@/lib/vectorDesign").VectorDesign) => {
-    patch({ vectorDesign: design });
-  }, [patch]);
+  const activeCanvas = useMemo(
+    () => canvases.find((c) => c.outputMode === outputMode) ?? createDefaultCanvas(outputMode),
+    [canvases, outputMode],
+  );
+
+  // The vector design currently being edited. The projector canvas is backed by
+  // base.vectorDesign (so it keeps driving live output unchanged); every other
+  // output mode is backed by its own ThemeCanvas.layers.
+  const activeDesign: VectorDesign = useMemo(() => {
+    if (outputMode === PROJECTOR_MODE) return draft.vectorDesign;
+    return {
+      enabled: true,
+      viewBoxWidth: activeCanvas.width,
+      viewBoxHeight: activeCanvas.height,
+      showGrid: draft.vectorDesign.showGrid,
+      snapToGrid: draft.vectorDesign.snapToGrid,
+      gridSize: draft.vectorDesign.gridSize,
+      elements: activeCanvas.layers,
+    };
+  }, [outputMode, draft.vectorDesign, activeCanvas]);
+
+  const setActiveDesign = useCallback(
+    (design: VectorDesign) => {
+      if (outputMode === PROJECTOR_MODE) {
+        patch({ vectorDesign: design });
+        return;
+      }
+      // Grid prefs are shared globally (stored on base.vectorDesign).
+      setDraft((prev) =>
+        mergeThemeConfig({
+          ...prev,
+          vectorDesign: {
+            ...prev.vectorDesign,
+            showGrid: design.showGrid,
+            snapToGrid: design.snapToGrid,
+            gridSize: design.gridSize,
+          },
+        }),
+      );
+      setCanvases((prev) =>
+        prev.map((c) =>
+          c.outputMode === outputMode
+            ? {
+                ...c,
+                width: design.viewBoxWidth,
+                height: design.viewBoxHeight,
+                layers: design.elements,
+                enabled: design.elements.length > 0,
+              }
+            : c,
+        ),
+      );
+    },
+    [outputMode, patch],
+  );
+
+  const patchVector = setActiveDesign;
 
   const selectedVector = useMemo(
-    () => draft.vectorDesign.elements.find((el) => el.id === selectedVectorId) ?? null,
-    [draft.vectorDesign.elements, selectedVectorId],
+    () => activeDesign.elements.find((el) => el.id === selectedVectorId) ?? null,
+    [activeDesign.elements, selectedVectorId],
   );
 
   useEffect(() => {
@@ -167,8 +252,11 @@ export function ThemeEditorPage() {
   useEffect(() => {
     if (activeThemeId === loadedThemeIdRef.current) return;
     loadedThemeIdRef.current = activeThemeId;
-    setDraft(mergeThemeConfig(activeTheme));
     const theme = themes.find((t) => t.id === activeThemeId);
+    const doc = theme ? parseThemeDocument(theme.config_json) : createThemeDocument(activeTheme);
+    setDraft(doc.base);
+    setCanvases(doc.canvases);
+    setMeta(doc.meta);
     setName(theme?.name ?? "Untitled theme");
   }, [activeTheme, activeThemeId, themes]);
 
@@ -180,7 +268,11 @@ export function ThemeEditorPage() {
 
   const ratio = contrastRatio(draft.textColor, draft.backgroundColor);
   const readable = ratio >= 4.5;
-  const previewScene = useMemo(() => previewSceneForTab(previewTab, draft), [previewTab, draft]);
+  const effectivePreviewTab = editorMode === "vector" ? outputModePreviewTab(outputMode) : previewTab;
+  const previewScene = useMemo(
+    () => previewSceneForTab(effectivePreviewTab, draft),
+    [effectivePreviewTab, draft],
+  );
   const previewDisplayOptions = useMemo(
     () => ({ ...themeToDisplayDefaults(draft), backgroundPreset: "theme" as const }),
     [draft],
@@ -188,10 +280,19 @@ export function ThemeEditorPage() {
 
   const currentRecord = themes.find((t) => t.id === activeThemeId);
   const isDefault = currentRecord?.is_default ?? false;
-  const isDirty = JSON.stringify(draft) !== JSON.stringify(mergeThemeConfig(activeTheme)) || name !== currentRecord?.name;
+  const savedDoc = useMemo(
+    () => (currentRecord ? parseThemeDocument(currentRecord.config_json) : null),
+    [currentRecord],
+  );
+  const isDirty =
+    !savedDoc ||
+    JSON.stringify(draft) !== JSON.stringify(savedDoc.base) ||
+    JSON.stringify(canvases) !== JSON.stringify(savedDoc.canvases) ||
+    name !== currentRecord?.name;
 
   const handleSave = async (asNew = false) => {
-    await saveTheme(name, draft, asNew ? undefined : activeThemeId);
+    const doc: ThemeDocument = { schemaVersion: 2, meta, base: draft, canvases };
+    await saveThemeDocument(name, doc, asNew ? undefined : activeThemeId);
   };
 
   const handleMediaPick = (type: "image" | "video", file?: File | null) => {
@@ -340,7 +441,10 @@ export function ThemeEditorPage() {
                   key={preset.id}
                   type="button"
                   onClick={() => {
-                    setDraft(presetToConfig(preset));
+                    const presetDoc = createThemeDocument(presetToConfig(preset));
+                    setDraft(presetDoc.base);
+                    setCanvases(presetDoc.canvases);
+                    setMeta(presetDoc.meta);
                     setName(preset.name);
                   }}
                   className="mb-1.5 w-full rounded-lg border border-[var(--color-border-light)] p-2 text-left hover:border-[var(--color-primary)] hover:bg-[var(--color-panel)]"
@@ -414,70 +518,73 @@ export function ThemeEditorPage() {
                   </button>
                 ))
               ) : (
-                <VectorToolbar
-                  tool={vectorTool}
-                  onToolChange={setVectorTool}
-                  hasSelection={!!selectedVectorId}
-                  onDelete={() => {
-                    if (!selectedVectorId) return;
-                    patchVector(deleteVectorElement(draft.vectorDesign, selectedVectorId));
-                    setSelectedVectorId(null);
-                  }}
-                  onDuplicate={() => {
-                    if (!selectedVectorId) return;
-                    const next = duplicateVectorElement(draft.vectorDesign, selectedVectorId);
-                    patchVector(next);
-                    const newest = next.elements[next.elements.length - 1];
-                    if (newest) setSelectedVectorId(newest.id);
-                  }}
-                  onBringForward={() => {
-                    if (!selectedVectorId) return;
-                    patchVector(reorderVectorElement(draft.vectorDesign, selectedVectorId, "up"));
-                  }}
-                  onSendBackward={() => {
-                    if (!selectedVectorId) return;
-                    patchVector(reorderVectorElement(draft.vectorDesign, selectedVectorId, "down"));
-                  }}
-                />
+                <>
+                  <select
+                    value={outputMode}
+                    onChange={(e) => {
+                      setOutputMode(e.target.value as OutputMode);
+                      setSelectedVectorId(null);
+                    }}
+                    className="h-7 rounded-md border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 text-[11px]"
+                    title="Output mode"
+                  >
+                    {OUTPUT_MODES.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                  <VectorToolbar
+                    tool={vectorTool}
+                    onToolChange={setVectorTool}
+                    hasSelection={!!selectedVectorId}
+                    onDelete={() => {
+                      if (!selectedVectorId) return;
+                      patchVector(deleteVectorElement(activeDesign, selectedVectorId));
+                      setSelectedVectorId(null);
+                    }}
+                    onDuplicate={() => {
+                      if (!selectedVectorId) return;
+                      const next = duplicateVectorElement(activeDesign, selectedVectorId);
+                      patchVector(next);
+                      const newest = next.elements[next.elements.length - 1];
+                      if (newest) setSelectedVectorId(newest.id);
+                    }}
+                    onBringForward={() => {
+                      if (!selectedVectorId) return;
+                      patchVector(reorderVectorElement(activeDesign, selectedVectorId, "up"));
+                    }}
+                    onSendBackward={() => {
+                      if (!selectedVectorId) return;
+                      patchVector(reorderVectorElement(activeDesign, selectedVectorId, "down"));
+                    }}
+                  />
+                </>
               )}
             </div>
           </div>
 
-          <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
-            <StagingPreview
+          <div className="flex min-h-0 flex-1 flex-col gap-2 p-4">
+            <ThemeStage
               scene={previewScene}
               displayOptions={previewDisplayOptions}
-              label="Theme preview"
-              forceThemeBackground
-              hideVectorLayers={editorMode === "vector"}
-            >
-              {editorMode === "vector" && (
-                <VectorEditorCanvas
-                  design={draft.vectorDesign}
-                  tool={vectorTool}
-                  selectedId={selectedVectorId}
-                  onSelect={setSelectedVectorId}
-                  onChange={patchVector}
-                />
-              )}
-              {editorMode === "vector" && (
-                <div className="absolute left-3 top-3 z-30 flex items-center gap-1 rounded-md bg-black/60 px-2 py-1 text-[10px] text-white">
-                  <PenTool className="h-3 w-3" />
-                  Vector edit mode · 1920×1080
-                </div>
-              )}
-              {!readable && previewTab !== "Lower Third" && (
-                <div className="absolute bottom-0 left-0 right-0 z-30 bg-amber-950/90 px-4 py-2 text-[11px] text-amber-200">
-                  Text contrast {ratio.toFixed(1)}:1 — below WCAG AA. Adjust colors or enable text shadow.
-                </div>
-              )}
-              <div className="pointer-events-none absolute right-3 top-3 text-[10px] text-[var(--color-subtle)]">
-                1920 × 1080 · 30 fps
-              </div>
-            </StagingPreview>
+              editing={editorMode === "vector"}
+              design={activeDesign}
+              tool={vectorTool}
+              selectedId={selectedVectorId}
+              onSelect={setSelectedVectorId}
+              onChange={patchVector}
+              safeMargins={activeCanvas.safeMargins}
+              canvasWidth={activeCanvas.width}
+              canvasHeight={activeCanvas.height}
+              outputLabel={outputModeDef(outputMode).label}
+              contrastRatio={ratio}
+              contrastWarn={!readable && effectivePreviewTab !== "Lower Third"}
+            />
             <p className="shrink-0 text-center text-[10px] text-[var(--color-subtle)]">
-              Live preview · 1920×1080 · {draft.fontSize}pt · {draft.fontFamily.split(",")[0]} · {ratio.toFixed(1)}:1
-              contrast {readable ? "✓" : "⚠"}
+              {outputModeDef(outputMode).label} · {activeCanvas.width}×{activeCanvas.height} ·{" "}
+              {draft.fontSize}pt · {draft.fontFamily.split(",")[0]} · {ratio.toFixed(1)}:1 contrast{" "}
+              {readable ? "✓" : "⚠"}
               {isDefault && " · Default theme"}
             </p>
           </div>
@@ -487,30 +594,51 @@ export function ThemeEditorPage() {
           {editorMode === "vector" ? (
             <>
               <div className="border-b border-[var(--color-border)] p-4">
+                <p className="section-label mb-1">Output mode</p>
+                <select
+                  value={outputMode}
+                  onChange={(e) => {
+                    setOutputMode(e.target.value as OutputMode);
+                    setSelectedVectorId(null);
+                  }}
+                  className="mb-3 h-8 w-full rounded-md border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 text-xs"
+                >
+                  {OUTPUT_MODES.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="mb-3 text-[10px] leading-relaxed text-[var(--color-subtle)]">
+                  {outputModeDef(outputMode).description}.
+                  {outputMode === PROJECTOR_MODE
+                    ? " Drives live program output."
+                    : " Saved with the theme for this output."}
+                </p>
                 <p className="section-label mb-2">Layers</p>
                 <VectorLayerList
-                  elements={draft.vectorDesign.elements}
+                  elements={activeDesign.elements}
                   selectedId={selectedVectorId}
                   onSelect={setSelectedVectorId}
                   onReorder={(id, dir) =>
-                    patchVector(reorderVectorElement(draft.vectorDesign, id, dir))
+                    patchVector(reorderVectorElement(activeDesign, id, dir))
                   }
                 />
               </div>
               <div className="p-4">
                 <VectorDesignPanel
-                  design={draft.vectorDesign}
+                  design={activeDesign}
                   selected={selectedVector}
                   accentColor={draft.accentColor}
                   onDesignChange={patchVector}
                   onElementChange={(id, elPatch) =>
-                    patchVector(updateVectorElement(draft.vectorDesign, id, elPatch))
+                    patchVector(updateVectorElement(activeDesign, id, elPatch))
                   }
                   onApplyTemplate={(templateId) => {
                     const built = applyVectorTemplate(templateId, draft.accentColor);
                     patchVector(
                       mergeVectorDesign({
-                        ...draft.vectorDesign,
+                        ...activeDesign,
                         ...built,
                         enabled: true,
                         elements: built.elements ?? [],

@@ -34,7 +34,8 @@ import {
   lowerThirdContentLayout,
   lowerThirdMaxFontSize,
 } from "@/lib/lowerThird";
-import { mediaUrl } from "@/lib/mediaUrl";
+import { LocalMediaImage } from "@/components/presentation/LocalMediaImage";
+import { VideoScenePlayer } from "@/components/presentation/VideoScenePlayer";
 import { WorshipLowerThirdBar, worshipTextStyle } from "@/components/presentation/WorshipLowerThirdBar";
 
 interface SceneRendererProps {
@@ -105,11 +106,19 @@ export function SceneRenderer({
     );
   }
 
-  if (scene.type === "image" && scene.content.imagePath) {
+  if (scene.type === "image") {
+    if (!scene.content.imagePath) {
+      return (
+        <div className={cn("flex h-full flex-col items-center justify-center gap-2 bg-black text-white/50", className)}>
+          <p className="text-xs font-medium tracking-wide">No image linked</p>
+          <p className="text-[10px] text-white/35">Import or pick an image for this cue</p>
+        </div>
+      );
+    }
     return (
       <div className={cn("relative h-full overflow-hidden bg-black", className)}>
-        <img
-          src={mediaUrl(scene.content.imagePath)}
+        <LocalMediaImage
+          path={scene.content.imagePath}
           alt={scene.content.title ?? "Image"}
           className="h-full w-full object-contain"
         />
@@ -122,23 +131,27 @@ export function SceneRenderer({
     );
   }
 
-  if (scene.type === "video" && scene.content.videoPath) {
+  if (scene.type === "video") {
+    if (!scene.content.videoPath) {
+      return (
+        <div className={cn("flex h-full flex-col items-center justify-center gap-2 bg-black text-white/50", className)}>
+          <p className="text-xs font-medium tracking-wide">No video linked</p>
+          <p className="text-[10px] text-white/35">Import or pick a video for this cue</p>
+        </div>
+      );
+    }
+    // Compact = operator monitors (master). Full output canvas = slave following transport.
+    const role = compact ? "master" : "slave";
     return (
-      <div className={cn("relative h-full overflow-hidden bg-black", className)}>
-        <video
-          src={mediaUrl(scene.content.videoPath)}
-          autoPlay
-          loop
-          muted
-          playsInline
-          className="h-full w-full object-contain"
-        />
-        {scene.content.title && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-4 pb-4 pt-10">
-            <p className="text-sm font-semibold text-white">{scene.content.title}</p>
-          </div>
-        )}
-      </div>
+      <VideoScenePlayer
+        path={scene.content.videoPath}
+        title={scene.content.title}
+        className={className}
+        role={role}
+        isProgram={!compact}
+        autoPlay
+        showTitle={Boolean(compact && scene.content.title)}
+      />
     );
   }
 

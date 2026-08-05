@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   Antenna,
@@ -62,49 +62,13 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
   );
 }
 
-export function NdiOutputPanel() {
-  const ndi = useNdiStore();
-  const [resolutionPreset, setResolutionPreset] = useState("1080p");
-  const [fpsPreset, setFpsPreset] = useState("30");
-  const [groupsText, setGroupsText] = useState(ndi.config.groups.join(", "));
-
-  useEffect(() => {
-    void ndi.loadConfig();
-    return () => ndi.stopPolling();
-  }, [ndi.loadConfig, ndi.stopPolling]);
-
-  useEffect(() => {
-    setGroupsText(ndi.config.groups.join(", "));
-  }, [ndi.config.groups]);
-
-  const status = ndi.status;
-  const running = status?.running ?? false;
-
-  const applyResolutionPreset = (presetId: string) => {
-    setResolutionPreset(presetId);
-    const preset = NDI_RESOLUTION_PRESETS.find((p) => p.id === presetId);
-    if (!preset || preset.id === "custom") return;
-    void ndi.saveConfig({ width: preset.width, height: preset.height });
-  };
-
-  const applyFpsPreset = (presetId: string) => {
-    setFpsPreset(presetId);
-    const preset = NDI_FPS_PRESETS.find((p) => p.id === presetId);
-    if (!preset) return;
-    void ndi.saveConfig({ fps: preset.fps, fpsDenominator: preset.fpsDenominator });
-  };
-
-  const saveGroups = () => {
-    const groups = groupsText
-      .split(",")
-      .map((g) => g.trim())
-      .filter(Boolean);
-    void ndi.saveConfig({ groups: groups.length > 0 ? groups : defaultNdiConfig().groups });
-  };
-
-  const patch = (partial: Partial<NdiOutputConfig>) => {
-    void ndi.saveConfig(partial);
-  };
+/**
+ * Live stats fed by the 1.5s NDI status poll. Isolated + memoized so the poll
+ * only re-renders these read-only cards, not the surrounding config controls
+ * and dropdowns (which would otherwise flicker while NDI is running).
+ */
+const NdiLiveStats = memo(function NdiLiveStats() {
+  const status = useNdiStore((s) => s.status);
 
   const uptimeLabel = useMemo(() => {
     if (!status?.uptimeMs) return "—";
@@ -114,101 +78,36 @@ export function NdiOutputPanel() {
     return min > 0 ? `${min}m ${rem}s` : `${sec}s`;
   }, [status?.uptimeMs]);
 
+  if (!status) return null;
+
   return (
-    <div className="panel space-y-5 p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="flex items-center gap-2 text-sm font-semibold">
-            <Antenna className="h-4 w-4 text-[var(--color-primary)]" />
-            NDI Output
-          </h2>
-          <p className="mt-1 max-w-2xl text-xs leading-relaxed text-[var(--color-subtle)]">
-            Broadcast program and preview feeds over NDI for OBS, vMix, ProPresenter, and hardware
-            switchers. Uses mDNS discovery, tally, metadata, and configurable frame rates.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {running ? (
-            <StatusBadge variant="live">● NDI LIVE</StatusBadge>
-          ) : (
-            <StatusBadge variant="draft">NDI Off</StatusBadge>
-          )}
-          {ndi.saving ? <StatusBadge variant="draft">Saving…</StatusBadge> : null}
-        </div>
-      </div>
-
-      {ndi.error ? (
-        <div className="rounded-lg border border-red-900/40 bg-red-950/30 px-3 py-2 text-xs text-red-200">
-          {ndi.error}
-        </div>
-      ) : null}
-
-      {status?.error ? (
+    <>
+      {status.error ? (
         <div className="rounded-lg border border-amber-900/40 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
           {status.error}
         </div>
       ) : null}
 
-      <div className="flex flex-wrap gap-2">
-        {!running ? (
-          <button
-            type="button"
-            onClick={() => void ndi.start()}
-            disabled={ndi.loading}
-            className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
-          >
-            Start NDI Output
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => void ndi.stop()}
-            className="rounded-lg border border-red-800/50 bg-red-950/30 px-4 py-2 text-xs font-semibold text-red-200"
-          >
-            Stop NDI Output
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={() => void ndi.refreshStatus()}
-          className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border-light)] px-3 py-2 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
-        >
-          <RefreshCw className="h-3.5 w-3.5" />
-          Refresh stats
-        </button>
-        <button
-          type="button"
-          onClick={() => void ndi.discoverSources()}
-          disabled={ndi.discovering}
-          className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border-light)] px-3 py-2 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] disabled:opacity-50"
-        >
-          <ScanSearch className="h-3.5 w-3.5" />
-          {ndi.discovering ? "Scanning…" : "Discover network sources"}
-        </button>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          label="Program connections"
+          value={String(status.program.connections)}
+          sub={status.program.sourceName || "—"}
+        />
+        <StatCard
+          label="Program FPS"
+          value={status.program.measuredFps.toFixed(1)}
+          sub={`${status.program.width}×${status.program.height}`}
+        />
+        <StatCard
+          label="Bitrate"
+          value={formatBitrate(status.program.bitrate)}
+          sub={`${status.program.videoFrames.toLocaleString()} video frames`}
+        />
+        <StatCard label="Uptime" value={uptimeLabel} sub={status.captureMode.replace("_", " ")} />
       </div>
 
-      {status ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard
-            label="Program connections"
-            value={String(status.program.connections)}
-            sub={status.program.sourceName || "—"}
-          />
-          <StatCard
-            label="Program FPS"
-            value={status.program.measuredFps.toFixed(1)}
-            sub={`${status.program.width}×${status.program.height}`}
-          />
-          <StatCard
-            label="Bitrate"
-            value={formatBitrate(status.program.bitrate)}
-            sub={`${status.program.videoFrames.toLocaleString()} video frames`}
-          />
-          <StatCard label="Uptime" value={uptimeLabel} sub={status.captureMode.replace("_", " ")} />
-        </div>
-      ) : null}
-
-      {status?.program.tallyProgram || status?.program.tallyPreview ? (
+      {status.program.tallyProgram || status.program.tallyPreview ? (
         <div className="flex flex-wrap gap-2 text-[10px]">
           {status.program.tallyProgram ? (
             <span className="rounded bg-red-900/50 px-2 py-1 font-semibold text-red-200">TALLY PROGRAM</span>
@@ -220,6 +119,141 @@ export function NdiOutputPanel() {
           ) : null}
         </div>
       ) : null}
+    </>
+  );
+});
+
+export function NdiOutputPanel({ embedded = false }: { embedded?: boolean } = {}) {
+  const config = useNdiStore((s) => s.config);
+  const discovered = useNdiStore((s) => s.discovered);
+  const loading = useNdiStore((s) => s.loading);
+  const saving = useNdiStore((s) => s.saving);
+  const discovering = useNdiStore((s) => s.discovering);
+  const error = useNdiStore((s) => s.error);
+  // Primitive selector — re-renders only when running toggles, not every poll.
+  const running = useNdiStore((s) => s.status?.running ?? false);
+  const loadConfig = useNdiStore((s) => s.loadConfig);
+  const stopPolling = useNdiStore((s) => s.stopPolling);
+  const saveConfig = useNdiStore((s) => s.saveConfig);
+  const start = useNdiStore((s) => s.start);
+  const stop = useNdiStore((s) => s.stop);
+  const refreshStatus = useNdiStore((s) => s.refreshStatus);
+  const discoverSources = useNdiStore((s) => s.discoverSources);
+
+  const [resolutionPreset, setResolutionPreset] = useState("1080p");
+  const [fpsPreset, setFpsPreset] = useState("30");
+  const [groupsText, setGroupsText] = useState(config.groups.join(", "));
+
+  useEffect(() => {
+    void loadConfig();
+    return () => stopPolling();
+  }, [loadConfig, stopPolling]);
+
+  useEffect(() => {
+    setGroupsText(config.groups.join(", "));
+  }, [config.groups]);
+
+  const applyResolutionPreset = (presetId: string) => {
+    setResolutionPreset(presetId);
+    const preset = NDI_RESOLUTION_PRESETS.find((p) => p.id === presetId);
+    if (!preset || preset.id === "custom") return;
+    void saveConfig({ width: preset.width, height: preset.height });
+  };
+
+  const applyFpsPreset = (presetId: string) => {
+    setFpsPreset(presetId);
+    const preset = NDI_FPS_PRESETS.find((p) => p.id === presetId);
+    if (!preset) return;
+    void saveConfig({ fps: preset.fps, fpsDenominator: preset.fpsDenominator });
+  };
+
+  const saveGroups = () => {
+    const groups = groupsText
+      .split(",")
+      .map((g) => g.trim())
+      .filter(Boolean);
+    void saveConfig({ groups: groups.length > 0 ? groups : defaultNdiConfig().groups });
+  };
+
+  const patch = (partial: Partial<NdiOutputConfig>) => {
+    void saveConfig(partial);
+  };
+
+  return (
+    <div className={embedded ? "space-y-5" : "panel space-y-5 p-5"}>
+      {embedded ? (
+        <p className="max-w-2xl text-xs leading-relaxed text-[var(--color-subtle)]">
+          Broadcast program and preview feeds over NDI for OBS, vMix, ProPresenter, and hardware
+          switchers. Uses mDNS discovery, tally, metadata, and configurable frame rates.
+        </p>
+      ) : (
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="flex items-center gap-2 text-sm font-semibold">
+              <Antenna className="h-4 w-4 text-[var(--color-primary)]" />
+              NDI Output
+            </h2>
+            <p className="mt-1 max-w-2xl text-xs leading-relaxed text-[var(--color-subtle)]">
+              Broadcast program and preview feeds over NDI for OBS, vMix, ProPresenter, and hardware
+              switchers. Uses mDNS discovery, tally, metadata, and configurable frame rates.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {running ? (
+              <StatusBadge variant="live">● NDI LIVE</StatusBadge>
+            ) : (
+              <StatusBadge variant="draft">NDI Off</StatusBadge>
+            )}
+            {saving ? <StatusBadge variant="draft">Saving…</StatusBadge> : null}
+          </div>
+        </div>
+      )}
+
+      {error ? (
+        <div className="rounded-lg border border-red-900/40 bg-red-950/30 px-3 py-2 text-xs text-red-200">
+          {error}
+        </div>
+      ) : null}
+
+      <div className="flex flex-wrap gap-2">
+        {!running ? (
+          <button
+            type="button"
+            onClick={() => void start()}
+            disabled={loading}
+            className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+          >
+            Start NDI Output
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => void stop()}
+            className="rounded-lg border border-red-800/50 bg-red-950/30 px-4 py-2 text-xs font-semibold text-red-200"
+          >
+            Stop NDI Output
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => void refreshStatus()}
+          className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border-light)] px-3 py-2 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+        >
+          <RefreshCw className="h-3.5 w-3.5" />
+          Refresh stats
+        </button>
+        <button
+          type="button"
+          onClick={() => void discoverSources()}
+          disabled={discovering}
+          className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border-light)] px-3 py-2 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] disabled:opacity-50"
+        >
+          <ScanSearch className="h-3.5 w-3.5" />
+          {discovering ? "Scanning…" : "Discover network sources"}
+        </button>
+      </div>
+
+      <NdiLiveStats />
 
       <div className="grid gap-5 lg:grid-cols-2">
         <section className="space-y-3">
@@ -229,19 +263,19 @@ export function NdiOutputPanel() {
           </p>
           <Field
             label="Program source name"
-            value={ndi.config.programSourceName}
+            value={config.programSourceName}
             onChange={(v) => patch({ programSourceName: v })}
           />
           <ToggleRow
             label="Enable preview NDI source"
             description="Separate NDI output for staged preview (director monitor)."
-            checked={ndi.config.enablePreviewOutput}
+            checked={config.enablePreviewOutput}
             onChange={(v) => patch({ enablePreviewOutput: v })}
           />
-          {ndi.config.enablePreviewOutput ? (
+          {config.enablePreviewOutput ? (
             <Field
               label="Preview source name"
-              value={ndi.config.previewSourceName}
+              value={config.previewSourceName}
               onChange={(v) => patch({ previewSourceName: v })}
             />
           ) : null}
@@ -286,24 +320,24 @@ export function NdiOutputPanel() {
             <div className="grid grid-cols-2 gap-2">
               <Field
                 label="Width"
-                value={String(ndi.config.width)}
+                value={String(config.width)}
                 onChange={(v) => patch({ width: Number(v) || 1920 })}
               />
               <Field
                 label="Height"
-                value={String(ndi.config.height)}
+                value={String(config.height)}
                 onChange={(v) => patch({ height: Number(v) || 1080 })}
               />
             </div>
           ) : (
             <p className="text-[10px] text-[var(--color-subtle)]">
-              Output: {ndi.config.width} × {ndi.config.height} @ {formatNdiFps(ndi.config)}
+              Output: {config.width} × {config.height} @ {formatNdiFps(config)}
             </p>
           )}
           <label className="block">
             <span className="text-[10px] text-[var(--color-subtle)]">Pixel format</span>
             <select
-              value={ndi.config.pixelFormat}
+              value={config.pixelFormat}
               onChange={(e) => patch({ pixelFormat: e.target.value as NdiOutputConfig["pixelFormat"] })}
               className="mt-1 h-8 w-full rounded-md border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 text-xs"
             >
@@ -327,16 +361,16 @@ export function NdiOutputPanel() {
             onBlur={saveGroups}
           />
           <div className="grid grid-cols-2 gap-2">
-            <Field
-              label="Port (0 = auto)"
-              value={String(ndi.config.port)}
-              onChange={(v) => patch({ port: Number(v) || 0 })}
-            />
-            <Field
-              label="Max connections"
-              value={String(ndi.config.maxConnections)}
-              onChange={(v) => patch({ maxConnections: Number(v) || 64 })}
-            />
+          <Field
+            label="Port (0 = auto)"
+            value={String(config.port)}
+            onChange={(v) => patch({ port: Number(v) || 0 })}
+          />
+          <Field
+            label="Max connections"
+            value={String(config.maxConnections)}
+            onChange={(v) => patch({ maxConnections: Number(v) || 64 })}
+          />
           </div>
         </section>
 
@@ -348,30 +382,30 @@ export function NdiOutputPanel() {
           <ToggleRow
             label="Include audio track"
             description="Sends a silent 48 kHz stereo audio stream (for receivers that require audio)."
-            checked={ndi.config.enableAudio}
+            checked={config.enableAudio}
             onChange={(v) => patch({ enableAudio: v })}
           />
           <ToggleRow
             label="Metadata stream"
             description="Product and frame metadata for advanced NDI workflows."
-            checked={ndi.config.enableMetadata}
+            checked={config.enableMetadata}
             onChange={(v) => patch({ enableMetadata: v })}
           />
           <ToggleRow
             label="Tally support"
             description="Reflect program/preview tally from connected receivers."
-            checked={ndi.config.enableTally}
+            checked={config.enableTally}
             onChange={(v) => patch({ enableTally: v })}
           />
           <ToggleRow
             label="PTZ passthrough"
             description="Accept PTZ commands from NDI receivers."
-            checked={ndi.config.enablePtz}
+            checked={config.enablePtz}
             onChange={(v) => patch({ enablePtz: v })}
           />
           <ToggleRow
             label="Bandwidth adaptation"
-            checked={ndi.config.enableBandwidthAdaptation}
+            checked={config.enableBandwidthAdaptation}
             onChange={(v) => patch({ enableBandwidthAdaptation: v })}
           />
         </section>
@@ -386,7 +420,7 @@ export function NdiOutputPanel() {
           <label className="block">
             <span className="text-[10px] text-[var(--color-subtle)]">Capture mode</span>
             <select
-              value={ndi.config.captureMode}
+              value={config.captureMode}
               onChange={(e) =>
                 patch({ captureMode: e.target.value as NdiOutputConfig["captureMode"] })
               }
@@ -398,7 +432,7 @@ export function NdiOutputPanel() {
           </label>
           <Field
             label="Metadata interval (ms)"
-            value={String(ndi.config.metadataIntervalMs)}
+            value={String(config.metadataIntervalMs)}
             onChange={(v) => patch({ metadataIntervalMs: Number(v) || 1000 })}
           />
         </div>
@@ -406,36 +440,36 @@ export function NdiOutputPanel() {
           <ToggleRow
             label="Auto-start on Go Live"
             description="Start NDI when you take program live."
-            checked={ndi.config.autoStartOnGoLive}
+            checked={config.autoStartOnGoLive}
             onChange={(v) => patch({ autoStartOnGoLive: v })}
           />
           <ToggleRow
             label="Auto-start on launch"
-            checked={ndi.config.autoStartOnLaunch}
+            checked={config.autoStartOnLaunch}
             onChange={(v) => patch({ autoStartOnLaunch: v })}
           />
           <ToggleRow
             label="Open projector when starting NDI"
-            checked={ndi.config.autoOpenOutputWhenStarting}
+            checked={config.autoOpenOutputWhenStarting}
             onChange={(v) => patch({ autoOpenOutputWhenStarting: v })}
           />
           <ToggleRow
             label="Test pattern when capture unavailable"
             description="Send a color bar pattern if the output window cannot be captured."
-            checked={ndi.config.showTestPatternWhenIdle}
+            checked={config.showTestPatternWhenIdle}
             onChange={(v) => patch({ showTestPatternWhenIdle: v })}
           />
         </div>
       </section>
 
-      {ndi.discovered.length > 0 ? (
+      {discovered.length > 0 ? (
         <section className="space-y-2">
           <p className="section-label flex items-center gap-1.5">
             <Signal className="h-3.5 w-3.5" />
-            Discovered on network ({ndi.discovered.length})
+            Discovered on network ({discovered.length})
           </p>
           <div className="max-h-48 overflow-y-auto rounded-lg border border-[var(--color-border-light)]">
-            {ndi.discovered.map((source) => (
+            {discovered.map((source) => (
               <div
                 key={source.id}
                 className="border-b border-[var(--color-border-light)]/60 px-3 py-2 last:border-0"

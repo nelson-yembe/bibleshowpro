@@ -1,4 +1,5 @@
 import { sceneFromServiceItem } from "@/engine/scene";
+import { sceneFromMediaRecord } from "@/lib/mediaLive";
 import { api, type ServiceItem, type ThemeConfig, type VerseResult } from "@/lib/tauri";
 import { buildSlidesFromSong, parseSongTheme } from "@/lib/songTypes";
 import { sceneFromLyricSlide } from "@/lib/songLive";
@@ -11,6 +12,10 @@ interface ServiceItemContent {
   body?: string;
   songId?: string;
   slideIndex?: number;
+  mediaId?: string;
+  filePath?: string;
+  imagePath?: string;
+  videoPath?: string;
 }
 
 export async function resolveServiceItemVerses(item: ServiceItem): Promise<VerseResult[] | null> {
@@ -31,7 +36,35 @@ export async function resolveServiceItemVerses(item: ServiceItem): Promise<Verse
   }
 }
 
+async function resolveLinkedMediaScene(item: ServiceItem, theme?: ThemeConfig) {
+  if (item.item_type !== "image" && item.item_type !== "video") return null;
+
+  const content = JSON.parse(item.content_json || "{}") as ServiceItemContent;
+
+  // Prefer live library record so preview uses the current on-disk path.
+  if (content.mediaId) {
+    try {
+      const media = await api.listMedia();
+      const linked = media.find((entry) => entry.id === content.mediaId);
+      if (linked?.file_path) {
+        return sceneFromMediaRecord(linked, theme);
+      }
+    } catch {
+      // fall through to embedded paths
+    }
+  }
+
+  const path = content.imagePath ?? content.videoPath ?? content.filePath;
+  if (path) {
+    return sceneFromServiceItem(item.item_type, item.title, item.content_json, theme);
+  }
+
+  return null;
+}
+
 export async function previewServiceItem(item: ServiceItem, theme?: ThemeConfig) {
+  if (item.item_type === "section") return;
+
   const store = usePresentationStore.getState();
 
   if (item.item_type === "song") {
@@ -48,6 +81,12 @@ export async function previewServiceItem(item: ServiceItem, theme?: ThemeConfig)
         return;
       }
     }
+  }
+
+  const mediaScene = await resolveLinkedMediaScene(item, theme);
+  if (mediaScene) {
+    store.previewScene(mediaScene, "service");
+    return;
   }
 
   const verses = await resolveServiceItemVerses(item);

@@ -3,7 +3,6 @@ use crate::bible::SearchOptions;
 use crate::db::lock_db;
 use crate::service;
 use crate::AppState;
-use rusqlite::params;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
@@ -246,21 +245,7 @@ pub fn list_themes(state: State<AppState>) -> Result<Vec<service::ThemeRecord>, 
 #[tauri::command]
 pub fn get_theme(state: State<AppState>, id: String) -> Result<service::ThemeRecord, String> {
     let db = lock_db(state.db.lock().map_err(|e| e.to_string())?);
-    db.with_conn(|conn| {
-        conn.query_row(
-            "SELECT id, name, config_json, is_default FROM themes WHERE id = ?1",
-            params![id],
-            |row| {
-                Ok(service::ThemeRecord {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    config_json: row.get(2)?,
-                    is_default: row.get::<_, i32>(3)? == 1,
-                })
-            },
-        )
-        .map_err(|e| e.to_string())
-    })
+    db.with_conn(|conn| service::get_theme(conn, &id))
 }
 
 #[tauri::command]
@@ -270,6 +255,9 @@ pub fn save_theme(
     name: String,
     config_json: String,
     is_default: Option<bool>,
+    description: Option<String>,
+    tags: Option<String>,
+    is_favorite: Option<bool>,
 ) -> Result<service::ThemeRecord, String> {
     let db = lock_db(state.db.lock().map_err(|e| e.to_string())?);
     db.with_conn(|conn| {
@@ -279,6 +267,9 @@ pub fn save_theme(
             &name,
             &config_json,
             is_default.unwrap_or(false),
+            description.as_deref(),
+            tags.as_deref(),
+            is_favorite,
         )
     })
 }
@@ -287,6 +278,62 @@ pub fn save_theme(
 pub fn delete_theme(state: State<AppState>, id: String) -> Result<(), String> {
     let db = lock_db(state.db.lock().map_err(|e| e.to_string())?);
     db.with_conn(|conn| service::delete_theme(conn, &id))
+}
+
+#[tauri::command]
+pub fn list_theme_versions(
+    state: State<AppState>,
+    theme_id: String,
+) -> Result<Vec<service::ThemeVersionRecord>, String> {
+    let db = lock_db(state.db.lock().map_err(|e| e.to_string())?);
+    db.with_conn(|conn| service::list_theme_versions(conn, &theme_id))
+}
+
+#[tauri::command]
+pub fn restore_theme_version(
+    state: State<AppState>,
+    theme_id: String,
+    version_number: i32,
+) -> Result<service::ThemeRecord, String> {
+    let db = lock_db(state.db.lock().map_err(|e| e.to_string())?);
+    db.with_conn(|conn| service::restore_theme_version(conn, &theme_id, version_number))
+}
+
+#[tauri::command]
+pub fn list_theme_assets(
+    state: State<AppState>,
+    theme_id: String,
+) -> Result<Vec<service::ThemeAssetRecord>, String> {
+    let db = lock_db(state.db.lock().map_err(|e| e.to_string())?);
+    db.with_conn(|conn| service::list_theme_assets(conn, &theme_id))
+}
+
+#[tauri::command]
+pub fn add_theme_asset(
+    state: State<AppState>,
+    theme_id: String,
+    asset_type: String,
+    file_path: String,
+    thumbnail_path: Option<String>,
+    metadata_json: Option<String>,
+) -> Result<service::ThemeAssetRecord, String> {
+    let db = lock_db(state.db.lock().map_err(|e| e.to_string())?);
+    db.with_conn(|conn| {
+        service::add_theme_asset(
+            conn,
+            &theme_id,
+            &asset_type,
+            &file_path,
+            thumbnail_path.as_deref(),
+            metadata_json.as_deref(),
+        )
+    })
+}
+
+#[tauri::command]
+pub fn delete_theme_asset(state: State<AppState>, id: String) -> Result<(), String> {
+    let db = lock_db(state.db.lock().map_err(|e| e.to_string())?);
+    db.with_conn(|conn| service::delete_theme_asset(conn, &id))
 }
 
 #[tauri::command]
@@ -318,6 +365,92 @@ pub fn import_media_files(
         .map_err(|e| e.to_string())?;
     let db = lock_db(state.db.lock().map_err(|e| e.to_string())?);
     db.with_conn(|conn| service::import_media_files(conn, &paths, &app_data_dir))
+}
+
+/// Read an image under the app media library as a data URL for reliable webview preview.
+#[tauri::command]
+pub fn read_media_data_url(app: tauri::AppHandle, path: String) -> Result<String, String> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    use std::path::{Component, Path, PathBuf};
+
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let media_root = app_data_dir.join("media");
+    let media_root = media_root
+        .canonicalize()
+        .unwrap_or(media_root);
+
+    let requested = PathBuf::from(&path);
+    let canonical = requested
+        .canonicalize()
+        .map_err(|e| format!("File not found: {path} ({e})"))?;
+
+    if !canonical.starts_with(&media_root) {
+        return Err("Preview path is outside the media library".into());
+    }
+
+    // Reject path traversal leftovers after canonicalize (defensive).
+    if canonical.components().any(|c| matches!(c, Component::ParentDir)) {
+        return Err("Invalid media path".into());
+    }
+
+    let meta = std::fs::metadata(&canonical).map_err(|e| e.to_string())?;
+    if meta.len() > 16 * 1024 * 1024 {
+        return Err("File too large for inline preview".into());
+    }
+
+    let ext = Path::new(&canonical)
+        .extension()
+        .and_then(|v| v.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let mime = match ext.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "mov" => "video/quicktime",
+        _ => return Err(format!("Unsupported preview type: .{ext}")),
+    };
+
+    let bytes = std::fs::read(&canonical).map_err(|e| e.to_string())?;
+    Ok(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
+}
+
+#[tauri::command]
+pub fn ensure_video_thumbnail(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    id: String,
+) -> Result<service::MediaRecord, String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let db = lock_db(state.db.lock().map_err(|e| e.to_string())?);
+    db.with_conn(|conn| service::ensure_video_thumbnail(conn, &id, &app_data_dir))
+}
+
+#[tauri::command]
+pub fn backfill_video_thumbnails(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+) -> Result<Vec<service::MediaRecord>, String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let db = lock_db(state.db.lock().map_err(|e| e.to_string())?);
+    db.with_conn(|conn| service::backfill_video_thumbnails(conn, &app_data_dir))
+}
+
+#[tauri::command]
+pub fn save_media_thumbnail_jpeg(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    id: String,
+    jpeg_base64: String,
+) -> Result<service::MediaRecord, String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let db = lock_db(state.db.lock().map_err(|e| e.to_string())?);
+    db.with_conn(|conn| service::save_media_thumbnail_jpeg(conn, &id, &jpeg_base64, &app_data_dir))
 }
 
 #[tauri::command]

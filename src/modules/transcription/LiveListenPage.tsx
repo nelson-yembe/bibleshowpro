@@ -7,8 +7,10 @@ import { TopBar } from "@/components/layout/TopBar";
 import { cn } from "@/lib/utils";
 import { exportScriptureList, exportTranscriptText } from "@/lib/transcription/referenceDetect";
 import { formatTranscriptProse } from "@/lib/transcription/transcriptFormat";
-import { formatElapsed, TRANSCRIPTION_MODELS, type ConfidenceLevel } from "@/lib/transcription/types";
+import { TRANSCRIPTION_MODELS, type ConfidenceLevel } from "@/lib/transcription/types";
 import { useTranscriptionStore } from "@/stores/transcriptionStore";
+import { TranscriptionAudioMeter } from "@/modules/transcription/TranscriptionAudioMeter";
+import { TranscriptionElapsed } from "@/modules/transcription/TranscriptionElapsed";
 import { canStepVerse } from "@/lib/transcription/verseSession";
 import { useLiveNavigationStore } from "@/stores/liveNavigationStore";
 import { useBibleStore } from "@/stores/bibleStore";
@@ -24,7 +26,7 @@ import {
   Wifi,
   WifiOff,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const statusLabels = {
   idle: "Not listening",
@@ -36,64 +38,63 @@ const statusLabels = {
   unavailable: "Unavailable",
 } as const;
 
+/** Stay pinned to the live line unless the user scrolls up to read history. */
+const TRANSCRIPT_STICK_THRESHOLD_PX = 80;
+
 export function LiveListenPage() {
   const [transcriptSearch, setTranscriptSearch] = useState("");
   const [manualReference, setManualReference] = useState("");
   const [saveTitle, setSaveTitle] = useState("");
   const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const transcriptScrollRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
 
-  const bible = useBibleStore();
-  const {
-    status,
-    partialText,
-    segments,
-    suggestions,
-    selectedSuggestionId,
-    modelId,
-    models,
-    audioDevices,
-    audioDeviceId,
-    audioDeviceLabel,
-    audioLevel,
-    audioWarning,
-    preflightStatus,
-    preflightMessage,
-    paraphraseEnabled,
-    minConfidence,
-    lastScanAt,
-    scanning,
-    elapsedMs,
-    error,
-    saving,
-    init,
-    refreshAudioDevices,
-    preflightAudio,
-    setModelId,
-    setAudioDeviceId,
-    setParaphraseEnabled,
-    setMinConfidence,
-    setSelectedSuggestion,
-    startListening,
-    pauseListening,
-    resumeListening,
-    stopListening,
-    rescanTranscript,
-    lookupManualReference,
-    saveSession,
-    discardSession,
-    tickElapsed,
-    stepActiveVerse,
-    verseSession,
-  } = useTranscriptionStore();
+  const translations = useBibleStore((s) => s.translations);
+  const selectedTranslationId = useBibleStore((s) => s.selectedTranslationId);
+
+  // Per-field selectors — avoid subscribing to the whole store, which is written
+  // to at ~60fps (audioLevel) and on every partial result while listening.
+  const status = useTranscriptionStore((s) => s.status);
+  const partialText = useTranscriptionStore((s) => s.partialText);
+  const segments = useTranscriptionStore((s) => s.segments);
+  const suggestions = useTranscriptionStore((s) => s.suggestions);
+  const selectedSuggestionId = useTranscriptionStore((s) => s.selectedSuggestionId);
+  const modelId = useTranscriptionStore((s) => s.modelId);
+  const models = useTranscriptionStore((s) => s.models);
+  const audioDevices = useTranscriptionStore((s) => s.audioDevices);
+  const audioDeviceId = useTranscriptionStore((s) => s.audioDeviceId);
+  const audioDeviceLabel = useTranscriptionStore((s) => s.audioDeviceLabel);
+  const audioWarning = useTranscriptionStore((s) => s.audioWarning);
+  const preflightStatus = useTranscriptionStore((s) => s.preflightStatus);
+  const preflightMessage = useTranscriptionStore((s) => s.preflightMessage);
+  const paraphraseEnabled = useTranscriptionStore((s) => s.paraphraseEnabled);
+  const minConfidence = useTranscriptionStore((s) => s.minConfidence);
+  const lastScanAt = useTranscriptionStore((s) => s.lastScanAt);
+  const scanning = useTranscriptionStore((s) => s.scanning);
+  const error = useTranscriptionStore((s) => s.error);
+  const saving = useTranscriptionStore((s) => s.saving);
+  const init = useTranscriptionStore((s) => s.init);
+  const refreshAudioDevices = useTranscriptionStore((s) => s.refreshAudioDevices);
+  const preflightAudio = useTranscriptionStore((s) => s.preflightAudio);
+  const setModelId = useTranscriptionStore((s) => s.setModelId);
+  const setAudioDeviceId = useTranscriptionStore((s) => s.setAudioDeviceId);
+  const setParaphraseEnabled = useTranscriptionStore((s) => s.setParaphraseEnabled);
+  const setMinConfidence = useTranscriptionStore((s) => s.setMinConfidence);
+  const setSelectedSuggestion = useTranscriptionStore((s) => s.setSelectedSuggestion);
+  const startListening = useTranscriptionStore((s) => s.startListening);
+  const pauseListening = useTranscriptionStore((s) => s.pauseListening);
+  const resumeListening = useTranscriptionStore((s) => s.resumeListening);
+  const stopListening = useTranscriptionStore((s) => s.stopListening);
+  const rescanTranscript = useTranscriptionStore((s) => s.rescanTranscript);
+  const lookupManualReference = useTranscriptionStore((s) => s.lookupManualReference);
+  const saveSession = useTranscriptionStore((s) => s.saveSession);
+  const discardSession = useTranscriptionStore((s) => s.discardSession);
+  const stepActiveVerse = useTranscriptionStore((s) => s.stepActiveVerse);
+  const verseSession = useTranscriptionStore((s) => s.verseSession);
 
   useEffect(() => {
     void init();
   }, [init]);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => tickElapsed(), 1000);
-    return () => window.clearInterval(timer);
-  }, [tickElapsed]);
 
   const model = models.find((m) => m.id === modelId) ?? models[0];
   const activeSuggestions = suggestions.filter((s) => s.status !== "ignored");
@@ -120,7 +121,22 @@ export function LiveListenPage() {
     return transcriptProse.toLowerCase().includes(q) ? transcriptProse : "";
   }, [transcriptProse, transcriptSearch]);
 
+  // Keep the live line in view: older text scrolls up as new speech arrives.
+  useEffect(() => {
+    const el = transcriptScrollRef.current;
+    if (!el || !stickToBottomRef.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [transcriptProse, filteredProse]);
+
+  const handleTranscriptScroll = () => {
+    const el = transcriptScrollRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickToBottomRef.current = distanceFromBottom <= TRANSCRIPT_STICK_THRESHOLD_PX;
+  };
+
   const handleStart = () => {
+    stickToBottomRef.current = true;
     if (status === "paused") {
       void resumeListening();
       return;
@@ -181,11 +197,7 @@ export function LiveListenPage() {
               {isListening ? "● " : ""}
               {statusLabels[status] ?? status}
             </span>
-            {elapsedMs > 0 && (
-              <span className="text-[11px] tabular-nums text-[var(--color-muted-foreground)]">
-                {formatElapsed(elapsedMs)}
-              </span>
-            )}
+            <TranscriptionElapsed />
             {lastScanAt && (
               <span className="text-[10px] text-[var(--color-subtle)]">Scan {lastScanAt}</span>
             )}
@@ -244,17 +256,9 @@ export function LiveListenPage() {
               Input: {activeInputLabel}
             </p>
           </div>
-          <div className="hidden h-2 w-24 overflow-hidden rounded-full bg-black/40 sm:block" title="Input level">
-            <div
-              className={cn(
-                "h-full transition-all duration-75",
-                audioLevel > 0.9 ? "bg-red-500" : audioLevel > 0.02 ? "bg-emerald-500" : "bg-[var(--color-subtle)]",
-              )}
-              style={{ width: `${Math.round(audioLevel * 100)}%` }}
-            />
-          </div>
+          <TranscriptionAudioMeter />
           <span className="text-[10px] text-[var(--color-subtle)]">
-            {bible.translations.find((t) => t.id === bible.selectedTranslationId)?.abbreviation ?? "Bible"}
+            {translations.find((t) => t.id === selectedTranslationId)?.abbreviation ?? "Bible"}
           </span>
         </div>
       </div>
@@ -275,7 +279,11 @@ export function LiveListenPage() {
                 />
               </div>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+            <div
+              ref={transcriptScrollRef}
+              onScroll={handleTranscriptScroll}
+              className="min-h-0 flex-1 overflow-y-auto p-4"
+            >
               {!transcriptProse && !isListening && (
                 <p className="text-[12px] leading-relaxed text-[var(--color-subtle)]">
                   Transcript appears here as continuous sentences. Say a reference like “Romans 8 28”, or read the

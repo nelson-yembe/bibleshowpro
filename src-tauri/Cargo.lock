@@ -334,6 +334,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 name = "bible-show-pro"
 version = "1.2.0"
 dependencies = [
+ "base64 0.22.1",
  "bytes",
  "chrono",
  "image",
@@ -1835,6 +1836,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "http-range"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21dec9db110f5f872ed9699c3ecf50cf16f423502706ba5c72462e28d3157573"
+
+[[package]]
 name = "httparse"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2987,8 +2994,6 @@ dependencies = [
 [[package]]
 name = "oximedia-ndi"
 version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c388a5beb51388d2708f7a3fd53003f22234928350ae04cedb393612c12ff7e0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4443,6 +4448,7 @@ dependencies = [
  "gtk",
  "heck 0.5.0",
  "http",
+ "http-range",
  "jni",
  "libc",
  "log",
