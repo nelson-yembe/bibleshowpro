@@ -2,6 +2,7 @@ import { mergeThemeConfig, DEFAULT_THEME, type ThemeConfig } from "@/lib/themeCo
 import type { VerseResult } from "@/lib/tauri";
 import { resolveVerseLayout, themeForLowerThirdLayout } from "@/lib/lowerThird";
 import type { ServiceItemContent } from "@/lib/serviceItemContent";
+import { formatCountdownTime, mergeCountdownConfig } from "@/lib/countdownConfig";
 
 export { DEFAULT_THEME };
 
@@ -30,6 +31,23 @@ export interface SceneContent {
   imagePath?: string;
   videoPath?: string;
   countdownSeconds?: number;
+  warningSeconds?: number;
+  criticalSeconds?: number;
+  endBehavior?: "hold" | "flash" | "blackout" | "next" | "logo";
+  style?: "ring" | "bar" | "minimal";
+  colors?: {
+    normal?: string;
+    warning?: string;
+    critical?: string;
+    track?: string;
+    title?: string;
+  };
+  showProgress?: boolean;
+  showTitle?: boolean;
+  flashOnCritical?: boolean;
+  displayScale?: number;
+  showClockAfterZero?: boolean;
+  countdownStartedAt?: number;
   speakerName?: string;
   speakerTitle?: string;
   layout?: "fullscreen" | "lower_third";
@@ -194,6 +212,32 @@ export function sceneFromServiceItem(itemType: string, title: string, contentJso
     : content.reference;
 
   const mergedTheme = isSpeakerLowerThird ? themeForLowerThirdLayout(theme, "lower_third") : theme;
+
+  if (sceneType === "countdown") {
+    const countdown = mergeCountdownConfig(content);
+    return {
+      id: crypto.randomUUID(),
+      type: "countdown",
+      content: {
+        title,
+        body: formatCountdownTime(countdown.countdownSeconds),
+        countdownSeconds: countdown.countdownSeconds,
+        warningSeconds: countdown.warningSeconds,
+        criticalSeconds: countdown.criticalSeconds,
+        endBehavior: countdown.endBehavior,
+        style: countdown.style,
+        colors: countdown.colors,
+        showProgress: countdown.showProgress,
+        showTitle: countdown.showTitle,
+        flashOnCritical: countdown.flashOnCritical,
+        displayScale: countdown.displayScale,
+        showClockAfterZero: countdown.showClockAfterZero,
+        countdownStartedAt: content.countdownStartedAt,
+      },
+      theme: mergedTheme,
+      transition: "fade",
+    };
+  }
 
   return {
     id: crypto.randomUUID(),

@@ -256,6 +256,20 @@ textarea {
   }
 }
 
+@keyframes bsp-countdown-pulse {
+  0%,
+  100% {
+    filter: brightness(1) drop-shadow(0 0 0 transparent);
+  }
+  50% {
+    filter: brightness(1.25) drop-shadow(0 0 22px currentColor);
+  }
+}
+
+.bsp-countdown-flash {
+  animation: bsp-countdown-pulse 0.9s ease-in-out infinite;
+}
+
 .lower-third-enter-slide {
   animation: lower-third-slide-up 0.38s cubic-bezier(0.22, 1, 0.36, 1) both;
 }

@@ -35,6 +35,7 @@ import {
   lowerThirdMaxFontSize,
 } from "@/lib/lowerThird";
 import { LocalMediaImage } from "@/components/presentation/LocalMediaImage";
+import { CountdownDisplay } from "@/components/presentation/CountdownDisplay";
 import { mediaUrl } from "@/lib/mediaUrl";
 import { VideoScenePlayer } from "@/components/presentation/VideoScenePlayer";
 import { WorshipLowerThirdBar, worshipTextStyle } from "@/components/presentation/WorshipLowerThirdBar";
@@ -52,6 +53,8 @@ interface SceneRendererProps {
   forceThemeBackground?: boolean;
   /** Hide vector overlays (theme editor draws them interactively) */
   hideVectorLayers?: boolean;
+  /** Live dock only — allows countdown end behaviors to mutate presentation state. */
+  programSurface?: boolean;
 }
 
 export function SceneRenderer({
@@ -64,6 +67,7 @@ export function SceneRenderer({
   themeOverride,
   forceThemeBackground = false,
   hideVectorLayers = false,
+  programSurface = false,
 }: SceneRendererProps) {
   const rawTheme = mergeThemeConfig({ ...(scene?.theme ?? DEFAULT_THEME), ...themeOverride });
   // Scene-baked overlays reach the projector; prop displayOptions override for operator monitors.
@@ -373,9 +377,25 @@ export function SceneRenderer({
       ) : (
         <div className={cn("relative z-10 flex h-full min-h-0 w-full flex-col", alignClass)}>
           {scene.type === "countdown" ? (
-            <p className="font-bold tabular-nums" style={{ fontSize: fontSize * 1.5 }}>
-              {scene.content.body ?? "00:00"}
-            </p>
+            <CountdownDisplay
+              title={scene.content.title}
+              config={{
+                countdownSeconds: scene.content.countdownSeconds,
+                warningSeconds: scene.content.warningSeconds,
+                criticalSeconds: scene.content.criticalSeconds,
+                endBehavior: scene.content.endBehavior,
+                style: scene.content.style,
+                colors: scene.content.colors,
+                showProgress: scene.content.showProgress,
+                showTitle: scene.content.showTitle,
+                flashOnCritical: scene.content.flashOnCritical,
+                displayScale: scene.content.displayScale,
+                showClockAfterZero: scene.content.showClockAfterZero,
+                countdownStartedAt: scene.content.countdownStartedAt,
+              }}
+              compact={compact}
+              isProgram={programSurface && Boolean(scene.content.countdownStartedAt)}
+            />
           ) : scene.type === "song_lyrics" || scene.type === "announcement" ? (
             <ContentBlock
               scene={scene}

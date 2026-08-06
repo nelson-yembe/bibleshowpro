@@ -157,7 +157,7 @@ export function LiveControlsPanel({ displayOptions }: LiveControlsPanelProps) {
             {previewSource ? ` · ${sourceLabels[previewSource]}` : ""}
           </p>
           <div className="h-[200px]">
-            <SceneRenderer scene={program} compact displayOptions={displayOptions} label="Logo / standby" />
+            <SceneRenderer scene={program} compact programSurface displayOptions={displayOptions} label="Logo / standby" />
           </div>
           <p className="truncate px-2 py-1.5 text-[10px] text-[var(--color-muted-foreground)]">{programLabel}</p>
         </div>

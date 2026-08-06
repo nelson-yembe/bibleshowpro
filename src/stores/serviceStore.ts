@@ -30,7 +30,7 @@ interface ServiceState {
   loadPlans: () => Promise<void>;
   ensureActivePlan: (title?: string) => Promise<ServicePlanDetail>;
   selectPlan: (id: string) => Promise<void>;
-  selectItem: (id: string, options?: { preview?: boolean }) => Promise<void>;
+  selectItem: (id: string, options?: { preview?: boolean; takeLive?: boolean }) => Promise<void>;
   createPlan: (title: string) => Promise<void>;
   createPlanFromTemplate: (templateId: string) => Promise<void>;
   duplicatePlan: (id: string) => Promise<void>;
@@ -149,7 +149,7 @@ export const useServiceStore = create<ServiceState>((set, get) => ({
     set({ activePlan, activeItemId, dirty: false });
   },
 
-  selectItem: async (id, options = { preview: true }) => {
+  selectItem: async (id, options = {}) => {
     const plan = get().activePlan;
     if (!plan) return;
 
@@ -159,11 +159,12 @@ export const useServiceStore = create<ServiceState>((set, get) => ({
     saveContext(plan.id, id);
     set({ activeItemId: id });
 
+    // Selecting a cue for editing only stages preview — never auto-takes program.
+    // Live advancement passes takeLive (e.g. next/prev while already on air).
     if (options.preview === false) return;
     if (!isPresentableServiceItem(item)) return;
 
-    const liveFollow = usePresentationStore.getState().liveFollow;
-    if (liveFollow) {
+    if (options.takeLive) {
       await presentServiceItem(item, activeTheme());
     } else {
       await previewServiceItem(item, activeTheme());
@@ -330,7 +331,8 @@ export const useServiceStore = create<ServiceState>((set, get) => ({
     const index = activePlan.items.findIndex((item) => item.id === activeItemId);
     const nextIndex = neighborPresentableIndex(activePlan.items, index, 1);
     if (nextIndex >= 0 && activePlan.items[nextIndex]) {
-      await get().selectItem(activePlan.items[nextIndex]!.id);
+      const takeLive = usePresentationStore.getState().liveFollow;
+      await get().selectItem(activePlan.items[nextIndex]!.id, { takeLive });
     }
   },
 
@@ -341,7 +343,8 @@ export const useServiceStore = create<ServiceState>((set, get) => ({
     const index = activePlan.items.findIndex((item) => item.id === activeItemId);
     const prevIndex = neighborPresentableIndex(activePlan.items, index, -1);
     if (prevIndex >= 0 && activePlan.items[prevIndex]) {
-      await get().selectItem(activePlan.items[prevIndex]!.id);
+      const takeLive = usePresentationStore.getState().liveFollow;
+      await get().selectItem(activePlan.items[prevIndex]!.id, { takeLive });
     }
   },
 

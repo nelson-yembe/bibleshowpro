@@ -263,12 +263,29 @@ export const usePresentationStore = create<PresentationState>((set, get) => ({
     await refreshPreviewBeforeGoLive(get().previewSource);
 
     let state = get();
-    const staged = resolveStagedScene(state.preview, state.program);
+    let staged = resolveStagedScene(state.preview, state.program);
     if (!staged || isPlaceholderScene(staged)) {
       return;
     }
 
-    const next = state.preview ? takeProgram(state) : { ...state, program: staged };
+    // Countdown clocks start when they hit program — stamp wall-clock start if missing.
+    if (staged.type === "countdown" && !staged.content.countdownStartedAt) {
+      staged = {
+        ...staged,
+        id: crypto.randomUUID(),
+        content: {
+          ...staged.content,
+          countdownStartedAt: Date.now(),
+        },
+      };
+      state = {
+        ...state,
+        preview: staged,
+      };
+      set({ preview: staged });
+    }
+
+    const next = state.preview ? takeProgram({ ...get(), preview: staged }) : { ...get(), program: staged };
     const live = { ...next, liveFollow: true };
     set(live);
     persistSnapshot(live);

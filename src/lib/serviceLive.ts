@@ -41,7 +41,6 @@ async function resolveLinkedMediaScene(item: ServiceItem, theme?: ThemeConfig) {
 
   const content = JSON.parse(item.content_json || "{}") as ServiceItemContent;
 
-  // Prefer live library record so preview uses the current on-disk path.
   if (content.mediaId) {
     try {
       const media = await api.listMedia();
@@ -50,7 +49,7 @@ async function resolveLinkedMediaScene(item: ServiceItem, theme?: ThemeConfig) {
         return sceneFromMediaRecord(linked, theme);
       }
     } catch {
-      // fall through to embedded paths
+      // fall through
     }
   }
 
@@ -62,10 +61,24 @@ async function resolveLinkedMediaScene(item: ServiceItem, theme?: ThemeConfig) {
   return null;
 }
 
+function countdownScene(item: ServiceItem, theme?: ThemeConfig, start = false) {
+  const parsed = JSON.parse(item.content_json || "{}") as Record<string, unknown>;
+  const contentJson = JSON.stringify({
+    ...parsed,
+    countdownStartedAt: start ? Date.now() : undefined,
+  });
+  return sceneFromServiceItem(item.item_type, item.title, contentJson, theme);
+}
+
 export async function previewServiceItem(item: ServiceItem, theme?: ThemeConfig) {
   if (item.item_type === "section") return;
 
   const store = usePresentationStore.getState();
+
+  if (item.item_type === "countdown") {
+    store.previewScene(countdownScene(item, theme, false), "service");
+    return;
+  }
 
   if (item.item_type === "song") {
     const content = JSON.parse(item.content_json || "{}") as ServiceItemContent;
@@ -103,6 +116,13 @@ export async function previewServiceItem(item: ServiceItem, theme?: ThemeConfig)
 }
 
 export async function presentServiceItem(item: ServiceItem, theme?: ThemeConfig) {
+  if (item.item_type === "countdown") {
+    const store = usePresentationStore.getState();
+    store.previewScene(countdownScene(item, theme, true), "service");
+    await store.goLive();
+    return;
+  }
+
   await previewServiceItem(item, theme);
   await usePresentationStore.getState().goLive();
 }
