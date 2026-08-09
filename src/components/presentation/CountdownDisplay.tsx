@@ -6,6 +6,7 @@ import {
   formatWallClock,
   mergeCountdownConfig,
   remainingFromStart,
+  type CountdownColors,
   type CountdownConfig,
   type CountdownPhase,
 } from "@/lib/countdownConfig";
@@ -13,9 +14,13 @@ import { cn } from "@/lib/utils";
 import { usePresentationStore } from "@/stores/presentationStore";
 import { useServiceStore } from "@/stores/serviceStore";
 
+type CountdownDisplayConfig = Omit<Partial<CountdownConfig>, "colors"> & {
+  colors?: Partial<CountdownColors>;
+};
+
 interface CountdownDisplayProps {
   title?: string;
-  config: Partial<CountdownConfig>;
+  config: CountdownDisplayConfig;
   /** Full projection vs operator monitor. */
   compact?: boolean;
   /** When true, this surface is the live program and may run end behaviors. */

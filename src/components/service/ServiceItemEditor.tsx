@@ -1,33 +1,3 @@
-import { useEffect, useState } from "react";
-import { Music, Image, Video } from "lucide-react";
-import type { ServiceItem } from "@/lib/tauri";
-import { api } from "@/lib/tauri";
-import {
-  parseServiceItemContent,
-  stringifyServiceItemContent,
-  type ServiceItemContent,
-} from "@/lib/serviceItemContent";
-import {
-  COUNTDOWN_DURATION_PRESETS,
-  COUNTDOWN_END_BEHAVIOR_OPTIONS,
-  COUNTDOWN_SIZE_PRESETS,
-  COUNTDOWN_STYLE_OPTIONS,
-  DEFAULT_COUNTDOWN_COLORS,
-  combineCountdownParts,
-  formatCountdownTime,
-  mergeCountdownConfig,
-  splitCountdownSeconds,
-  type CountdownEndBehavior,
-} from "@/lib/countdownConfig";
-import { cn } from "@/lib/utils";
-import { useServiceStore } from "@/stores/serviceStore";
-
-interface ServiceItemEditorProps {
-  item: ServiceItem;
-  onPickSong: () => void;
-  onPickMedia: (type: "video" | "image") => void;
-}
-
 import { useEffect, useMemo, useState } from "react";
 import { Image, Music, Save, Video } from "lucide-react";
 import type { ServiceItem } from "@/lib/tauri";
@@ -229,14 +199,11 @@ export function ServiceItemEditor({ item, onPickSong, onPickMedia }: ServiceItem
                   key={preset.seconds}
                   type="button"
                   onClick={() =>
-                    patchContent(
-                      {
-                        countdownSeconds: preset.seconds,
-                        warningSeconds: Math.min(countdown.warningSeconds, preset.seconds),
-                        criticalSeconds: Math.min(countdown.criticalSeconds, preset.seconds),
-                      },
-                      true,
-                    )
+                    patchContent({
+                      countdownSeconds: preset.seconds,
+                      warningSeconds: Math.min(countdown.warningSeconds, preset.seconds),
+                      criticalSeconds: Math.min(countdown.criticalSeconds, preset.seconds),
+                    })
                   }
                   className={cn(
                     "rounded-md border px-2.5 py-1 text-[11px] font-medium",
