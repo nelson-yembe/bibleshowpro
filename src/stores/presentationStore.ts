@@ -27,6 +27,10 @@ import {
   type Scene,
   type VerseLayout,
 } from "@/engine/scene";
+import {
+  resolveCountdownRemaining,
+  startedAtForRemaining,
+} from "@/lib/countdownConfig";
 import type { ServiceItem, ThemeConfig, VerseResult, DisplayInfo } from "@/lib/tauri";
 import { api } from "@/lib/tauri";
 import { syncNdiPreview, useNdiStore } from "@/stores/ndiStore";
@@ -58,6 +62,12 @@ interface PresentationState extends PresentationSnapshot {
   /** Push a scene to program output and broadcast (when already live). */
   pushSceneLive: (scene: Scene, source?: PreviewSource) => void;
   goLive: () => Promise<void>;
+  /** Pause a live countdown at the current remaining time. */
+  stopCountdown: () => void;
+  /** Reset countdown to its full configured duration (ready / not running). */
+  resetCountdown: () => void;
+  /** Resume a paused countdown on program (or start from ready). */
+  resumeCountdown: () => Promise<void>;
   enqueue: (scene: Scene) => void;
   undo: () => void;
   clear: () => void;
@@ -132,6 +142,29 @@ export function isPresentationOnAir(state: {
 
 function isOnAir(state: PresentationState): boolean {
   return isPresentationOnAir(state);
+}
+
+function applyCountdownScene(scene: Scene, source: PreviewSource) {
+  const state = usePresentationStore.getState();
+  const onProgram = state.program?.type === "countdown" && state.liveFollow;
+  const next: PresentationSnapshot = {
+    preview: scene,
+    program: onProgram ? scene : state.program,
+    queue: state.queue,
+    history: onProgram && state.program ? [state.program, ...state.history].slice(0, 20) : state.history,
+    frozen: state.frozen,
+  };
+  persistSnapshot(next);
+  usePresentationStore.setState({
+    ...next,
+    previewSource: source ?? state.previewSource,
+    liveFollow: onProgram ? true : state.liveFollow,
+  });
+  if (onProgram) {
+    void syncOutputReliable({ ...next, liveFollow: true });
+  } else {
+    syncNdiPreview(scene);
+  }
 }
 
 async function ensureOutputOpen() {
@@ -268,14 +301,19 @@ export const usePresentationStore = create<PresentationState>((set, get) => ({
       return;
     }
 
-    // Countdown clocks start when they hit program — stamp wall-clock start if missing.
+    // Countdown clocks start (or resume from pause) when they hit program.
     if (staged.type === "countdown" && !staged.content.countdownStartedAt) {
+      const total = staged.content.countdownSeconds ?? 0;
+      const paused = staged.content.countdownPausedRemaining;
+      const remaining =
+        typeof paused === "number" ? Math.max(0, Math.floor(paused)) : total;
       staged = {
         ...staged,
         id: crypto.randomUUID(),
         content: {
           ...staged.content,
-          countdownStartedAt: Date.now(),
+          countdownStartedAt: startedAtForRemaining(total, remaining),
+          countdownPausedRemaining: undefined,
         },
       };
       state = {
@@ -296,6 +334,86 @@ export const usePresentationStore = create<PresentationState>((set, get) => ({
     }
     void syncKeepAwake(true);
     void useNdiStore.getState().maybeAutoStartOnGoLive();
+  },
+
+  stopCountdown: () => {
+    const state = get();
+    const scene = resolveStagedScene(state.preview, state.program);
+    if (!scene || scene.type !== "countdown" || !scene.content.countdownStartedAt) return;
+
+    const remaining = resolveCountdownRemaining(
+      {
+        countdownSeconds: scene.content.countdownSeconds ?? 0,
+        countdownStartedAt: scene.content.countdownStartedAt,
+        countdownPausedRemaining: scene.content.countdownPausedRemaining,
+      },
+      Date.now(),
+    );
+
+    const nextScene: Scene = {
+      ...scene,
+      id: crypto.randomUUID(),
+      content: {
+        ...scene.content,
+        countdownStartedAt: undefined,
+        countdownPausedRemaining: remaining,
+      },
+    };
+    applyCountdownScene(nextScene, state.previewSource ?? "service");
+  },
+
+  resetCountdown: () => {
+    const state = get();
+    const scene = resolveStagedScene(state.preview, state.program);
+    if (!scene || scene.type !== "countdown") return;
+
+    const nextScene: Scene = {
+      ...scene,
+      id: crypto.randomUUID(),
+      content: {
+        ...scene.content,
+        countdownStartedAt: undefined,
+        countdownPausedRemaining: undefined,
+      },
+    };
+    applyCountdownScene(nextScene, state.previewSource ?? "service");
+  },
+
+  resumeCountdown: async () => {
+    const state = get();
+    const scene = resolveStagedScene(state.preview, state.program);
+    if (!scene || scene.type !== "countdown") return;
+    if (scene.content.countdownStartedAt) return;
+
+    const total = scene.content.countdownSeconds ?? 0;
+    const remaining = resolveCountdownRemaining(
+      {
+        countdownSeconds: total,
+        countdownStartedAt: undefined,
+        countdownPausedRemaining: scene.content.countdownPausedRemaining,
+      },
+      Date.now(),
+    );
+
+    const nextScene: Scene = {
+      ...scene,
+      id: crypto.randomUUID(),
+      content: {
+        ...scene.content,
+        countdownStartedAt: startedAtForRemaining(total, remaining),
+        countdownPausedRemaining: undefined,
+      },
+    };
+
+    // Keep on program if already live; otherwise treat as go-live.
+    if (state.program?.type === "countdown" && state.liveFollow) {
+      applyCountdownScene(nextScene, state.previewSource ?? "service");
+      return;
+    }
+
+    const previewed = setPreview(state, nextScene);
+    set({ ...previewed, previewSource: state.previewSource ?? "service" });
+    await get().goLive();
   },
 
   enqueue: (scene) => set(queueScene(get(), scene)),

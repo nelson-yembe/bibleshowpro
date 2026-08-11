@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Zap } from "lucide-react";
 import { SceneRenderer } from "@/components/presentation/SceneRenderer";
 import { ServiceQueueStrip } from "@/components/presentation/ServiceQueueStrip";
+import { CountdownPlaybackControls } from "@/components/presentation/CountdownPlaybackControls";
 import { VideoPlaybackControls } from "@/components/presentation/VideoPlaybackControls";
 import type { DisplayOptions } from "@/components/presentation/displayOptions";
 import { buildSlidesFromSong } from "@/lib/songTypes";
@@ -194,6 +195,7 @@ export function LiveControlsPanel({ displayOptions }: LiveControlsPanelProps) {
         )}
 
         {showVideoControls && <VideoPlaybackControls className="mt-2" dense />}
+        <CountdownPlaybackControls className="mt-2" dense />
       </div>
 
       <div className="flex flex-col gap-3 p-4">

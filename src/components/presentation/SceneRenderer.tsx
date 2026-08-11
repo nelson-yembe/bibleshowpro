@@ -392,6 +392,7 @@ export function SceneRenderer({
                 displayScale: scene.content.displayScale,
                 showClockAfterZero: scene.content.showClockAfterZero,
                 countdownStartedAt: scene.content.countdownStartedAt,
+                countdownPausedRemaining: scene.content.countdownPausedRemaining,
               }}
               compact={compact}
               isProgram={programSurface && Boolean(scene.content.countdownStartedAt)}

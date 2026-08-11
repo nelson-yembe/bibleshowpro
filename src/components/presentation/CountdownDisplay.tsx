@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import {
   countdownPhase,
   countdownPhaseColor,
+  countdownRunState,
   formatCountdownTime,
   formatWallClock,
   mergeCountdownConfig,
-  remainingFromStart,
+  resolveCountdownRemaining,
   type CountdownColors,
   type CountdownConfig,
   type CountdownPhase,
@@ -37,9 +38,10 @@ export function CountdownDisplay({
 }: CountdownDisplayProps) {
   const config = mergeCountdownConfig(configPartial);
   const startedAt = config.countdownStartedAt;
-  const ticking = Boolean(startedAt);
   const [now, setNow] = useState(() => Date.now());
   const endedActionRef = useRef(false);
+  const runState = countdownRunState(config, now);
+  const ticking = runState === "running" || (runState === "ended" && Boolean(startedAt));
 
   useEffect(() => {
     // Keep ticking after zero so wall-clock under the timer stays live.
@@ -50,14 +52,18 @@ export function CountdownDisplay({
 
   useEffect(() => {
     endedActionRef.current = false;
-  }, [startedAt, config.countdownSeconds]);
+  }, [startedAt, config.countdownSeconds, config.countdownPausedRemaining]);
 
-  const remaining = remainingFromStart(config.countdownSeconds, startedAt, now);
+  const remaining = resolveCountdownRemaining(config, now);
   const phase = countdownPhase(remaining, config);
   const accent = countdownPhaseColor(phase, config.colors);
   const progress =
     config.countdownSeconds > 0 ? Math.min(1, Math.max(0, remaining / config.countdownSeconds)) : 0;
-  const scale = compact ? Math.min(1, config.displayScale) * 0.42 : config.displayScale;
+  // Projection uses a larger baseline so 100% is already readable on 1080p;
+  // displayScale (0.5–3) lets operators push it much larger when needed.
+  const scale = compact
+    ? Math.min(1.2, config.displayScale) * 0.38
+    : Math.max(0.5, config.displayScale);
 
   useEffect(() => {
     if (!isProgram || !ticking || remaining > 0 || endedActionRef.current) return;
@@ -77,11 +83,14 @@ export function CountdownDisplay({
   const timeLabel = formatCountdownTime(remaining);
   const wallClock = formatWallClock(new Date(now));
   const showWallClock = phase === "ended" && config.showClockAfterZero;
-  const subtitle = !ticking
-    ? "Ready · press GO LIVE to start"
-    : phase === "ended"
-      ? "Time’s up"
-      : null;
+  const subtitle =
+    runState === "paused"
+      ? "Paused · Resume from Live controls"
+      : runState === "ready"
+        ? "Ready · press GO LIVE to start"
+        : phase === "ended"
+          ? "Time’s up"
+          : null;
 
   return (
     <div
@@ -124,11 +133,11 @@ export function CountdownDisplay({
             <p
               className={cn(
                 "font-bold tabular-nums tracking-tight",
-                compact ? "text-4xl" : "text-[clamp(4rem,14vw,9rem)]",
+                compact ? "text-4xl" : "text-[clamp(5rem,18vw,12rem)]",
               )}
               style={{
                 color: accent,
-                textShadow: compact ? undefined : `0 0 48px ${accent}55`,
+                textShadow: compact ? undefined : `0 0 56px ${accent}55`,
               }}
             >
               {timeLabel}
@@ -196,8 +205,8 @@ function RingClock({
   compact: boolean;
   phase: CountdownPhase;
 }) {
-  const size = compact ? 148 : 340;
-  const stroke = compact ? 8 : 14;
+  const size = compact ? 148 : 520;
+  const stroke = compact ? 8 : 18;
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
   const offset = circumference * (1 - progress);
@@ -233,11 +242,11 @@ function RingClock({
         <p
           className={cn(
             "font-bold tabular-nums tracking-tight",
-            compact ? "text-3xl" : "text-[clamp(2.75rem,8vw,5.5rem)]",
+            compact ? "text-3xl" : "text-[clamp(3.5rem,10vw,7rem)]",
           )}
           style={{
             color: accent,
-            textShadow: compact ? undefined : `0 0 40px ${accent}44`,
+            textShadow: compact ? undefined : `0 0 48px ${accent}44`,
           }}
         >
           {timeLabel}

@@ -48,6 +48,7 @@ export interface SceneContent {
   displayScale?: number;
   showClockAfterZero?: boolean;
   countdownStartedAt?: number;
+  countdownPausedRemaining?: number;
   speakerName?: string;
   speakerTitle?: string;
   layout?: "fullscreen" | "lower_third";
@@ -233,6 +234,7 @@ export function sceneFromServiceItem(itemType: string, title: string, contentJso
         displayScale: countdown.displayScale,
         showClockAfterZero: countdown.showClockAfterZero,
         countdownStartedAt: content.countdownStartedAt,
+        countdownPausedRemaining: content.countdownPausedRemaining,
       },
       theme: mergedTheme,
       transition: "fade",

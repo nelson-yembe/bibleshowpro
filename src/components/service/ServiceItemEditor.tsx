@@ -10,6 +10,8 @@ import {
 import {
   COUNTDOWN_DURATION_PRESETS,
   COUNTDOWN_END_BEHAVIOR_OPTIONS,
+  COUNTDOWN_SCALE_MAX,
+  COUNTDOWN_SCALE_MIN,
   COUNTDOWN_SIZE_PRESETS,
   COUNTDOWN_STYLE_OPTIONS,
   DEFAULT_COUNTDOWN_COLORS,
@@ -243,6 +245,60 @@ export function ServiceItemEditor({ item, onPickSong, onPickMedia }: ServiceItem
             </div>
           </Field>
 
+          <Field label="Projection size">
+            <div className="space-y-2.5 rounded-md border border-[var(--color-border-light)] bg-[var(--color-panel)]/50 p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                {COUNTDOWN_SIZE_PRESETS.map((preset) => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() => patchContent({ displayScale: preset.scale })}
+                    className={cn(
+                      "rounded-md border px-3 py-1.5 text-[11px] font-medium",
+                      Math.abs(countdown.displayScale - preset.scale) < 0.01
+                        ? "border-[var(--color-primary)] bg-[var(--color-primary)]/15 text-[var(--color-foreground)]"
+                        : "border-[var(--color-border-light)] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]",
+                    )}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+                <label className="ml-auto flex items-center gap-1.5 text-[11px] text-[var(--color-muted-foreground)]">
+                  <span className="sr-only">Size percent</span>
+                  <input
+                    type="number"
+                    min={Math.round(COUNTDOWN_SCALE_MIN * 100)}
+                    max={Math.round(COUNTDOWN_SCALE_MAX * 100)}
+                    step={5}
+                    value={Math.round(countdown.displayScale * 100)}
+                    onChange={(e) => {
+                      const pct = Number(e.target.value);
+                      if (!Number.isFinite(pct)) return;
+                      patchContent({ displayScale: pct / 100 });
+                    }}
+                    className="h-8 w-16 rounded-md border border-[var(--color-border-light)] bg-[var(--color-background)] px-2 text-right text-xs tabular-nums text-[var(--color-foreground)]"
+                  />
+                  <span>%</span>
+                </label>
+              </div>
+              <input
+                type="range"
+                min={Math.round(COUNTDOWN_SCALE_MIN * 100)}
+                max={Math.round(COUNTDOWN_SCALE_MAX * 100)}
+                step={5}
+                value={Math.round(countdown.displayScale * 100)}
+                onChange={(e) => patchContent({ displayScale: Number(e.target.value) / 100 })}
+                className="w-full accent-[var(--color-primary)]"
+                aria-label="Projection size"
+              />
+              <div className="flex justify-between text-[10px] text-[var(--color-subtle)]">
+                <span>Smaller</span>
+                <span>Drag to match your screen — preview updates in Stage</span>
+                <span>Larger</span>
+              </div>
+            </div>
+          </Field>
+
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Warning under (sec)">
               <input
@@ -265,43 +321,6 @@ export function ServiceItemEditor({ item, onPickSong, onPickMedia }: ServiceItem
               />
             </Field>
           </div>
-
-          <Field label="Projection size">
-            <div className="space-y-2">
-              <div className="flex flex-wrap gap-1.5">
-                {COUNTDOWN_SIZE_PRESETS.map((preset) => (
-                  <button
-                    key={preset.label}
-                    type="button"
-                    onClick={() => patchContent({ displayScale: preset.scale })}
-                    className={cn(
-                      "rounded-md border px-3 py-1.5 text-[11px] font-medium",
-                      Math.abs(countdown.displayScale - preset.scale) < 0.01
-                        ? "border-[var(--color-primary)] bg-[var(--color-primary)]/15"
-                        : "border-[var(--color-border-light)] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]",
-                    )}
-                  >
-                    {preset.label}
-                  </button>
-                ))}
-                <span className="ml-auto self-center text-[11px] tabular-nums text-[var(--color-subtle)]">
-                  {Math.round(countdown.displayScale * 100)}%
-                </span>
-              </div>
-              <input
-                type="range"
-                min={55}
-                max={145}
-                step={5}
-                value={Math.round(countdown.displayScale * 100)}
-                onChange={(e) => patchContent({ displayScale: Number(e.target.value) / 100 })}
-                className="w-full accent-[var(--color-primary)]"
-              />
-              <p className="text-[10px] text-[var(--color-subtle)]">
-                Controls how large the timer appears on the projection screen.
-              </p>
-            </div>
-          </Field>
 
           <Field label="Projection style">
             <div className="flex flex-wrap gap-1.5">

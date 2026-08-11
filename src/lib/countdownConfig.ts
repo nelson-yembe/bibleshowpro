@@ -21,13 +21,17 @@ export interface CountdownConfig {
   showProgress: boolean;
   showTitle: boolean;
   flashOnCritical: boolean;
-  /** Projection size multiplier (0.55–1.45). */
+  /** Projection size multiplier (0.5–3.0). 1 = default readable size on a 1080p screen. */
   displayScale: number;
   /** After 00:00, show the real wall-clock time under the timer. */
   showClockAfterZero: boolean;
   /** Epoch ms when the live countdown started — drives synced remaining time. */
   countdownStartedAt?: number;
+  /** Remaining seconds while stopped/paused (cleared when running or reset). */
+  countdownPausedRemaining?: number;
 }
+
+export type CountdownRunState = "ready" | "running" | "paused" | "ended";
 
 export const DEFAULT_COUNTDOWN_COLORS: CountdownColors = {
   normal: "#f8fafc",
@@ -47,7 +51,7 @@ export const DEFAULT_COUNTDOWN_CONFIG: CountdownConfig = {
   showProgress: true,
   showTitle: true,
   flashOnCritical: true,
-  displayScale: 1,
+  displayScale: 1.6,
   showClockAfterZero: true,
 };
 
@@ -90,6 +94,10 @@ export function mergeCountdownConfig(
     showClockAfterZero: raw.showClockAfterZero ?? DEFAULT_COUNTDOWN_CONFIG.showClockAfterZero,
     countdownStartedAt:
       typeof raw.countdownStartedAt === "number" ? raw.countdownStartedAt : undefined,
+    countdownPausedRemaining:
+      typeof raw.countdownPausedRemaining === "number" && Number.isFinite(raw.countdownPausedRemaining)
+        ? Math.max(0, Math.floor(raw.countdownPausedRemaining))
+        : undefined,
   };
 }
 
@@ -97,9 +105,15 @@ function clampThreshold(value: number, max: number) {
   return Math.max(0, Math.min(Math.floor(value), max));
 }
 
+export const COUNTDOWN_SCALE_MIN = 0.5;
+export const COUNTDOWN_SCALE_MAX = 3;
+
 function clampScale(value: number) {
-  if (!Number.isFinite(value)) return 1;
-  return Math.min(1.45, Math.max(0.55, Math.round(value * 100) / 100));
+  if (!Number.isFinite(value)) return DEFAULT_COUNTDOWN_CONFIG.displayScale;
+  return Math.min(
+    COUNTDOWN_SCALE_MAX,
+    Math.max(COUNTDOWN_SCALE_MIN, Math.round(value * 100) / 100),
+  );
 }
 
 function isEndBehavior(value: unknown): value is CountdownEndBehavior {
@@ -179,6 +193,39 @@ export function remainingFromStart(
   return Math.max(0, totalSeconds - Math.floor((now - startedAt) / 1000));
 }
 
+export function resolveCountdownRemaining(
+  config: Pick<CountdownConfig, "countdownSeconds" | "countdownStartedAt" | "countdownPausedRemaining">,
+  now = Date.now(),
+): number {
+  if (config.countdownStartedAt) {
+    return remainingFromStart(config.countdownSeconds, config.countdownStartedAt, now);
+  }
+  if (typeof config.countdownPausedRemaining === "number") {
+    return Math.max(0, Math.floor(config.countdownPausedRemaining));
+  }
+  return Math.max(0, config.countdownSeconds);
+}
+
+export function countdownRunState(
+  config: Pick<CountdownConfig, "countdownSeconds" | "countdownStartedAt" | "countdownPausedRemaining">,
+  now = Date.now(),
+): CountdownRunState {
+  const remaining = resolveCountdownRemaining(config, now);
+  if (config.countdownStartedAt) {
+    return remaining <= 0 ? "ended" : "running";
+  }
+  if (typeof config.countdownPausedRemaining === "number") {
+    return remaining <= 0 ? "ended" : "paused";
+  }
+  return "ready";
+}
+
+/** Back-date startedAt so the clock resumes from a paused remaining value. */
+export function startedAtForRemaining(totalSeconds: number, remainingSeconds: number, now = Date.now()): number {
+  const elapsed = Math.max(0, Math.floor(totalSeconds) - Math.max(0, Math.floor(remainingSeconds)));
+  return now - elapsed * 1000;
+}
+
 export const COUNTDOWN_END_BEHAVIOR_OPTIONS: {
   value: CountdownEndBehavior;
   label: string;
@@ -214,8 +261,9 @@ export const COUNTDOWN_DURATION_PRESETS = [
 ] as const;
 
 export const COUNTDOWN_SIZE_PRESETS = [
-  { label: "S", scale: 0.7 },
-  { label: "M", scale: 0.85 },
-  { label: "L", scale: 1 },
-  { label: "XL", scale: 1.2 },
+  { label: "S", scale: 0.8 },
+  { label: "M", scale: 1.2 },
+  { label: "L", scale: 1.6 },
+  { label: "XL", scale: 2.1 },
+  { label: "Max", scale: 2.8 },
 ] as const;

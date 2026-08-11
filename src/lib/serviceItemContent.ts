@@ -30,6 +30,7 @@ export interface ServiceItemContent {
   displayScale?: number;
   showClockAfterZero?: boolean;
   countdownStartedAt?: number;
+  countdownPausedRemaining?: number;
   speakerName?: string;
   speakerTitle?: string;
   source?: string;
