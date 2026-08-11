@@ -8,6 +8,11 @@ import { cn } from "@/lib/utils";
 import { exportScriptureList, exportTranscriptText } from "@/lib/transcription/referenceDetect";
 import { formatTranscriptProse } from "@/lib/transcription/transcriptFormat";
 import { TRANSCRIPTION_MODELS, type ConfidenceLevel } from "@/lib/transcription/types";
+import {
+  suggestionMatchesProgram,
+  sortSuggestionsForOperator,
+} from "@/lib/transcription/transcriptionLiveFollow";
+import { usePresentationStore } from "@/stores/presentationStore";
 import { useTranscriptionStore } from "@/stores/transcriptionStore";
 import { TranscriptionAudioMeter } from "@/modules/transcription/TranscriptionAudioMeter";
 import { TranscriptionElapsed } from "@/modules/transcription/TranscriptionElapsed";
@@ -93,12 +98,23 @@ export function LiveListenPage() {
   const stepActiveVerse = useTranscriptionStore((s) => s.stepActiveVerse);
   const verseSession = useTranscriptionStore((s) => s.verseSession);
 
+  const program = usePresentationStore((s) => s.program);
+  const liveFollow = usePresentationStore((s) => s.liveFollow);
+
   useEffect(() => {
     void init();
   }, [init]);
 
   const model = models.find((m) => m.id === modelId) ?? models[0];
-  const activeSuggestions = suggestions.filter((s) => s.status !== "ignored");
+  const activeSuggestions = useMemo(() => {
+    const visible = suggestions.filter((s) => s.status !== "ignored");
+    return sortSuggestionsForOperator(visible, { program, liveFollow });
+  }, [suggestions, program, liveFollow]);
+
+  const liveSuggestion =
+    activeSuggestions.find((s) => liveFollow && suggestionMatchesProgram(s, program)) ??
+    activeSuggestions.find((s) => s.status === "live");
+  const historySuggestions = activeSuggestions.filter((s) => s.id !== liveSuggestion?.id);
 
   useEffect(() => {
     useLiveNavigationStore.getState().register({
@@ -445,14 +461,39 @@ export function LiveListenPage() {
                   </p>
                 </div>
               ) : (
-                activeSuggestions.map((s) => (
-                  <ScriptureSuggestionCard
-                    key={s.id}
-                    suggestion={s}
-                    selected={s.id === selectedSuggestionId}
-                    onSelect={() => void selectAndPresentSuggestion(s)}
-                  />
-                ))
+                <>
+                  {liveSuggestion && (
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-red-300/80">
+                        On air now
+                      </p>
+                      <ScriptureSuggestionCard
+                        key={liveSuggestion.id}
+                        suggestion={liveSuggestion}
+                        selected={liveSuggestion.id === selectedSuggestionId}
+                        onSelect={() => void selectAndPresentSuggestion(liveSuggestion)}
+                      />
+                    </div>
+                  )}
+
+                  {historySuggestions.length > 0 && (
+                    <div className={cn("space-y-2", liveSuggestion && "pt-2")}>
+                      {liveSuggestion && (
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--color-subtle)]">
+                          Previous scriptures
+                        </p>
+                      )}
+                      {historySuggestions.map((s) => (
+                        <ScriptureSuggestionCard
+                          key={s.id}
+                          suggestion={s}
+                          selected={s.id === selectedSuggestionId}
+                          onSelect={() => void selectAndPresentSuggestion(s)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </section>

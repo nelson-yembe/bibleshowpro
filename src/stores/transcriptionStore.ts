@@ -1152,7 +1152,14 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
 
   markSuggestionStatus: (id, status) => {
     set((s) => ({
-      suggestions: s.suggestions.map((item) => (item.id === id ? { ...item, status } : item)),
+      suggestions: s.suggestions.map((item) => {
+        if (item.id === id) return { ...item, status };
+        // Only one suggestion can be live — demote the previous live cue into history.
+        if (status === "live" && item.status === "live") {
+          return { ...item, status: "presented" };
+        }
+        return item;
+      }),
     }));
   },
 

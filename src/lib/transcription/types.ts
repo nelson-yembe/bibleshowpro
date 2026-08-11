@@ -9,7 +9,7 @@ export type ListeningStatus =
 
 export type DetectionType = "explicit" | "paraphrase" | "quote" | "topic" | "inferred";
 export type ConfidenceLevel = "high" | "medium" | "low";
-export type SuggestionStatus = "pending" | "preview" | "queued" | "ignored" | "live";
+export type SuggestionStatus = "pending" | "preview" | "queued" | "ignored" | "live" | "presented";
 
 export interface TranscriptionModel {
   id: string;

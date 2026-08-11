@@ -1,3 +1,4 @@
+import { StatusBadge } from "@/components/ui/pill";
 import {
   BookOpen,
   Eye,
@@ -10,8 +11,10 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { presentationTranslationLabel, queueDetectedScripture } from "@/lib/transcriptionLive";
+import { suggestionMatchesProgram } from "@/lib/transcription/transcriptionLiveFollow";
 import type { ConfidenceLevel, ScriptureSuggestion } from "@/lib/transcription/types";
 import { useTranscriptionStore } from "@/stores/transcriptionStore";
+import { usePresentationStore } from "@/stores/presentationStore";
 import { useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { useBibleStore } from "@/stores/bibleStore";
@@ -43,11 +46,18 @@ export function ScriptureSuggestionCard({ suggestion, selected, onSelect }: Scri
   const goLiveSelectedSuggestion = useTranscriptionStore((s) => s.goLiveSelectedSuggestion);
   const markStatus = useTranscriptionStore((s) => s.markSuggestionStatus);
   const ignore = useTranscriptionStore((s) => s.ignoreSuggestion);
+  const program = usePresentationStore((s) => s.program);
+  const liveFollow = usePresentationStore((s) => s.liveFollow);
   const [busy, setBusy] = useState(false);
   const [showAlternatives, setShowAlternatives] = useState(false);
   const translationLabel = presentationTranslationLabel();
 
   if (suggestion.status === "ignored") return null;
+
+  const isLive =
+    (liveFollow && suggestionMatchesProgram(suggestion, program)) ||
+    suggestion.status === "live";
+  const wasPresented = !isLive && suggestion.status === "presented";
 
   const preview = async () => {
     setBusy(true);
@@ -117,17 +127,30 @@ export function ScriptureSuggestionCard({ suggestion, selected, onSelect }: Scri
       onKeyDown={(e) => e.key === "Enter" && onSelect?.()}
       className={cn(
         "cursor-pointer rounded-lg border p-3 transition-colors",
-        confidenceStyles[suggestion.confidenceLevel],
-        selected && "ring-2 ring-[var(--color-primary)]",
-        suggestion.status === "preview" && "ring-1 ring-blue-400/50",
-        suggestion.status === "queued" && "ring-1 ring-violet-400/40",
+        isLive
+          ? "border-red-500/70 bg-red-950/35 shadow-[0_0_0_1px_rgba(239,68,68,0.25)]"
+          : confidenceStyles[suggestion.confidenceLevel],
+        selected && !isLive && "ring-2 ring-[var(--color-primary)]",
+        !isLive && suggestion.status === "preview" && "ring-1 ring-blue-400/50",
+        !isLive && suggestion.status === "queued" && "ring-1 ring-violet-400/40",
+        wasPresented && "border-white/10",
       )}
     >
       <div className="mb-2 flex items-start justify-between gap-2">
-        <div>
-          <p className="text-[10px] uppercase tracking-wide text-[var(--color-subtle)]">
-            {typeLabels[suggestion.detectionType]}
-          </p>
+        <div className="min-w-0 flex-1">
+          <div className="mb-1 flex flex-wrap items-center gap-1.5">
+            {isLive ? (
+              <StatusBadge variant="live">On air</StatusBadge>
+            ) : wasPresented ? (
+              <span className="rounded border border-white/15 bg-white/5 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--color-muted-foreground)]">
+                Previous
+              </span>
+            ) : (
+              <p className="text-[10px] uppercase tracking-wide text-[var(--color-subtle)]">
+                {typeLabels[suggestion.detectionType]}
+              </p>
+            )}
+          </div>
           <h3 className="text-sm font-semibold text-[var(--color-foreground)]">{suggestion.reference}</h3>
           <p className="text-[10px] text-[var(--color-muted-foreground)]">
             {translationLabel} · {Math.round(suggestion.confidence * 100)}% confidence
@@ -135,7 +158,10 @@ export function ScriptureSuggestionCard({ suggestion, selected, onSelect }: Scri
         </div>
         <button
           type="button"
-          onClick={() => ignore(suggestion.id)}
+          onClick={(e) => {
+            e.stopPropagation();
+            ignore(suggestion.id);
+          }}
           className="rounded p-1 text-[var(--color-subtle)] hover:bg-black/20 hover:text-[var(--color-foreground)]"
           title="Ignore"
         >
@@ -153,15 +179,18 @@ export function ScriptureSuggestionCard({ suggestion, selected, onSelect }: Scri
       <div className="flex flex-wrap gap-1.5">
         <button
           type="button"
-          disabled={busy}
+          disabled={busy || isLive}
           onClick={(e) => {
             e.stopPropagation();
             void takeLive();
           }}
-          className="inline-flex items-center gap-1 rounded-md bg-red-600 px-2.5 py-1.5 text-[11px] font-medium text-white hover:bg-red-500 disabled:opacity-50"
+          className={cn(
+            "inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[11px] font-medium text-white disabled:opacity-50",
+            isLive ? "bg-red-700/80" : "bg-red-600 hover:bg-red-500",
+          )}
         >
           <Zap className="h-3 w-3 fill-current" />
-          Go live
+          {isLive ? "On air" : "Go live"}
         </button>
         <button
           type="button"
