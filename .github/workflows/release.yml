@@ -10,6 +10,20 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    # whisper.cpp compiles for the machine it is built on. GitHub runners have AVX-512,
+    # which most church hardware does not, and the result died with an illegal
+    # instruction (0xC000001D) on a Kaby Lake laptop the moment transcription started.
+    # Build for a fixed floor instead: AVX2/FMA/F16C, i.e. Haswell (2013) and later.
+    env:
+      GGML_NATIVE: "OFF"
+      GGML_AVX: "ON"
+      GGML_AVX2: "ON"
+      GGML_FMA: "ON"
+      GGML_F16C: "ON"
+      GGML_AVX512: "OFF"
+      GGML_AVX512_VBMI: "OFF"
+      GGML_AVX512_VNNI: "OFF"
+      GGML_AVX_VNNI: "OFF"
     steps:
       - uses: actions/checkout@v4
 
@@ -21,9 +35,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       # Without this every run recompiles whisper.cpp from source.
+      # whisper-rs-sys does not declare rerun-if-env-changed for GGML_*, so a restored
+      # cache would silently keep the previous instruction set. Bump this key whenever
+      # the GGML_* flags above change, or the fix will not take effect.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          key: ggml-avx2-floor-v1
 
       - name: Install dependencies
         run: npm ci
