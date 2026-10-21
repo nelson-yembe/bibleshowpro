@@ -1,0 +1,42 @@
+name: Build Windows installer
+
+# Manual by default so it never runs unasked, plus on a v* tag for real releases.
+# This is the build that does not have to happen on your machine.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Without this every run recompiles whisper.cpp from source.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build installer
+        run: npm run tauri:build
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: bible-show-pro-windows
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+          retention-days: 30

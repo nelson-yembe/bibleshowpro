@@ -44,3 +44,11 @@ whisper-rs = "0.16.0"
 # mdns-sd to reject service registration ("Hostname must end with '.local.'").
 [patch.crates-io]
 oximedia-ndi = { path = "vendor/oximedia-ndi" }
+
+# Debug info dominated target/debug (5.3 GB of it in deps/ alone). Line tables keep
+# panic backtraces readable; dependency debug info buys nothing you would step through.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
