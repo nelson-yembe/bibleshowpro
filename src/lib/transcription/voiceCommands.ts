@@ -1,5 +1,5 @@
 import type { TranslationInfo } from "@/lib/tauri";
-import { isNavigationPhrase, preprocessTranscriptForDetection } from "@/lib/transcription/transcriptPreprocess";
+import { preprocessTranscriptForDetection } from "@/lib/transcription/transcriptPreprocess";
 
 export type VoiceCommand =
   | { type: "next_verse" }
@@ -7,10 +7,15 @@ export type VoiceCommand =
   | { type: "switch_translation"; translation: TranslationInfo; matchedPhrase: string }
   | { type: "none" };
 
+/**
+ * Navigation cues spoken mid-sermon. Keep these tolerant of ASR filler
+ * ("please", "now", "and then") while avoiding ordinary "next year" speech.
+ */
 const NEXT_VERSE =
-  /\b(?:(?:go\s+to\s+(?:the\s+)?)?next\s+(?:verse|verses|one)|next\s+verse|following\s+verse|advance\s+(?:to\s+)?(?:the\s+)?next\s+verse)\b/i;
+  /\b(?:(?:please\s+|and\s+(?:then\s+)?|so\s+|now\s+|let'?s\s+|let\s+us\s+)?(?:(?:go|move|skip|jump|turn|advance)(?:\s+(?:on|ahead|forward))?\s+(?:to\s+)?(?:the\s+)?)?(?:next|following)\s+(?:verse|verses|one)|next\s+verse|following\s+verse|(?:go|move)\s+(?:to\s+)?next)\b/i;
+
 const PREV_VERSE =
-  /\b(?:(?:go\s+to\s+(?:the\s+)?)?(?:previous|prior|last|preceding)\s+(?:verse|verses|one)|previous\s+verse|go\s+back(?:\s+to\s+(?:the\s+)?(?:previous|last)\s+verse)?|back\s+up\s+(?:a\s+)?verse)\b/i;
+  /\b(?:(?:please\s+|and\s+(?:then\s+)?|so\s+|now\s+|let'?s\s+|let\s+us\s+)?(?:(?:go|move|skip|jump|turn)(?:\s+back)?\s+(?:to\s+)?(?:the\s+)?)?(?:previous|prior|last|preceding)\s+(?:verse|verses|one)|previous\s+verse|go\s+back(?:\s+(?:a\s+)?(?:verse|one))?(?:\s+please)?|back\s+(?:up\s+)?(?:a\s+)?verse|(?:go|move)\s+(?:to\s+)?(?:the\s+)?previous)\b/i;
 
 /** Spoken names that map to common translation abbreviations / ids. */
 const SPOKEN_TRANSLATION_ALIASES: Record<string, string[]> = {
@@ -75,7 +80,10 @@ function matchTranslation(text: string, translations: TranslationInfo[]): Transl
         normalized.includes(`on ${keyword}`) ||
         normalized.includes(`from ${keyword}`);
 
-      const standalone = normalized === keyword || normalized.endsWith(` ${keyword}`) || normalized.startsWith(`${keyword} `);
+      const standalone =
+        normalized === keyword ||
+        normalized.endsWith(` ${keyword}`) ||
+        normalized.startsWith(`${keyword} `);
 
       if (explicit || standalone) {
         const score = explicit ? keyword.length + 100 : keyword.length;
@@ -93,6 +101,7 @@ export function parseVoiceCommands(text: string, translations: TranslationInfo[]
   const normalized = normalizeSpeech(text);
   if (!normalized) return { type: "none" };
 
+  // Prefer navigation even inside a longer utterance ("… now next verse please").
   if (NEXT_VERSE.test(normalized)) return { type: "next_verse" };
   if (PREV_VERSE.test(normalized)) return { type: "prev_verse" };
 
@@ -106,5 +115,17 @@ export function parseVoiceCommands(text: string, translations: TranslationInfo[]
 
 /** Skip scripture detection for obvious navigation phrases. */
 export function isLikelyVoiceCommand(text: string): boolean {
-  return isNavigationPhrase(text);
+  const normalized = normalizeSpeech(text);
+  if (!normalized) return false;
+  if (NEXT_VERSE.test(normalized) || PREV_VERSE.test(normalized)) return true;
+  // Short standalone "next" / "previous" while a passage is live is handled
+  // only when the whole utterance is tiny (avoids "next Sunday").
+  if (/^(?:please\s+)?(?:next|previous|back)(?:\s+please)?$/.test(normalized)) return true;
+  return /\bgo\s+back\b/.test(normalized);
+}
+
+/** True when the utterance is primarily a verse step command. */
+export function isVerseNavigationCommand(text: string): boolean {
+  const cmd = parseVoiceCommands(text, []);
+  return cmd.type === "next_verse" || cmd.type === "prev_verse";
 }

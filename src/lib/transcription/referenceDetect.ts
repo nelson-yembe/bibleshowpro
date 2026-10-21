@@ -3,6 +3,10 @@ import { formatTranscriptWithTimestamps } from "@/lib/transcription/transcriptFo
 import { isLikelyVoiceCommand } from "@/lib/transcription/voiceCommands";
 import { preprocessTranscriptForDetection } from "@/lib/transcription/transcriptPreprocess";
 import {
+  lookupLearnedReference,
+  shouldSuppressSuggestion,
+} from "@/lib/transcription/correctionMemory";
+import {
   confidenceLevel,
   type ConfidenceLevel,
   type DetectionContext,
@@ -59,6 +63,39 @@ export async function detectScriptureFromText(
   if (isLikelyVoiceCommand(trimmed)) return [];
 
   const existing = new Set((options?.existingReferences ?? []).map((r) => r.toLowerCase()));
+  const suggestions: Omit<ScriptureSuggestion, "id" | "segmentId" | "status" | "createdAt">[] = [];
+
+  // Operator-learned ASR → reference (from prior Go live / corrections).
+  const learned = lookupLearnedReference(trimmed);
+  if (learned && !existing.has(learned.reference.toLowerCase())) {
+    const built = await buildSuggestionFromReference(
+      learned.reference,
+      trimmed,
+      translationId,
+      "inferred",
+      learned.confidence,
+    );
+    if (built && (options?.allowRepeatReference || !shouldSkipReference(built.reference))) {
+      suggestions.push(built);
+    }
+  }
+
+  // Famous sermon lines are strong enough to surface even when book/chapter
+  // speech is mangled — treat as inferred, not speculative "quote".
+  const famous = await detectFamousPhrase(trimmed, translationId, "inferred");
+  for (const item of famous) {
+    if (existing.has(item.reference.toLowerCase())) continue;
+    if (shouldSuppressSuggestion(trimmed, item.reference)) continue;
+    if (
+      suggestions.some((s) => s.reference.toLowerCase() === item.reference.toLowerCase())
+    ) {
+      continue;
+    }
+    if (options?.allowRepeatReference || !shouldSkipReference(item.reference)) {
+      suggestions.push(item);
+    }
+  }
+
   let matches: ParsedReferenceMatch[] = [];
 
   try {
@@ -71,28 +108,40 @@ export async function detectScriptureFromText(
     matches = clientSideDetect(trimmed);
   }
 
-  const suggestions: Omit<ScriptureSuggestion, "id" | "segmentId" | "status" | "createdAt">[] = [];
-
   for (const match of matches) {
     if (!options?.allowRepeatReference && existing.has(match.normalized_reference.toLowerCase())) continue;
+    if (shouldSuppressSuggestion(trimmed, match.normalized_reference)) continue;
     const built = await buildSuggestionFromMatch(match, trimmed, translationId);
     if (built && (options?.allowRepeatReference || !shouldSkipReference(built.reference))) {
+      if (shouldSuppressSuggestion(trimmed, built.reference)) continue;
+      // Avoid duplicating a learned/famous hit with a weaker detector match.
+      if (suggestions.some((s) => s.reference.toLowerCase() === built.reference.toLowerCase())) {
+        continue;
+      }
       suggestions.push(built);
     }
   }
 
-  if (options?.paraphraseEnabled && trimmed.split(/\s+/).length >= 6) {
+  const hasReferenceHit = suggestions.some(
+    (s) => s.detectionType === "explicit" || s.detectionType === "inferred",
+  );
+
+  if (options?.paraphraseEnabled && !hasReferenceHit && trimmed.split(/\s+/).length >= 6) {
     const paraphrase = await detectParaphrase(trimmed, translationId);
     for (const item of paraphrase) {
       if (existing.has(item.reference.toLowerCase())) continue;
+      if (shouldSuppressSuggestion(trimmed, item.reference)) continue;
       if (!shouldSkipReference(item.reference)) suggestions.push(item);
     }
   }
 
-  if (suggestions.length === 0) {
+  // Speculative quote search only when no book/chapter/learned hit — and only
+  // with an explicit quote cue, so ordinary sermon speech does not flood the list.
+  if (!hasReferenceHit && suggestions.length === 0) {
     const quoted = await detectQuoteFromText(trimmed, translationId);
     for (const item of quoted) {
       if (existing.has(item.reference.toLowerCase())) continue;
+      if (shouldSuppressSuggestion(trimmed, item.reference)) continue;
       if (!shouldSkipReference(item.reference)) suggestions.push(item);
     }
   }
@@ -146,6 +195,29 @@ async function buildSuggestionFromMatch(
 ) {
   try {
     const ref = normalizeReferenceForLookup(match.normalized_reference);
+    return await buildSuggestionFromReference(
+      ref,
+      detectedPhrase,
+      translationId,
+      mapDetectionType(match.detection_type),
+      match.confidence,
+      match.alternatives ?? [],
+    );
+  } catch {
+    return null;
+  }
+}
+
+async function buildSuggestionFromReference(
+  referenceInput: string,
+  detectedPhrase: string,
+  translationId: string,
+  detectionType: DetectionType,
+  confidence: number,
+  detectionAlternatives: string[] = [],
+) {
+  try {
+    const ref = normalizeReferenceForLookup(referenceInput);
     const lookup = await api.lookupReference(ref, translationId);
     const verses = lookup.search.verses;
     if (verses.length === 0) return null;
@@ -154,8 +226,6 @@ async function buildSuggestionFromMatch(
       ? formatReferenceFromParsed(lookup.search.parsed_reference)
       : ref;
 
-    const confidence = match.confidence;
-    const detectionAlternatives = match.alternatives ?? [];
     const alternatives = Array.from(
       new Set([...detectionAlternatives, ...lookup.search.suggestions]),
     )
@@ -167,8 +237,8 @@ async function buildSuggestionFromMatch(
       translationId,
       translationAbbr: verses[0]?.translation_abbr ?? "",
       confidence,
-      confidenceLevel: confidenceLevel(confidence),
-      detectionType: mapDetectionType(match.detection_type),
+      confidenceLevel: confidenceLevel(confidence) as ConfidenceLevel,
+      detectionType,
       versePreview: verses[0]?.text ?? "",
       verses,
       alternatives,
@@ -205,19 +275,61 @@ function formatReferenceFromParsed(parsed: {
   return `${parsed.book_name} ${parsed.chapter}`;
 }
 
+/** Famous sermon phrases that ASR often mangles but operators expect. */
+const FAMOUS_PHRASE_HINTS: { pattern: RegExp; reference: string; search: string }[] = [
+  {
+    pattern: /\bgive\s+me\s+this\s+mountain\b/i,
+    reference: "Joshua 14:12",
+    search: "give me this mountain",
+  },
+  {
+    pattern: /\bwholly\s+followed\b/i,
+    reference: "Numbers 14:24",
+    search: "wholly followed the Lord",
+  },
+  {
+    pattern: /\bfaith\s+is\s+the\s+substance\b/i,
+    reference: "Hebrews 11:1",
+    search: "faith is the substance of things hoped for",
+  },
+  {
+    pattern: /\bquit\s+yourself?(?:\s+see)?\s*like\s+men\b/i,
+    reference: "1 Samuel 4:9",
+    search: "quit yourselves like men",
+  },
+  {
+    pattern: /\bevidence\s+of\s+things\s+not\s+seen\b/i,
+    reference: "Hebrews 11:1",
+    search: "evidence of things not seen",
+  },
+];
+
+function hasQuoteCue(text: string): boolean {
+  return (
+    /\b(?:it is written|as it is written|scripture says|the (?:word|bible|lord) says|bible says|tells us)\b/i.test(
+      text,
+    ) || /["“”]/.test(text)
+  );
+}
+
 async function detectParaphrase(
   text: string,
   translationId: string,
 ): Promise<Omit<ScriptureSuggestion, "id" | "segmentId" | "status" | "createdAt">[]> {
+  if (!hasQuoteCue(text) && text.split(/\s+/).length < 10) return [];
   const phrase = extractQuotablePhrase(text);
-  return searchQuotePhrase(phrase, text, translationId, "paraphrase", 0.45);
+  return searchQuotePhrase(phrase, text, translationId, "paraphrase", 0.45, 0.7);
 }
 
 function extractQuotablePhrase(text: string): string {
   const cleaned = text.replace(/[.!?]+$/, "").trim();
   const quoteMatch = cleaned.match(
-    /(?:says|said|reads?|reading|tells us|it is written|scripture says|the lord says)\s+(.+)/i,
+    /(?:says|said|reads?|reading|tells us|it is written|scripture says|the lord says|bible says)\s+(.+)/i,
   );
+  // Without a cue, do not treat the whole sermon window as a quote candidate.
+  if (!quoteMatch && !/["“”]/.test(cleaned)) {
+    return "";
+  }
   let phrase = (quoteMatch?.[1] ?? cleaned)
     .replace(/^["'“”]+|["'“”]+$/g, "")
     .trim();
@@ -232,9 +344,44 @@ async function detectQuoteFromText(
   text: string,
   translationId: string,
 ): Promise<Omit<ScriptureSuggestion, "id" | "segmentId" | "status" | "createdAt">[]> {
+  if (!hasQuoteCue(text)) return [];
   const phrase = extractQuotablePhrase(text);
-  if (phrase.split(/\s+/).length < 4) return [];
-  return searchQuotePhrase(phrase, text, translationId, "quote", 0.52);
+  if (!phrase || phrase.split(/\s+/).length < 5) return [];
+  return searchQuotePhrase(phrase, text, translationId, "quote", 0.58, 0.72);
+}
+
+async function detectFamousPhrase(
+  text: string,
+  translationId: string,
+  detectionType: DetectionType,
+): Promise<Omit<ScriptureSuggestion, "id" | "segmentId" | "status" | "createdAt">[]> {
+  for (const hint of FAMOUS_PHRASE_HINTS) {
+    if (!hint.pattern.test(text)) continue;
+    try {
+      const lookup = await api.lookupReference(hint.reference, translationId);
+      const verses = lookup.search.verses;
+      if (verses.length === 0) continue;
+      const verse = verses[0]!;
+      return [
+        {
+          detectedPhrase: text,
+          reference: hint.reference,
+          translationId,
+          translationAbbr: verse.translation_abbr ?? "",
+          confidence: 0.88,
+          confidenceLevel: confidenceLevel(0.88) as ConfidenceLevel,
+          detectionType,
+          versePreview: verse.text,
+          verses: verses.slice(0, 3),
+          alternatives: [],
+        },
+      ];
+    } catch {
+      const fallback = await searchQuotePhrase(hint.search, text, translationId, detectionType, 0.72, 0.4);
+      if (fallback.length > 0) return fallback;
+    }
+  }
+  return [];
 }
 
 async function searchQuotePhrase(
@@ -243,6 +390,7 @@ async function searchQuotePhrase(
   translationId: string,
   detectionType: DetectionType,
   baseConfidence: number,
+  minOverlap = 0.55,
 ): Promise<Omit<ScriptureSuggestion, "id" | "segmentId" | "status" | "createdAt">[]> {
   if (phrase.length < 12) return [];
 
@@ -252,6 +400,7 @@ async function searchQuotePhrase(
 
     const top = search.verses[0]!;
     const overlap = wordOverlapScore(phrase, top.text);
+    if (overlap < minOverlap) return [];
     const confidence = Math.min(0.92, baseConfidence + overlap * 0.35);
 
     return [

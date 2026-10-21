@@ -30,6 +30,11 @@ import type {
   TranscriptionEngineOptions,
 } from "@/lib/transcription/engine";
 
+/** Restarts tolerated with no result at all before declaring the engine unusable. */
+const MAX_EMPTY_RESTARTS = 6;
+/** Paired with the count, so a quiet opening stretch is not mistaken for a dead engine. */
+const EMPTY_SESSION_GRACE_MS = 15_000;
+
 export class WebSpeechTranscriptionEngine implements TranscriptionEngine {
   private recognition: SpeechRecognitionInstance | null = null;
   private paused = false;
@@ -38,6 +43,10 @@ export class WebSpeechTranscriptionEngine implements TranscriptionEngine {
   private lastOptions: TranscriptionEngineOptions | null = null;
   private restartTimer: number | undefined;
   private primingStream: MediaStream | null = null;
+  /** Once the engine has produced anything, restarts are normal and never capped. */
+  private sawAnyResult = false;
+  private emptyRestarts = 0;
+  private sessionStartedAt = 0;
 
   isSupported(): boolean {
     return isSpeechRecognitionSupported();
@@ -57,6 +66,9 @@ export class WebSpeechTranscriptionEngine implements TranscriptionEngine {
     this.lastOptions = options;
     this.paused = false;
     this.shouldRestart = true;
+    this.sawAnyResult = false;
+    this.emptyRestarts = 0;
+    this.sessionStartedAt = Date.now();
     window.clearTimeout(this.restartTimer);
 
     this.attachRecognition(new Ctor(), options, true);
@@ -126,6 +138,10 @@ export class WebSpeechTranscriptionEngine implements TranscriptionEngine {
         if (result.isFinal) finalText += `${transcript} `;
         else interim += `${transcript} `;
       }
+      if (interim.trim() || finalText.trim()) {
+        this.sawAnyResult = true;
+        this.emptyRestarts = 0;
+      }
       if (interim.trim()) this.callbacks?.onPartial(interim.trim());
       if (finalText.trim()) this.callbacks?.onFinal(finalText.trim());
     };
@@ -157,6 +173,20 @@ export class WebSpeechTranscriptionEngine implements TranscriptionEngine {
 
     recognition.onend = () => {
       if (this.shouldRestart && !this.paused) {
+        // An engine that never returns anything would otherwise loop here forever,
+        // showing "reconnecting / listening" while producing no text at all.
+        if (!this.sawAnyResult) {
+          this.emptyRestarts += 1;
+          const silentFor = Date.now() - this.sessionStartedAt;
+          if (this.emptyRestarts >= MAX_EMPTY_RESTARTS && silentFor >= EMPTY_SESSION_GRACE_MS) {
+            this.shouldRestart = false;
+            this.callbacks?.onError(
+              "Speech recognition keeps restarting without returning any text. Browser speech recognition is often unavailable inside the installed app — switch to Whisper (offline) or Gemini in Settings → Transcription Engine.",
+            );
+            this.callbacks?.onStatus("unavailable");
+            return;
+          }
+        }
         this.callbacks?.onStatus("reconnecting");
         window.clearTimeout(this.restartTimer);
         this.restartTimer = window.setTimeout(() => {

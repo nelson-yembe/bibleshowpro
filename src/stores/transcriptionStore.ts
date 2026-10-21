@@ -15,14 +15,32 @@ import {
   shouldPresentVerseToProgram,
 } from "@/lib/transcriptionLive";
 import {
-  createVerseSessionFromSuggestion,
   createExpandedVerseSessionFromSuggestion,
   stepVerseSession,
+  getCurrentVerse,
   type ActiveVerseSession,
   sessionProgressLabel,
 } from "@/lib/transcription/verseSession";
 import { parseVoiceCommands, isLikelyVoiceCommand } from "@/lib/transcription/voiceCommands";
+import {
+  isExplicitScripture,
+  isOperatorVerifyOnly,
+  pickAutoOutputSuggestion,
+  rankSuggestions,
+} from "@/lib/transcription/suggestionRouting";
+import {
+  createVoiceNavGuard,
+  rearmVoiceNav,
+  recordVerseNavAccepted,
+  resetVoiceNavGuard,
+  shouldAcceptVerseNav,
+} from "@/lib/transcription/voiceNavGuard";
 import { preprocessTranscriptForDetection } from "@/lib/transcription/transcriptPreprocess";
+import {
+  recordCorrectionAccept,
+  recordCorrectionIgnore,
+  recordCorrectionOverride,
+} from "@/lib/transcription/correctionMemory";
 import {
   audioInputLabel,
   preflightAudioInput,
@@ -34,6 +52,7 @@ import {
   pickValidAudioDeviceId,
 } from "@/lib/transcription/webSpeechProvider";
 import type { TranscriptionEngine } from "@/lib/transcription/engine";
+import { diagnoseListening, faultMessage } from "@/lib/transcription/engineHealth";
 import { createTranscriptionEngine } from "@/lib/transcription/engineFactory";
 import {
   engineConfigError,
@@ -126,6 +145,8 @@ interface TranscriptionState {
   saveSession: (title?: string) => Promise<string | null>;
   discardSession: () => void;
   ignoreSuggestion: (id: string) => void;
+  /** Operator picked a different reference for the same ASR phrase — learn and preview. */
+  correctSuggestionReference: (id: string, reference: string) => Promise<void>;
   markSuggestionStatus: (id: string, status: ScriptureSuggestion["status"]) => void;
   tickElapsed: () => void;
   resetListeningWorkspace: () => void;
@@ -137,6 +158,7 @@ let engineModelId: string | null = null;
 let levelMonitor: AudioLevelMonitor | null = null;
 let segmentCounter = 0;
 let partialScanTimer: number | undefined;
+const voiceNavGuard = createVoiceNavGuard();
 let noSignalTimer: number | undefined;
 let lastReportedAudioLevel = 0;
 let lastAudioLevelEmit = 0;
@@ -186,12 +208,16 @@ async function startLevelMonitor(
   noSignalTimer = window.setTimeout(() => {
     const state = get();
     if (state.status !== "listening" && state.status !== "processing" && state.status !== "reconnecting") return;
-    if (state.segments.length > 0 || state.partialText.trim()) return;
-    if (sessionPeakAudioLevel >= 0.02) return;
-    set({
-      audioWarning:
-        "Still no audio on the selected input — verify Windows Sound → Input, speak into the mic, or set this device as the default recording device.",
-    });
+    // A working microphone used to silence this warning entirely, so an engine that
+    // returns nothing looked identical to a healthy session.
+    const hasTranscript = state.segments.length > 0 || state.partialText.trim().length > 0;
+    const engineLabel =
+      state.models.find((m) => m.id === state.modelId)?.label ?? "The speech engine";
+    const message = faultMessage(
+      diagnoseListening({ hasTranscript, peakAudioLevel: sessionPeakAudioLevel }),
+      engineLabel,
+    );
+    if (message) set({ audioWarning: message });
   }, NO_SIGNAL_WARN_MS);
 }
 
@@ -300,27 +326,21 @@ function activeSuggestions(state: TranscriptionState): ScriptureSuggestion[] {
 }
 
 /**
- * Auto-go-live is only safe for references the preacher actually cited. We only
- * project automatically when ALL of the following hold:
- *   1. the detection came from finalized transcript text, not a transient
- *      partial (mis-heard partials get revised away and were the main cause of
- *      "phantom" verses appearing on the projector), and
- *   2. it is an explicit reference (not a paraphrase/quote guess) that cleared
- *      the low-confidence bar.
- * Everything else is staged as a preview for the operator to confirm.
+ * Auto-go-live is only for explicit scripture citations from finalized text.
+ * Quotes / paraphrases stay queued for operator verification unless the
+ * operator explicitly Previews or presses Go live (`forceStage`).
  */
 async function applySuggestionOutput(
   suggestion: ScriptureSuggestion,
   get: () => TranscriptionState,
   set: (partial: Partial<TranscriptionState> | ((s: TranscriptionState) => Partial<TranscriptionState>)) => void,
-  options?: { allowAutoLive?: boolean },
+  options?: { allowAutoLive?: boolean; forceStage?: boolean },
 ) {
   const state = get();
   const allowAutoLive = options?.allowAutoLive ?? false;
-  const isConfidentExplicit =
-    suggestion.detectionType === "explicit" && suggestion.confidenceLevel !== "low";
+  const forceStage = options?.forceStage ?? false;
 
-  if (allowAutoLive && state.autoGoLive && isConfidentExplicit) {
+  if (allowAutoLive && state.autoGoLive && isExplicitScripture(suggestion)) {
     const session = await presentDetectedScripture(suggestion, state.previewLayout);
     set({
       verseSession: session,
@@ -328,6 +348,12 @@ async function applySuggestionOutput(
       lastVoiceAction: `Auto live — ${suggestion.reference}`,
     });
     get().markSuggestionStatus(suggestion.id, "live");
+    return;
+  }
+
+  // Keep speculative hits in the suggestion queue until the operator acts.
+  if (isOperatorVerifyOnly(suggestion) && !forceStage) {
+    set({ selectedSuggestionId: suggestion.id });
     return;
   }
 
@@ -403,12 +429,18 @@ async function mergeDetections(
         versePreview: repeat.versePreview,
         detectedPhrase: repeat.detectedPhrase,
         translationAbbr: repeat.translationAbbr,
+        detectionType: repeat.detectionType,
+        confidence: repeat.confidence,
+        confidenceLevel: repeat.confidenceLevel,
       };
       set((s) => ({
         suggestions: s.suggestions.map((item) => (item.id === existing.id ? refreshed : item)),
         selectedSuggestionId: existing.id,
       }));
-      await applySuggestionOutput(refreshed, get, set, { allowAutoLive });
+      // Only re-project explicit citations; quotes remain queued.
+      if (!isOperatorVerifyOnly(refreshed)) {
+        await applySuggestionOutput(refreshed, get, set, { allowAutoLive });
+      }
       return;
     }
   }
@@ -417,19 +449,27 @@ async function mergeDetections(
     ...d,
     id: newSuggestionId(),
     segmentId,
+    // Quotes / paraphrases wait in the suggestion list for operator verification.
     status: "pending",
     createdAt: new Date().toISOString(),
   }));
 
+  // Prefer book/chapter hits for selection; keep weak quote guesses in the list
+  // but do not let them steal preview/projection from real references.
+  const ranked = rankSuggestions(newSuggestions);
+
+  // Explicit citations and repaired/learned references stage automatically;
+  // quotes and paraphrases wait in the queue for the operator.
+  const top = pickAutoOutputSuggestion(ranked);
+
   set((s) => ({
-    suggestions: [...newSuggestions, ...s.suggestions],
+    suggestions: [...ranked, ...s.suggestions],
     segments: segmentId
       ? s.segments.map((seg) => (seg.id === segmentId ? { ...seg, hasDetection: true } : seg))
       : s.segments,
-    selectedSuggestionId: newSuggestions[0]?.id ?? s.selectedSuggestionId,
+    selectedSuggestionId: top?.id ?? s.selectedSuggestionId,
   }));
 
-  const top = newSuggestions.find((s) => s.detectionType === "explicit") ?? newSuggestions[0];
   if (top) {
     await applySuggestionOutput(top, get, set, { allowAutoLive });
   }
@@ -444,8 +484,9 @@ function resolveDetectionContext(state: TranscriptionState): DetectionContext | 
       return { bookNumber: verse.book_number, bookName: verse.book_name, chapter: verse.chapter };
     }
   }
-  // Prefer the operator-selected suggestion so retellings resolve against the
-  // confirmed sermon passage rather than an older accidental hit.
+  // Prefer what is currently on air, then the operator-selected suggestion, so
+  // "look at verse 8" sticks to the live sermon passage.
+  const live = state.suggestions.find((s) => s.status === "live" && s.verses.length > 0);
   const selected =
     state.selectedSuggestionId != null
       ? state.suggestions.find(
@@ -453,7 +494,9 @@ function resolveDetectionContext(state: TranscriptionState): DetectionContext | 
         )
       : undefined;
   const recent =
-    selected ?? state.suggestions.find((s) => s.status !== "ignored" && s.verses.length > 0);
+    live ??
+    selected ??
+    state.suggestions.find((s) => s.status !== "ignored" && s.verses.length > 0);
   const verse = recent?.verses[0];
   if (verse) {
     return { bookNumber: verse.book_number, bookName: verse.book_name, chapter: verse.chapter };
@@ -461,45 +504,100 @@ function resolveDetectionContext(state: TranscriptionState): DetectionContext | 
   return undefined;
 }
 
-function resolveActiveVerseSession(state: TranscriptionState): ActiveVerseSession | null {
-  if (state.verseSession) return state.verseSession;
-  const latest = state.suggestions.find(
-    (s) => s.status !== "ignored" && s.verses.length > 0,
-  );
-  if (!latest) return null;
-  return createVerseSessionFromSuggestion(latest);
+async function resolveActiveVerseSession(
+  state: TranscriptionState,
+): Promise<ActiveVerseSession | null> {
+  if (state.verseSession && state.verseSession.verses.length > 1) {
+    return state.verseSession;
+  }
+
+  const suggestion =
+    (state.selectedSuggestionId != null
+      ? state.suggestions.find(
+          (s) => s.id === state.selectedSuggestionId && s.status !== "ignored" && s.verses.length > 0,
+        )
+      : undefined) ??
+    state.suggestions.find((s) => s.status === "live" && s.verses.length > 0) ??
+    state.suggestions.find((s) => s.status !== "ignored" && s.verses.length > 0);
+
+  if (state.verseSession && !suggestion) {
+    // Single-verse session with no suggestion to expand — still usable.
+    return state.verseSession;
+  }
+  if (!suggestion) return state.verseSession;
+
+  // Expand to the full chapter so "next verse" can step beyond a one-verse hit.
+  const expanded = await createExpandedVerseSessionFromSuggestion(suggestion);
+  if (state.verseSession) {
+    const current = getCurrentVerse(state.verseSession) ?? state.verseSession.verses[0];
+    if (current) {
+      const idx = expanded.verses.findIndex(
+        (v) =>
+          v.book_number === current.book_number &&
+          v.chapter === current.chapter &&
+          v.verse === current.verse,
+      );
+      if (idx >= 0) {
+        return { ...expanded, verseIndex: idx };
+      }
+    }
+  }
+  return expanded;
 }
 
 async function processVoiceCommands(
   text: string,
   get: () => TranscriptionState,
   set: (partial: Partial<TranscriptionState> | ((s: TranscriptionState) => Partial<TranscriptionState>)) => void,
+  options?: { source?: "final" | "partial" },
 ): Promise<boolean> {
   const cleaned = preprocessTranscriptForDetection(text);
   if (cleaned.length < 3) return false;
 
   const bible = useBibleStore.getState();
   const cmd = parseVoiceCommands(cleaned, bible.translations);
-  if (cmd.type === "none") return false;
+  if (cmd.type === "none") {
+    // A non-nav final utterance re-arms navigation for the next cue.
+    if (options?.source === "final") {
+      rearmVoiceNav(voiceNavGuard);
+    }
+    return false;
+  }
 
   const state = get();
 
   if (cmd.type === "next_verse" || cmd.type === "prev_verse") {
-    const session = resolveActiveVerseSession(state);
+    // Only finalized speech steps verses — partials were looping +1 repeatedly
+    // while ASR kept rewriting the same "next verse" hypothesis.
+    if (options?.source !== "final") {
+      return true;
+    }
+
+    const now = Date.now();
+    if (!shouldAcceptVerseNav(voiceNavGuard, cmd.type, now)) {
+      return true;
+    }
+
+    const session = await resolveActiveVerseSession(state);
     if (!session) {
       set({ lastVoiceAction: "No active passage — cite a scripture first." });
       return true;
     }
+
+    // Exactly one verse per spoken cue — never accumulate multiple steps.
     const delta = cmd.type === "next_verse" ? 1 : -1;
     const next = stepVerseSession(session, delta);
     if (!next) {
       set({
+        verseSession: session,
         lastVoiceAction:
           delta > 0 ? "Already at the last verse." : "Already at the first verse.",
       });
       return true;
     }
-    set({ verseSession: next, lastVoiceAction: sessionProgressLabel(next) });
+
+    recordVerseNavAccepted(voiceNavGuard, cmd.type, now);
+    set({ verseSession: next, lastVoiceAction: `Voice · ${sessionProgressLabel(next)}` });
     await presentVerseSession(next, state.previewLayout, shouldPresentVerseToProgram(get().autoGoLive));
     return true;
   }
@@ -510,7 +608,7 @@ async function processVoiceCommands(
       return true;
     }
     bible.setTranslation(cmd.translation.id);
-    const session = resolveActiveVerseSession(state);
+    const session = await resolveActiveVerseSession(state);
     if (session) {
       const updated = await reloadVerseSessionTranslation(session, cmd.translation.id);
       if (updated) {
@@ -538,10 +636,12 @@ async function runSegmentScan(
   segmentId?: string,
 ) {
   const cleaned = preprocessTranscriptForDetection(text);
-  if (get().suggestionsMuted || cleaned.length < 3) return;
+  if (cleaned.length < 3) return;
 
-  if (await processVoiceCommands(cleaned, get, set)) return;
+  // Voice navigation must work even when scripture suggestions are muted.
+  if (await processVoiceCommands(cleaned, get, set, { source: "final" })) return;
   if (isLikelyVoiceCommand(cleaned)) return;
+  if (get().suggestionsMuted) return;
 
   const translationId = resolveTranslationId();
   if (!translationId) {
@@ -573,8 +673,8 @@ async function runContextScan(
 ) {
   if (get().suggestionsMuted) return;
 
-  const partial = preprocessTranscriptForDetection(get().partialText);
-  if (partial.length >= 3 && (await processVoiceCommands(partial, get, set))) return;
+  // Do not run verse navigation from partial/context scans — that caused
+  // repeated +1 steps while ASR kept the same "next verse" hypothesis alive.
 
   const translationId = resolveTranslationId();
   if (!translationId) {
@@ -584,6 +684,10 @@ async function runContextScan(
 
   const context = buildDetectionContext(get().segments, get().partialText);
   if (context.length < 3) return;
+
+  // Skip scripture detection while the live hypothesis is clearly a nav cue.
+  const partial = preprocessTranscriptForDetection(get().partialText);
+  if (partial.length >= 3 && isLikelyVoiceCommand(partial)) return;
 
   set({ scanning: true, lastScanAt: new Date().toLocaleTimeString() });
   try {
@@ -802,7 +906,14 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
   selectAndPresentSuggestion: async (suggestion) => {
     set({ selectedSuggestionId: suggestion.id });
     const state = get();
-    const takeLive = shouldPresentVerseToProgram(state.autoGoLive);
+
+    // Possible quotes stay in the queue until Preview / Go live — never jump
+    // onto the projector from a list click, even when Auto is on.
+    if (isOperatorVerifyOnly(suggestion)) {
+      return;
+    }
+
+    const takeLive = shouldPresentVerseToProgram(state.autoGoLive) && isExplicitScripture(suggestion);
 
     if (takeLive) {
       const session = await presentDetectedScripture(suggestion, state.previewLayout);
@@ -815,11 +926,12 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
       return;
     }
 
-    await applySuggestionOutput(suggestion, get, set);
+    await applySuggestionOutput(suggestion, get, set, { forceStage: true });
   },
 
   previewSuggestion: async (suggestion) => {
-    await applySuggestionOutput(suggestion, get, set);
+    // Operator chose Preview — allowed for quotes after verification glance.
+    await applySuggestionOutput(suggestion, get, set, { forceStage: true });
   },
 
   refreshPreviewOutput: async () => {
@@ -938,6 +1050,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
     const audioDeviceId = afterPreflight.audioDeviceId;
 
     clearReferenceDedupeCache();
+    resetVoiceNavGuard(voiceNavGuard);
 
     const freshSession = state.status !== "paused" && state.status !== "stopped";
     if (freshSession) {
@@ -982,10 +1095,6 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
         onPartial: (text) => {
           set({ partialText: text, audioWarning: null });
           useCaptionStore.getState().pushPartial(text);
-          const cleaned = preprocessTranscriptForDetection(text);
-          if (isLikelyVoiceCommand(cleaned)) {
-            void processVoiceCommands(cleaned, get, set);
-          }
           schedulePartialScan(get, set);
         },
         onFinal: async (text) => {
@@ -1006,7 +1115,9 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
             audioWarning: null,
           }));
 
-          if (resolveTranslationId()) {
+          // Verse nav runs on finalized speech only — exactly ±1 per cue.
+          const handledNav = await processVoiceCommands(text, get, set, { source: "final" });
+          if (!handledNav && resolveTranslationId()) {
             await runSegmentScan(get, set, text, segment.id);
             await runContextScan(get, set, segment.id);
           }
@@ -1167,6 +1278,10 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
   },
 
   ignoreSuggestion: (id) => {
+    const prev = get().suggestions.find((item) => item.id === id);
+    if (prev) {
+      recordCorrectionIgnore(prev.detectedPhrase, prev.reference);
+    }
     set((s) => ({
       suggestions: s.suggestions.map((item) =>
         item.id === id ? { ...item, status: "ignored" } : item,
@@ -1175,7 +1290,61 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
     }));
   },
 
+  correctSuggestionReference: async (id, reference) => {
+    const prev = get().suggestions.find((item) => item.id === id);
+    if (!prev) return;
+
+    const translationId = useBibleStore.getState().selectedTranslationId || prev.translationId;
+    try {
+      const result = await api.lookupReference(reference, translationId);
+      const verses = result.search.verses;
+      if (verses.length === 0) return;
+
+      const resolved =
+        result.search.parsed_reference != null
+          ? (() => {
+              const p = result.search.parsed_reference!;
+              if (p.verse_start) {
+                if (p.verse_end && p.verse_end !== p.verse_start) {
+                  return `${p.book_name} ${p.chapter}:${p.verse_start}-${p.verse_end}`;
+                }
+                return `${p.book_name} ${p.chapter}:${p.verse_start}`;
+              }
+              return `${p.book_name} ${p.chapter}`;
+            })()
+          : reference;
+
+      recordCorrectionOverride(prev.detectedPhrase, prev.reference, resolved);
+
+      const corrected: ScriptureSuggestion = {
+        ...prev,
+        reference: resolved,
+        verses,
+        versePreview: verses[0]?.text ?? "",
+        translationId,
+        translationAbbr: verses[0]?.translation_abbr ?? prev.translationAbbr,
+        confidence: Math.max(0.7, prev.confidence),
+        confidenceLevel: "medium",
+        detectionType: "inferred",
+        status: "preview",
+      };
+
+      set((s) => ({
+        suggestions: s.suggestions.map((item) => (item.id === id ? corrected : item)),
+        selectedSuggestionId: id,
+      }));
+
+      await applySuggestionOutput(corrected, get, set);
+    } catch {
+      /* lookup failed — keep prior suggestion */
+    }
+  },
+
   markSuggestionStatus: (id, status) => {
+    const prev = get().suggestions.find((item) => item.id === id);
+    if (status === "live" && prev) {
+      recordCorrectionAccept(prev.detectedPhrase, prev.reference);
+    }
     set((s) => ({
       suggestions: s.suggestions.map((item) => {
         if (item.id === id) return { ...item, status };

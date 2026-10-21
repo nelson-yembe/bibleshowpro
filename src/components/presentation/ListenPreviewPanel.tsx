@@ -293,8 +293,8 @@ export function ListenPreviewPanel() {
         <p className="mt-2 flex items-center gap-1.5 text-[10px] text-[var(--color-subtle)]">
           <Radio className="h-3 w-3" />
           {autoGoLive
-            ? "Auto on: detections go live immediately. Previous/Next steps through verses in the same chapter."
-            : "Auto off: detections stay in preview until you click Go live. Then Previous/Next moves verse 15 → 16 → 17 in the same chapter."}
+            ? "Auto on: explicit scripture citations go live. Possible quotes stay in the list until you Preview or Go live."
+            : "Auto off: explicit citations stage in preview; possible quotes stay in the list until you Preview or Go live."}
         </p>
       </div>
 

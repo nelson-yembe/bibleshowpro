@@ -13,9 +13,21 @@ describe("voiceCommands", () => {
   it("detects next and previous verse phrases", () => {
     expect(parseVoiceCommands("next verse", translations).type).toBe("next_verse");
     expect(parseVoiceCommands("go to the next verse", translations).type).toBe("next_verse");
-    expect(parseVoiceCommands("previous verse", translations).type).toBe("prev_verse");
+    expect(parseVoiceCommands("please next verse", translations).type).toBe("next_verse");
+    expect(parseVoiceCommands("and then the following verse", translations).type).toBe("next_verse");
+    expect(parseVoiceCommands(" previous verse ", translations).type).toBe("prev_verse");
     expect(parseVoiceCommands("go back", translations).type).toBe("prev_verse");
+    expect(parseVoiceCommands("move to the previous verse please", translations).type).toBe("prev_verse");
     expect(isLikelyVoiceCommand("next verse")).toBe(true);
+  });
+
+  it("detects navigation inside longer speech", () => {
+    expect(
+      parseVoiceCommands("Okay church, let's go to the next verse now", translations).type,
+    ).toBe("next_verse");
+    expect(
+      parseVoiceCommands("Before we pray, go back a verse", translations).type,
+    ).toBe("prev_verse");
   });
 
   it("detects translation switches", () => {
@@ -26,6 +38,7 @@ describe("voiceCommands", () => {
 
   it("ignores unrelated speech", () => {
     expect(parseVoiceCommands("John chapter 3 verse 16", translations).type).toBe("none");
+    expect(parseVoiceCommands("next Sunday we will meet", translations).type).toBe("none");
   });
 });
 

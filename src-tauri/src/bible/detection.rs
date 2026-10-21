@@ -29,7 +29,7 @@ static VERSE_AFTER_CHAPTER: Lazy<Regex> = Lazy::new(|| {
 
 static SPACED_CHAPTER_VERSE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
-        r"(?i)(?:\b(?:turn\s+(?:with\s+me\s+to|to)|read(?:ing)?\s+(?:from\s+)?|in\s+|from\s+|let(?:'s|'s)\s+read\s+))?(?P<book>(?:[1-3]\s+|first\s+|second\s+|third\s+)?[a-z]+(?:\s+(?:of\s+)?[a-z]+)*)\.?\s+(?P<chapter>\d+)\s+(?P<verse>\d+)(?:\s*(?:-|through|to)\s*(?P<verse_end>\d+))?",
+        r"(?i)(?:\b(?:turn\s+(?:with\s+me\s+to|to)|go\s+to|look(?:ing)?\s+at|read(?:ing)?\s+(?:from\s+|for\s+)?|in\s+|from\s+|let(?:'s|'s)\s+read\s+))?(?P<book>(?:[1-3]\s+|first\s+|second\s+|third\s+)?[a-z]+(?:\s+(?:of\s+)?[a-z]+)*)\.?\s+(?P<chapter>\d+)\s+(?P<verse>\d+)(?:\s*(?:-|through|to)\s*(?P<verse_end>\d+))?",
     )
     .unwrap()
 });
@@ -58,7 +58,7 @@ static CHAPTER_RANGE: Lazy<Regex> = Lazy::new(|| {
 static CHAPTER_ONLY: Lazy<Regex> = Lazy::new(|| {
     // Negative lookahead-free: stop the book token before the words chapter/verse.
     Regex::new(
-        r"(?i)(?:\b(?:turn\s+(?:with\s+me\s+to|to)|read(?:ing)?\s+(?:from\s+)?|in\s+|from\s+))?(?P<book>(?:[1-3]\s+|first\s+|second\s+|third\s+)?[a-z]+(?:\s+of\s+[a-z]+)?)\.?\s*(?:,\s*)?(?:chapter\s+)?(?P<chapter>\d{1,3})\b",
+        r"(?i)(?:\b(?:turn\s+(?:with\s+me\s+to|to)|go\s+to|look(?:ing)?\s+at|read(?:ing)?\s+(?:from\s+|for\s+)?|in\s+|from\s+))?(?P<book>(?:[1-3]\s+|first\s+|second\s+|third\s+)?[a-z]+(?:\s+of\s+[a-z]+)?)\.?\s*(?:,\s*)?(?:chapter\s+)?(?P<chapter>\d{1,3})\b",
     )
     .unwrap()
 });
@@ -86,7 +86,7 @@ static CONTEXT_CHAPTER_VERSE: Lazy<Regex> = Lazy::new(|| {
 
 static CONTEXT_VERSE_ONLY: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
-        r"(?i)\b(?:verse|verses)\s+(?P<verse>\d{1,3})(?:\s*(?:-|through|to)\s*(?P<verse_end>\d{1,3}))?",
+        r"(?i)\b(?:(?:look(?:ing)?\s+at|read(?:ing)?\s+for|i(?:'|’)ll\s+read(?:\s+for)?)\s+)?(?:verse|verses)\s+(?P<verse>\d{1,3})(?:\s*(?:-|through|to)\s*(?P<verse_end>\d{1,3}))?",
     )
     .unwrap()
 });
@@ -318,9 +318,14 @@ fn preprocess_spoken_text(text: &str) -> PreprocessResult {
     let fillers = [
         "turn with me to ",
         "turn to ",
+        "go to ",
+        "go with ",
+        "looking at ",
+        "look at ",
         "reading from ",
         "reading ",
         "read from ",
+        "read for ",
         "read ",
         "the scripture ",
         "scripture ",
@@ -331,6 +336,17 @@ fn preprocess_spoken_text(text: &str) -> PreprocessResult {
         if let Some(rest) = s.strip_prefix(filler) {
             s = rest.to_string();
             break;
+        }
+    }
+    // Mid-sentence navigation cues: "… Go to Joshua chapter 14"
+    for cue in [" go to ", " turn to ", " look at ", " looking at "] {
+        if let Some(idx) = s.find(cue) {
+            // Keep the cue-bearing tail when it looks like a scripture announcement.
+            let tail = s[idx + cue.len()..].trim_start();
+            if tail.contains("chapter") || tail.contains("verse") || resolve_book(tail.split_whitespace().next().unwrap_or("")).is_some() {
+                s = tail.to_string();
+                break;
+            }
         }
     }
 
@@ -426,8 +442,19 @@ fn apply_asr_pattern_repairs(text: &str) -> String {
     });
     static PLUS_BETWEEN_DIGITS: Lazy<Regex> =
         Lazy::new(|| Regex::new(r"(\d)\s*\+\s*(\d)").unwrap());
+    static SLASH_BETWEEN_DIGITS: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(\d{1,3})\s*/\s*(\d{1,3})").unwrap());
     static PERCENT_AFTER_DIGIT: Lazy<Regex> =
         Lazy::new(|| Regex::new(r"(\d)\s*%").unwrap());
+    // "Numbers are the 14 again" / "Numbers is the 14"
+    static NUMBERS_ARE_THE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)\bnumbers\s+(?:are|is)\s+(?:the\s+)?(\d{1,3})\b").unwrap()
+    });
+    // "Joshua chapter 14. 12." → "Joshua chapter 14 verse 12"
+    // (no look-ahead — Rust `regex` does not support it)
+    static CHAPTER_BARE_VERSE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)\bchapter\s+(\d{1,3})\s+(\d{1,3})\b").unwrap()
+    });
 
     let mut s = DOUBLE_CHAPTER
         .replace_all(text, "chapter $2 verse")
@@ -436,7 +463,15 @@ fn apply_asr_pattern_repairs(text: &str) -> String {
         .replace_all(&s, "chapter $1 verse $2")
         .into_owned();
     s = PLUS_BETWEEN_DIGITS.replace_all(&s, "$1 $2").into_owned();
+    s = SLASH_BETWEEN_DIGITS.replace_all(&s, "$1:$2").into_owned();
     s = PERCENT_AFTER_DIGIT.replace_all(&s, "$1").into_owned();
+    s = NUMBERS_ARE_THE
+        .replace_all(&s, "numbers $1")
+        .into_owned();
+    // Skip already-colonized pairs ("chapter 14 12:3" is rare; CHAPTER_THEN_VERSE covers bare pairs).
+    s = CHAPTER_BARE_VERSE
+        .replace_all(&s, "chapter $1 verse $2")
+        .into_owned();
     s
 }
 
@@ -444,7 +479,7 @@ fn apply_asr_pattern_repairs(text: &str) -> String {
 /// (Rust `regex` has no look-ahead, so the cue is captured and preserved.)
 fn apply_speech_confusion_aliases(text: &str) -> String {
     static CONFUSIONS: Lazy<Vec<(Regex, &'static str)>> = Lazy::new(|| {
-        let cue = r"(\s+(?:chapter|verse|verses|after|that|\d))";
+        let cue = r"(\s+(?:chapter|verse|verses|after|that|\d|/))";
         [
             (format!(r"(?i)\befficient\b{cue}"), "ephesians"),
             (format!(r"(?i)\bephesis\b{cue}"), "ephesians"),
@@ -452,6 +487,9 @@ fn apply_speech_confusion_aliases(text: &str) -> String {
             (format!(r"(?i)\brelationship\b{cue}"), "revelation"),
             (format!(r"(?i)\bmarrakesh\b{cue}"), "malachi"),
             (format!(r"(?i)\bmalakai\b{cue}"), "malachi"),
+            // "Go with evils. 11/1" → Hebrews 11:1
+            (format!(r"(?i)\bevil(?:s)?\b{cue}"), "hebrews"),
+            (format!(r"(?i)\bhebr(?:ew|ews)?\b{cue}"), "hebrews"),
         ]
         .into_iter()
         .map(|(pat, repl)| (Regex::new(&pat).expect("speech confusion regex"), repl))
@@ -701,10 +739,14 @@ fn collect_from_patterns(text: &str, matches: &mut Vec<ScriptureDetectionMatch>)
             continue;
         };
         let tail = text[full.end()..].trim_start();
+        let tail_lower = tail.to_ascii_lowercase();
         if tail.starts_with(':')
-            || tail.to_ascii_lowercase().starts_with("verse")
-            || tail.to_ascii_lowercase().starts_with("verses")
-            || tail.to_ascii_lowercase().starts_with("chapter")
+            || tail.starts_with('-')
+            || tail_lower.starts_with("verse")
+            || tail_lower.starts_with("verses")
+            || tail_lower.starts_with("chapter")
+            || tail_lower.starts_with("through")
+            || tail_lower.starts_with("to ")
             || tail.chars().next().is_some_and(|c| c.is_ascii_digit())
         {
             continue;
@@ -850,26 +892,50 @@ pub fn detect_references_with_context(
     dedupe_matches(matches)
 }
 
-/// If we already have "2 Peter 1" (chapter only) and the same window later says
-/// "verse 1", promote to "2 Peter 1:1".
+/// If we already have "Joshua 14" (chapter only) and the same window later says
+/// "verse 12" or a bare "12", promote to "Joshua 14:12".
 fn attach_nearby_verses(text: &str, matches: &mut Vec<ScriptureDetectionMatch>) {
+    static BARE_VERSE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(
+            r"(?i)(?:(?:verse|verses|look(?:ing)?\s+at|read(?:ing)?\s+for)\s+)?(?P<verse>\d{1,3})\b",
+        )
+        .unwrap()
+    });
+
     let mut extras = Vec::new();
     for m in matches.iter() {
         if m.parsed.verse_start.is_some() {
             continue;
         }
         let chapter_pat = format!(
-            r"(?i)\bchapter\s+{}\b",
+            r"(?i)\b(?:chapter\s+)?{}\b",
             regex::escape(&m.parsed.chapter.to_string())
         );
         let Ok(chapter_re) = Regex::new(&chapter_pat) else {
             continue;
         };
+        // Prefer the chapter occurrence nearest the book announcement.
         let Some(chapter_match) = chapter_re.find(text) else {
             continue;
         };
         let after = &text[chapter_match.end()..];
-        let Some(caps) = CONTEXT_VERSE_ONLY.captures(after) else {
+        let after_trim = after.trim_start();
+        // "chapter 1-2" / "chapter 1 through 2" are chapter ranges, not verse 2.
+        let after_lower = after_trim.to_ascii_lowercase();
+        if after_trim.starts_with('-')
+            || after_lower.starts_with("through")
+            || after_lower.starts_with("to ")
+        {
+            continue;
+        }
+        // Explicit "verse N" can arrive after a short sermon bridge; allow a
+        // longer look-ahead. Bare digits stay tight to avoid false joins.
+        let verse_window = after.get(..320).unwrap_or(after);
+        let bare_window = after.get(..80).unwrap_or(after);
+        let Some(caps) = CONTEXT_VERSE_ONLY
+            .captures(verse_window)
+            .or_else(|| BARE_VERSE.captures(bare_window))
+        else {
             continue;
         };
         let Some(verse) = caps
@@ -878,6 +944,10 @@ fn attach_nearby_verses(text: &str, matches: &mut Vec<ScriptureDetectionMatch>) 
         else {
             continue;
         };
+        if verse == m.parsed.chapter {
+            // Avoid "chapter 14" + "14" false promotion.
+            continue;
+        }
         let verse_end = caps
             .name("verse_end")
             .and_then(|v| v.as_str().parse::<i32>().ok());
@@ -1271,5 +1341,87 @@ mod tests {
     fn detects_chapter_from_verse_connector() {
         let found = detect_references_in_text("Genesis chapter 1 from verse 1.");
         assert!(found.iter().any(|m| m.normalized_reference == "Genesis 1:1"));
+    }
+
+    #[test]
+    fn detects_go_to_joshua_chapter_then_bare_verse() {
+        let found = detect_references_in_text("Go to Joshua chapter 14. 12.");
+        assert!(
+            found.iter().any(|m| m.normalized_reference == "Joshua 14:12"),
+            "got: {:?}",
+            found.iter().map(|m| &m.normalized_reference).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn repairs_numbers_are_the_chapter() {
+        let found = detect_references_in_text("Numbers are the 14 again");
+        assert!(found.iter().any(|m| {
+            m.parsed.book_name == "Numbers" && m.parsed.chapter == 14
+        }));
+    }
+
+    #[test]
+    fn context_resolves_look_at_verse_after_numbers() {
+        let found = detect_references_with_context(
+            "Look at verse 8",
+            Some(&ctx(4, "Numbers", Some(14))),
+        );
+        assert!(found.iter().any(|m| m.normalized_reference == "Numbers 14:8"));
+    }
+
+    #[test]
+    fn repairs_go_with_evils_slash_to_hebrews() {
+        let found = detect_references_in_text("Go with evils. 11/1");
+        assert!(
+            found.iter().any(|m| m.normalized_reference == "Hebrews 11:1"),
+            "got: {:?}",
+            found.iter().map(|m| &m.normalized_reference).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn attaches_bare_digit_after_chapter_announcement() {
+        let found = detect_references_in_text(
+            "Joshua chapter 14. I will read for 12. Now therefore give me this mountain.",
+        );
+        assert!(
+            found.iter().any(|m| m.normalized_reference == "Joshua 14:12"),
+            "got: {:?}",
+            found.iter().map(|m| &m.normalized_reference).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn detects_proverbs_chapter_only_from_sermon_lead() {
+        let found = detect_references_in_text(
+            "For a moment before we just go into a time of prayer. Proverbs 23. I tell you today, things are going to change.",
+        );
+        assert!(
+            found.iter().any(|m| m.normalized_reference == "Proverbs 23"),
+            "got: {:?}",
+            found.iter().map(|m| &m.normalized_reference).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn attaches_verse_29_after_proverbs_23_bridge() {
+        let found = detect_references_in_text(
+            "Proverbs 23. I tell you today, things are going to change. Many things are going to change today. Yeah, yeah, yeah, yeah, yeah. Verse 29",
+        );
+        assert!(
+            found.iter().any(|m| m.normalized_reference == "Proverbs 23:29"),
+            "got: {:?}",
+            found.iter().map(|m| &m.normalized_reference).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn context_resolves_verse_29_against_proverbs_23() {
+        let found = detect_references_with_context(
+            "Verse 29",
+            Some(&ctx(20, "Proverbs", Some(23))),
+        );
+        assert!(found.iter().any(|m| m.normalized_reference == "Proverbs 23:29"));
     }
 }

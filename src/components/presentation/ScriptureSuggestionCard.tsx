@@ -18,7 +18,6 @@ import { usePresentationStore } from "@/stores/presentationStore";
 import { useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { useBibleStore } from "@/stores/bibleStore";
-import { api } from "@/lib/tauri";
 
 const confidenceStyles: Record<ConfidenceLevel, string> = {
   high: "border-emerald-500/40 bg-emerald-950/20",
@@ -46,6 +45,7 @@ export function ScriptureSuggestionCard({ suggestion, selected, onSelect }: Scri
   const goLiveSelectedSuggestion = useTranscriptionStore((s) => s.goLiveSelectedSuggestion);
   const markStatus = useTranscriptionStore((s) => s.markSuggestionStatus);
   const ignore = useTranscriptionStore((s) => s.ignoreSuggestion);
+  const correctSuggestionReference = useTranscriptionStore((s) => s.correctSuggestionReference);
   const program = usePresentationStore((s) => s.program);
   const liveFollow = usePresentationStore((s) => s.liveFollow);
   const [busy, setBusy] = useState(false);
@@ -99,21 +99,7 @@ export function ScriptureSuggestionCard({ suggestion, selected, onSelect }: Scri
   const loadAlternative = async (reference: string) => {
     setBusy(true);
     try {
-      const translationId = useBibleStore.getState().selectedTranslationId;
-      const result = await api.lookupReference(reference, translationId);
-      const verses = result.search.verses;
-      if (verses.length === 0) return;
-      const alt: ScriptureSuggestion = {
-        ...suggestion,
-        reference,
-        verses,
-        versePreview: verses[0]?.text ?? "",
-        translationAbbr: verses[0]?.translation_abbr ?? suggestion.translationAbbr,
-        confidence: Math.max(0.5, suggestion.confidence - 0.1),
-        confidenceLevel: "medium",
-        detectionType: "explicit",
-      };
-      await previewSuggestion(alt);
+      await correctSuggestionReference(suggestion.id, reference);
     } finally {
       setBusy(false);
     }
