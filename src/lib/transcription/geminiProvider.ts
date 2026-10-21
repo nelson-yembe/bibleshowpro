@@ -4,6 +4,7 @@ import type {
   TranscriptionEngine,
   TranscriptionEngineOptions,
 } from "@/lib/transcription/engine";
+import { PCM_WORKLET_PROCESSOR, PCM_WORKLET_URL } from "@/lib/transcription/pcm";
 import {
   buildAudioMessage,
   buildLiveUrl,
@@ -15,18 +16,6 @@ import {
   GEMINI_SAMPLE_RATE,
   parseServerMessage,
 } from "@/lib/transcription/geminiProtocol";
-
-/** Taps the render quantum and hands raw frames back on the message port. */
-const PCM_WORKLET = `
-class BspPcmTap extends AudioWorkletProcessor {
-  process(inputs) {
-    const channel = inputs[0] && inputs[0][0];
-    if (channel && channel.length) this.port.postMessage(channel.slice(0));
-    return true;
-  }
-}
-registerProcessor('bsp-pcm-tap', BspPcmTap);
-`;
 
 const MAX_RECONNECTS = 3;
 const RECONNECT_DELAY_MS = 1200;
@@ -129,16 +118,9 @@ export class GeminiTranscriptionEngine implements TranscriptionEngine {
     this.stream = await openAudioInputStream(this.deviceId);
     // Asking for the target rate lets the browser resample the mic for us.
     this.audioContext = new AudioContext({ sampleRate: GEMINI_SAMPLE_RATE });
-    const blobUrl = URL.createObjectURL(
-      new Blob([PCM_WORKLET], { type: "application/javascript" }),
-    );
-    try {
-      await this.audioContext.audioWorklet.addModule(blobUrl);
-    } finally {
-      URL.revokeObjectURL(blobUrl);
-    }
+    await this.audioContext.audioWorklet.addModule(PCM_WORKLET_URL);
     this.source = this.audioContext.createMediaStreamSource(this.stream);
-    this.worklet = new AudioWorkletNode(this.audioContext, "bsp-pcm-tap");
+    this.worklet = new AudioWorkletNode(this.audioContext, PCM_WORKLET_PROCESSOR);
     this.worklet.port.onmessage = (event: MessageEvent<Float32Array>) => {
       this.enqueue(event.data);
     };

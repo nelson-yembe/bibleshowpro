@@ -1,5 +1,12 @@
 /** Audio conversions shared by the streaming engines. */
 
+/**
+ * Served from the app origin rather than a blob URL — worklet modules are checked
+ * against script-src, which does not allow blob:.
+ */
+export const PCM_WORKLET_URL = "/worklets/pcm-tap.js";
+export const PCM_WORKLET_PROCESSOR = "bsp-pcm-tap";
+
 /** Float samples in [-1, 1] to little-endian signed 16-bit PCM. */
 export function floatTo16BitPcm(input: Float32Array): ArrayBuffer {
   const buffer = new ArrayBuffer(input.length * 2);

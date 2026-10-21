@@ -4,24 +4,16 @@ import type {
   TranscriptionEngine,
   TranscriptionEngineOptions,
 } from "@/lib/transcription/engine";
-import { encodePcmBase64 } from "@/lib/transcription/pcm";
+import {
+  encodePcmBase64,
+  PCM_WORKLET_PROCESSOR,
+  PCM_WORKLET_URL,
+} from "@/lib/transcription/pcm";
 import {
   DEFAULT_SEGMENTER_CONFIG,
   SpeechSegmenter,
 } from "@/lib/transcription/speechSegmenter";
 import { tauriInvoke } from "@/lib/tauri";
-
-/** Same tap as the Gemini engine; kept local so neither engine depends on the other. */
-const PCM_WORKLET = `
-class BspWhisperTap extends AudioWorkletProcessor {
-  process(inputs) {
-    const channel = inputs[0] && inputs[0][0];
-    if (channel && channel.length) this.port.postMessage(channel.slice(0));
-    return true;
-  }
-}
-registerProcessor('bsp-whisper-tap', BspWhisperTap);
-`;
 
 const SAMPLE_RATE = DEFAULT_SEGMENTER_CONFIG.sampleRate;
 
@@ -124,16 +116,9 @@ export class WhisperTranscriptionEngine implements TranscriptionEngine {
   private async openAudio(deviceId: string | null): Promise<void> {
     this.stream = await openAudioInputStream(deviceId);
     this.audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
-    const blobUrl = URL.createObjectURL(
-      new Blob([PCM_WORKLET], { type: "application/javascript" }),
-    );
-    try {
-      await this.audioContext.audioWorklet.addModule(blobUrl);
-    } finally {
-      URL.revokeObjectURL(blobUrl);
-    }
+    await this.audioContext.audioWorklet.addModule(PCM_WORKLET_URL);
     this.source = this.audioContext.createMediaStreamSource(this.stream);
-    this.worklet = new AudioWorkletNode(this.audioContext, "bsp-whisper-tap");
+    this.worklet = new AudioWorkletNode(this.audioContext, PCM_WORKLET_PROCESSOR);
     this.worklet.port.onmessage = (event: MessageEvent<Float32Array>) => {
       if (this.stopping || this.paused) return;
       const segment = this.segmenter.push(event.data);
