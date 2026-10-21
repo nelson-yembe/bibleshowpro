@@ -79,11 +79,11 @@ export const TRANSCRIPTION_MODELS: TranscriptionModel[] = [
   },
   {
     id: "web-speech-offline",
-    label: "Web Speech (Local hint)",
+    label: "Web Speech (Balanced)",
     profile: "balanced",
     latencyMs: 600,
-    requiresInternet: false,
-    description: "Browser recognition with offline preference when supported by your browser.",
+    requiresInternet: true,
+    description: "Browser recognition tuned for accuracy over speed. Audio still goes to the browser's speech service, so internet is required.",
   },
 ];
 
