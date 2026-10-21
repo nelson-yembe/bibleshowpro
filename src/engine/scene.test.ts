@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sceneFromVerses, DEFAULT_THEME } from "@/engine/scene";
+import { sceneFromServiceItem, sceneFromVerses, DEFAULT_THEME } from "@/engine/scene";
 import type { VerseResult } from "@/lib/tauri";
 import {
   createInitialSnapshot,
@@ -26,6 +26,44 @@ describe("scene engine", () => {
     expect(scene.type).toBe("scripture_fullscreen");
     expect(scene.content.reference).toBe("John 3:16");
     expect(scene.content.body).toContain("16");
+  });
+});
+
+describe("sceneFromServiceItem (corrupt content_json)", () => {
+  it("builds a scene from valid content", () => {
+    const scene = sceneFromServiceItem(
+      "announcement",
+      "Welcome",
+      JSON.stringify({ body: "Good morning" }),
+    );
+    expect(scene.type).toBe("announcement");
+    expect(scene.content.body).toBe("Good morning");
+  });
+
+  it("falls back to the item title when content is malformed JSON", () => {
+    const scene = sceneFromServiceItem("announcement", "Welcome", "{not json");
+    expect(scene.type).toBe("announcement");
+    expect(scene.content.body).toBe("Welcome");
+  });
+
+  it("does not throw when content is null", () => {
+    const scene = sceneFromServiceItem("announcement", "Welcome", "null");
+    expect(scene.content.body).toBe("Welcome");
+  });
+
+  it("does not throw when content is a JSON array", () => {
+    const scene = sceneFromServiceItem("announcement", "Welcome", "[1,2,3]");
+    expect(scene.content.body).toBe("Welcome");
+  });
+
+  it("does not throw when content is a bare string", () => {
+    const scene = sceneFromServiceItem("announcement", "Welcome", '"just text"');
+    expect(scene.content.body).toBe("Welcome");
+  });
+
+  it("still resolves a scripture item with unusable content", () => {
+    const scene = sceneFromServiceItem("scripture", "John 3:16", "");
+    expect(scene.type).toBe("scripture_fullscreen");
   });
 });
 

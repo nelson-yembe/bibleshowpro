@@ -3,6 +3,7 @@ import { copyrightLine, parseSongTheme } from "@/lib/songTypes";
 import type { ThemeConfig } from "@/lib/tauri";
 import { mergeThemeConfig } from "@/lib/themeConfig";
 import { buildLowerThirdTheme } from "@/lib/lowerThird";
+import { parseServiceItemContent } from "@/lib/serviceItemContent";
 import { broadcastProgramReliable } from "@/engine/broadcast";
 import { persistSnapshot } from "@/engine/previewProgram";
 import { sceneFromServiceItem, type Scene } from "@/engine/scene";
@@ -174,6 +175,6 @@ export function sceneFromSongServiceItem(
   contentJson: string,
   theme?: ThemeConfig,
 ): Scene | null {
-  if (!JSON.parse(contentJson || "{}").songId) return null;
+  if (!parseServiceItemContent(contentJson).songId) return null;
   return sceneFromServiceItem("song", title, contentJson, theme);
 }

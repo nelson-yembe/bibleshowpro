@@ -130,7 +130,9 @@ export function defaultSongTheme(): SongThemeSettings {
 
 export function parseSongTheme(themeJson: string): SongThemeSettings {
   try {
-    return { ...defaultSongTheme(), ...(JSON.parse(themeJson) as SongThemeSettings) };
+    const parsed = JSON.parse(themeJson) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return defaultSongTheme();
+    return { ...defaultSongTheme(), ...(parsed as SongThemeSettings) };
   } catch {
     return defaultSongTheme();
   }
@@ -204,10 +206,25 @@ export function splitLyricsToSlides(lyrics: string, linesPerSlide = 4): string[]
   return slides;
 }
 
+/**
+ * Arrangement order comes from a stored JSON blob that older versions, failed
+ * imports, and hand-edited databases can leave malformed. Lyrics must still
+ * project, so anything unusable degrades to upload order.
+ */
+export function parseSectionOrder(json: string): string[] {
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((id): id is string => typeof id === "string");
+  } catch {
+    return [];
+  }
+}
+
 export function arrangementSectionIds(song: SongDetail): string[] {
   const arr = song.arrangements.find((a) => a.is_default);
   const byUploadOrder = [...song.sections].sort((a, b) => a.sort_order - b.sort_order);
-  const parsed = arr ? (JSON.parse(arr.section_order_json) as string[]) : byUploadOrder.map((s) => s.id);
+  const parsed = arr ? parseSectionOrder(arr.section_order_json) : byUploadOrder.map((s) => s.id);
   const valid = parsed.filter((id) => song.sections.some((s) => s.id === id));
   const base = valid.length > 0 ? valid : byUploadOrder.map((s) => s.id);
   const missing = byUploadOrder

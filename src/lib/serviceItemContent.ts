@@ -36,9 +36,17 @@ export interface ServiceItemContent {
   source?: string;
 }
 
+/**
+ * Item content is an opaque JSON blob in the database. Imports, older schema
+ * versions, and hand-edited rows can all leave it unusable, and a service item
+ * must still be projectable, so anything that is not an object degrades to
+ * empty content rather than throwing on the way to the projector.
+ */
 export function parseServiceItemContent(json: string): ServiceItemContent {
   try {
-    return JSON.parse(json || "{}") as ServiceItemContent;
+    const parsed = JSON.parse(json || "{}") as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed as ServiceItemContent;
   } catch {
     return {};
   }

@@ -54,7 +54,14 @@ let autosaveTimer: number | undefined;
 function loadContext(): ServiceContext {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw) as ServiceContext;
+    const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const { planId, itemId } = parsed as Partial<ServiceContext>;
+      return {
+        planId: typeof planId === "string" ? planId : null,
+        itemId: typeof itemId === "string" ? itemId : null,
+      };
+    }
   } catch {
     // ignore
   }

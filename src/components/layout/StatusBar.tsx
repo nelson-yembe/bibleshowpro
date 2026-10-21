@@ -70,7 +70,7 @@ export function StatusBar() {
           </span>
         ))}
       </div>
-      <span className="shrink-0 text-[var(--color-subtle)]">v1.1.0</span>
+      <span className="shrink-0 text-[var(--color-subtle)]">v{__APP_VERSION__}</span>
     </footer>
   );
 }

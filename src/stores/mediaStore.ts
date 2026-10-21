@@ -40,7 +40,11 @@ interface MediaState {
 function loadContext(): MediaContext {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw) as MediaContext;
+    const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const { selectedId } = parsed as Partial<MediaContext>;
+      return { selectedId: typeof selectedId === "string" ? selectedId : null };
+    }
   } catch {
     // ignore
   }

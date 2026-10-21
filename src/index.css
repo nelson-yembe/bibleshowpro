@@ -278,6 +278,24 @@ textarea {
   animation: lower-third-fade-in 0.32s ease-out both;
 }
 
+/* Projection window open: content fades in over a solid shell (avoids desktop bleed). */
+.bsp-output-reveal {
+  opacity: 0;
+}
+
+.bsp-output-reveal-visible {
+  opacity: 1;
+  transition: opacity 0.45s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bsp-output-reveal,
+  .bsp-output-reveal-visible {
+    opacity: 1;
+    transition: none;
+  }
+}
+
 /* Scrolling ticker: one pass from the right edge fully off the left, looped. */
 @keyframes bsp-ticker-scroll {
   from {

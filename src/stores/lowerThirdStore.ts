@@ -8,6 +8,7 @@ import { outputProgram } from "@/stores/presentationStore";
 import { usePresentationStore, isPresentationOnAir } from "@/stores/presentationStore";
 import { useThemeStore } from "@/stores/themeStore";
 import { useSongStore } from "@/stores/songStore";
+import { parseSongTheme } from "@/lib/songTypes";
 
 interface LowerThirdStoreState {
   showLowerThirdSafeMargins: boolean;
@@ -55,7 +56,7 @@ function refreshLowerThirdLiveOutput() {
   if (presentation.previewSource === "song" && !displayScene) {
     const song = useSongStore.getState().activeSong;
     if (!song) return;
-    const settings = JSON.parse(song.theme_json || "{}") as { mode?: string };
+    const settings = parseSongTheme(song.theme_json);
     if (settings.mode === "lower_third" || settings.mode === "clean") {
       if (onAir) void useSongStore.getState().goLiveCurrent();
       else void useSongStore.getState().previewCurrent();

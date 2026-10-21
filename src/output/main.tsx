@@ -58,9 +58,17 @@ function useTransparentOutput(scene: Scene | null) {
   }, [scene]);
 }
 
+function prefersReducedMotion() {
+  return (
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
 function OutputApp() {
   const isPreviewFeed = new URLSearchParams(window.location.search).get("ndi") === "preview";
   const [scene, setScene] = useState<Scene | null>(() => logoScene());
+  const [revealed, setRevealed] = useState(isPreviewFeed);
   useOutputWakeLock();
   useTransparentOutput(scene);
 
@@ -71,16 +79,8 @@ function OutputApp() {
   const transparent = isTransparentLowerThirdOutput(scene, null, false);
 
   useEffect(() => {
-    const hydrate = async () => {
-      try {
-        const stored = (await (isPreviewFeed ? Promise.resolve(null) : api.getProgramOutput())) as Scene | null;
-        if (stored) setScene(stored);
-      } catch {
-        // Browser/dev without Tauri
-      }
-    };
-
-    void hydrate();
+    let cancelled = false;
+    let fallbackTimer: number | undefined;
 
     const onUpdate = (event: Event) => {
       const detail = (event as CustomEvent<Scene | null>).detail;
@@ -88,17 +88,68 @@ function OutputApp() {
     };
     window.addEventListener("bsp-program-update", onUpdate);
 
-    let cancelled = false;
-    const eventName = isPreviewFeed ? "preview-update" : "program-update";
-    void listen<Scene | null>(eventName, (event) => {
-      if (!cancelled) setScene(event.payload ?? logoScene());
-    }).then(() => {
-      if (!cancelled && !isPreviewFeed) void emit("output-ready");
-    });
+    const beginFadeIn = () => {
+      if (cancelled) return;
+      if (isPreviewFeed || prefersReducedMotion()) {
+        setRevealed(true);
+        return;
+      }
+      // Double-rAF: first visible OS frame stays at opacity 0, then ease in.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (!cancelled) setRevealed(true);
+        });
+      });
+    };
+
+    const boot = async () => {
+      try {
+        const stored = (await (isPreviewFeed ? Promise.resolve(null) : api.getProgramOutput())) as Scene | null;
+        if (!cancelled && stored) setScene(stored);
+      } catch {
+        // Browser/dev without Tauri
+      }
+
+      const eventName = isPreviewFeed ? "preview-update" : "program-update";
+      try {
+        await listen<Scene | null>(eventName, (event) => {
+          if (!cancelled) setScene(event.payload ?? logoScene());
+        });
+      } catch {
+        // Browser/dev without Tauri
+      }
+
+      if (isPreviewFeed) {
+        setRevealed(true);
+        return;
+      }
+
+      // Register reveal listener BEFORE asking native to show the window.
+      try {
+        await listen("output-revealed", () => {
+          beginFadeIn();
+        });
+      } catch {
+        // Browser/dev without Tauri — fade immediately.
+        beginFadeIn();
+        return;
+      }
+
+      if (cancelled) return;
+
+      // Safety if output-revealed is missed.
+      fallbackTimer = window.setTimeout(beginFadeIn, 2500);
+
+      // Native shows the window, then emits output-revealed for the fade.
+      void emit("output-ready");
+    };
+
+    void boot();
 
     return () => {
       cancelled = true;
       window.removeEventListener("bsp-program-update", onUpdate);
+      if (fallbackTimer !== undefined) window.clearTimeout(fallbackTimer);
     };
   }, [isPreviewFeed]);
 
@@ -107,7 +158,16 @@ function OutputApp() {
       className={cn("relative h-screen w-screen overflow-hidden", !transparent && "bg-black")}
       style={transparent ? { backgroundColor: "transparent" } : undefined}
     >
-      <SceneRenderer scene={scene} className="h-full w-full" label="" />
+      <div
+        className={cn(
+          "h-full w-full",
+          !isPreviewFeed && "bsp-output-reveal",
+          !isPreviewFeed && revealed && "bsp-output-reveal-visible",
+        )}
+      >
+        <SceneRenderer scene={scene} className="h-full w-full" label="" />
+      </div>
+      {/* Outside the reveal wrapper: overlays should not wait on the output fade-in. */}
       <CaptionOverlay />
       <TickerOverlay />
     </div>

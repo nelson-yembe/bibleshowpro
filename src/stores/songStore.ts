@@ -5,6 +5,7 @@ import {
   parseSongTheme,
   buildSlidesFromSong,
   arrangementSectionIds,
+  parseSectionOrder,
   syncSongSectionOrder,
   type LyricSlide,
   type SongDetail,
@@ -194,7 +195,8 @@ export const useSongStore = create<SongState>((set, get) => ({
     if (!song) return;
     const slides = get().effectiveSlides();
     const order = song.arrangements.find((a) => a.is_default);
-    const ids = order ? (JSON.parse(order.section_order_json) as string[]) : song.sections.map((s) => s.id);
+    const parsedIds = order ? parseSectionOrder(order.section_order_json) : [];
+    const ids = parsedIds.length > 0 ? parsedIds : song.sections.map((s) => s.id);
     const targetSectionId = ids.find((id) => song.sections.find((s) => s.id === id && s.section_type === type));
     if (!targetSectionId) return;
     const index = slides.findIndex((slide) => slide.section_id === targetSectionId);
@@ -402,7 +404,7 @@ export const useSongStore = create<SongState>((set, get) => ({
     const sections = [...song.sections, section];
     const arrangement = song.arrangements.find((a) => a.is_default);
     const order: string[] = arrangement
-      ? [...(JSON.parse(arrangement.section_order_json) as string[]), section.id]
+      ? [...parseSectionOrder(arrangement.section_order_json), section.id]
       : sections.map((s) => s.id);
     get().updateDraft({
       sections,
@@ -416,9 +418,9 @@ export const useSongStore = create<SongState>((set, get) => ({
     const song = get().activeSong;
     if (!song) return;
     const sections = song.sections.filter((s) => s.id !== id);
-    const order = (JSON.parse(
+    const order = parseSectionOrder(
       song.arrangements.find((a) => a.is_default)?.section_order_json ?? "[]",
-    ) as string[]).filter((sid) => sid !== id);
+    ).filter((sid) => sid !== id);
     get().updateDraft({
       sections,
       arrangements: song.arrangements.map((a) =>

@@ -58,7 +58,7 @@ pub fn replay_stored_program(app: &AppHandle) {
     }
 }
 
-fn schedule_output_visibility_retries(app: &AppHandle) {
+pub fn schedule_output_visibility_retries(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         for delay_ms in [150_u64, 450, 1000] {
@@ -73,6 +73,34 @@ fn schedule_output_visibility_retries(app: &AppHandle) {
                 }
             }
         }
+    });
+}
+
+/// Reveal the output window once the webview is ready (or after a safety timeout).
+pub fn reveal_output_window(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("output") else {
+        return;
+    };
+    if window.is_visible().unwrap_or(false) {
+        return;
+    }
+    let Ok(monitor) = display::pick_output_monitor(app) else {
+        return;
+    };
+    if let Err(error) = display::place_output_on_monitor(&window, &monitor) {
+        eprintln!("[output] reveal failed: {error}");
+        return;
+    }
+    let _ = app.emit_to("output", "output-revealed", ());
+    schedule_output_visibility_retries(app);
+}
+
+fn schedule_output_reveal_fallback(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        // If the webview never emits output-ready, still show so projection is not stuck.
+        tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
+        reveal_output_window(&app);
     });
 }
 
@@ -113,7 +141,8 @@ pub async fn ensure_output_window(app: AppHandle) -> Result<DisplayInfo, String>
         }
     });
 
-    display::place_output_on_monitor(&window, &monitor)?;
+    // Position while hidden so the first reveal happens after the webview paints.
+    display::prepare_output_on_monitor(&window, &monitor)?;
     let _ = app.emit("output-opened", &display);
     crate::keep_awake::set_output_active(true);
 
@@ -125,7 +154,7 @@ pub async fn ensure_output_window(app: AppHandle) -> Result<DisplayInfo, String>
         }
     });
 
-    schedule_output_visibility_retries(&app);
+    schedule_output_reveal_fallback(&app);
 
     Ok(display)
 }

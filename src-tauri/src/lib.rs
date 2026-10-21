@@ -61,14 +61,8 @@ pub fn run() {
             app.handle().listen("output-ready", move |_| {
                 let app = output_ready_app.clone();
                 tauri::async_runtime::spawn(async move {
-                    let Some(window) = app.get_webview_window("output") else {
-                        return;
-                    };
-                    if let Ok(monitor) = display::pick_output_monitor(&app) {
-                        if let Err(error) = display::place_output_on_monitor(&window, &monitor) {
-                            eprintln!("[output] show on output-ready failed: {error}");
-                        }
-                    }
+                    // First paint is ready — reveal with focus, then soft-fade in the webview.
+                    output::reveal_output_window(&app);
                 });
             });
 

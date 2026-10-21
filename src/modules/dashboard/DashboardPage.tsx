@@ -264,7 +264,7 @@ export function DashboardPage() {
                 </div>
 
                 <div className="p-5">
-                  <h1 className="text-2xl font-bold tracking-tight">{activePlan.title}</h1>
+                  <h2 className="text-2xl font-bold tracking-tight">{activePlan.title}</h2>
                   <p className="mt-2 text-sm text-[var(--color-muted-foreground)]">
                     {activePlan.items.length} items
                     {presentableCount !== activePlan.items.length
@@ -497,7 +497,7 @@ function EmptyServiceState({
       <p className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-primary)]">
         Get ready for service
       </p>
-      <h1 className="mt-2 text-2xl font-bold tracking-tight">No active service plan</h1>
+      <h2 className="mt-2 text-2xl font-bold tracking-tight">No active service plan</h2>
       <p className="mt-2 max-w-md text-sm text-[var(--color-muted-foreground)]">
         Build a run sheet, or jump straight into Bible Search and take a verse live.
       </p>

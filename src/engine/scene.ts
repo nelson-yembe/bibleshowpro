@@ -1,7 +1,7 @@
 import { mergeThemeConfig, DEFAULT_THEME, type ThemeConfig } from "@/lib/themeConfig";
 import type { VerseResult } from "@/lib/tauri";
 import { resolveVerseLayout, themeForLowerThirdLayout } from "@/lib/lowerThird";
-import type { ServiceItemContent } from "@/lib/serviceItemContent";
+import { parseServiceItemContent, type ServiceItemContent } from "@/lib/serviceItemContent";
 import { formatCountdownTime, mergeCountdownConfig } from "@/lib/countdownConfig";
 
 export { DEFAULT_THEME };
@@ -178,7 +178,7 @@ export function sceneFromVerseComparison(
 }
 
 export function sceneFromServiceItem(itemType: string, title: string, contentJson: string, theme?: ThemeConfig): Scene {
-  const content = JSON.parse(contentJson || "{}") as SceneContent & ServiceItemContent & {
+  const content = parseServiceItemContent(contentJson) as SceneContent & ServiceItemContent & {
     filePath?: string;
     mediaId?: string;
     audioPath?: string;

@@ -29,3 +29,6 @@ src-tauri/target/
 # Bible source downloads (large; fetched via app or scripts/fetch-bible-sources.mjs)
 database/seed/*.source.json
 
+
+# Installers downloaded from CI builds
+installers/

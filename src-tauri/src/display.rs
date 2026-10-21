@@ -60,7 +60,7 @@ pub fn pick_output_monitor(app: &AppHandle) -> Result<Monitor, String> {
 
 /// Place the projector window and bring it to the foreground (used on first open).
 pub fn place_output_on_monitor(window: &WebviewWindow, monitor: &Monitor) -> Result<(), String> {
-    place_output_on_monitor_inner(window, monitor, true)
+    place_output_on_monitor_inner(window, monitor, true, true)
 }
 
 /// Keep the projector window on its monitor WITHOUT stealing foreground focus.
@@ -70,13 +70,20 @@ pub fn reposition_output_on_monitor(
     window: &WebviewWindow,
     monitor: &Monitor,
 ) -> Result<(), String> {
-    place_output_on_monitor_inner(window, monitor, false)
+    place_output_on_monitor_inner(window, monitor, false, true)
+}
+
+/// Size and place the projector on the target monitor without making it visible.
+/// Used while the output webview loads so the first paint can fade in cleanly.
+pub fn prepare_output_on_monitor(window: &WebviewWindow, monitor: &Monitor) -> Result<(), String> {
+    place_output_on_monitor_inner(window, monitor, false, false)
 }
 
 fn place_output_on_monitor_inner(
     window: &WebviewWindow,
     monitor: &Monitor,
     grab_focus: bool,
+    show: bool,
 ) -> Result<(), String> {
     let position = monitor.position();
     let size = monitor.size();
@@ -105,11 +112,13 @@ fn place_output_on_monitor_inner(
         .set_size(PhysicalSize::new(size.width, size.height))
         .map_err(|e| e.to_string())?;
     window.set_fullscreen(true).map_err(|e| e.to_string())?;
-    window.show().map_err(|e| e.to_string())?;
-    // Only grab focus on explicit (re)opens. Routine repositioning must not
-    // pull foreground focus away from whatever app the user is using.
-    if grab_focus {
-        let _ = window.set_focus();
+    if show {
+        window.show().map_err(|e| e.to_string())?;
+        // Only grab focus on explicit (re)opens. Routine repositioning must not
+        // pull foreground focus away from whatever app the user is using.
+        if grab_focus {
+            let _ = window.set_focus();
+        }
     }
 
     Ok(())

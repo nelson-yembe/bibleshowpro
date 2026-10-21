@@ -15,20 +15,26 @@ export function TopBar({ breadcrumbs, status = "ready", actions }: TopBarProps) 
   return (
     <header className="flex h-12 shrink-0 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4">
       <div className="flex min-w-0 items-center gap-2 text-sm">
-        {breadcrumbs.map((crumb, i) => (
-          <span key={`${crumb}-${i}`} className="flex items-center gap-2">
-            {i > 0 && <span className="text-[var(--color-subtle)]">›</span>}
-            <span
-              className={cn(
-                i === breadcrumbs.length - 1
-                  ? "truncate font-medium text-[var(--color-foreground)]"
-                  : "text-[var(--color-muted-foreground)]",
-              )}
-            >
-              {crumb}
+        {breadcrumbs.map((crumb, i) => {
+          // The section crumb is the page's accessible name; later crumbs are
+          // dynamic (verse, song, item) and would make the name unstable.
+          const Crumb = i === 0 ? "h1" : "span";
+          return (
+            <span key={`${crumb}-${i}`} className="flex items-center gap-2">
+              {i > 0 && <span className="text-[var(--color-subtle)]">›</span>}
+              <Crumb
+                className={cn(
+                  "text-sm",
+                  i === breadcrumbs.length - 1
+                    ? "truncate font-medium text-[var(--color-foreground)]"
+                    : "text-[var(--color-muted-foreground)]",
+                )}
+              >
+                {crumb}
+              </Crumb>
             </span>
-          </span>
-        ))}
+          );
+        })}
       </div>
 
       <div className="flex items-center gap-3">

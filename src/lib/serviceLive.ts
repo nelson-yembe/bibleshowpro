@@ -2,6 +2,7 @@ import { sceneFromServiceItem } from "@/engine/scene";
 import { sceneFromMediaRecord } from "@/lib/mediaLive";
 import { api, type ServiceItem, type ThemeConfig, type VerseResult } from "@/lib/tauri";
 import { buildSlidesFromSong, parseSongTheme } from "@/lib/songTypes";
+import { parseServiceItemContent } from "@/lib/serviceItemContent";
 import { sceneFromLyricSlide } from "@/lib/songLive";
 import { usePresentationStore } from "@/stores/presentationStore";
 
@@ -21,7 +22,7 @@ interface ServiceItemContent {
 export async function resolveServiceItemVerses(item: ServiceItem): Promise<VerseResult[] | null> {
   if (item.item_type !== "scripture") return null;
 
-  const content = JSON.parse(item.content_json || "{}") as ServiceItemContent;
+  const content = parseServiceItemContent(item.content_json) as ServiceItemContent;
   if (content.verses?.length) return content.verses;
 
   const reference = content.reference ?? item.title;
@@ -39,7 +40,7 @@ export async function resolveServiceItemVerses(item: ServiceItem): Promise<Verse
 async function resolveLinkedMediaScene(item: ServiceItem, theme?: ThemeConfig) {
   if (item.item_type !== "image" && item.item_type !== "video") return null;
 
-  const content = JSON.parse(item.content_json || "{}") as ServiceItemContent;
+  const content = parseServiceItemContent(item.content_json) as ServiceItemContent;
 
   if (content.mediaId) {
     try {
@@ -62,7 +63,7 @@ async function resolveLinkedMediaScene(item: ServiceItem, theme?: ThemeConfig) {
 }
 
 function countdownScene(item: ServiceItem, theme?: ThemeConfig, start = false) {
-  const parsed = JSON.parse(item.content_json || "{}") as Record<string, unknown>;
+  const parsed = parseServiceItemContent(item.content_json) as Record<string, unknown>;
   const contentJson = JSON.stringify({
     ...parsed,
     countdownStartedAt: start ? Date.now() : undefined,
@@ -81,7 +82,7 @@ export async function previewServiceItem(item: ServiceItem, theme?: ThemeConfig)
   }
 
   if (item.item_type === "song") {
-    const content = JSON.parse(item.content_json || "{}") as ServiceItemContent;
+    const content = parseServiceItemContent(item.content_json) as ServiceItemContent;
     if (content.songId) {
       const song = await api.getSong(content.songId);
       const slideIndex = content.slideIndex ?? 0;
