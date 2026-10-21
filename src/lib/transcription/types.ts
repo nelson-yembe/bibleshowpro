@@ -11,6 +11,8 @@ export type DetectionType = "explicit" | "paraphrase" | "quote" | "topic" | "inf
 export type ConfidenceLevel = "high" | "medium" | "low";
 export type SuggestionStatus = "pending" | "preview" | "queued" | "ignored" | "live" | "presented";
 
+import { ENGINE_GEMINI, ENGINE_WHISPER } from "@/lib/transcription/engine";
+
 export interface TranscriptionModel {
   id: string;
   label: string;
@@ -84,6 +86,24 @@ export const TRANSCRIPTION_MODELS: TranscriptionModel[] = [
     latencyMs: 600,
     requiresInternet: true,
     description: "Browser recognition tuned for accuracy over speed. Audio still goes to the browser's speech service, so internet is required.",
+  },
+  {
+    id: ENGINE_GEMINI,
+    label: "Gemini Transcribe Live",
+    profile: "accurate",
+    latencyMs: 300,
+    requiresInternet: true,
+    description:
+      "Google Gemini Live transcription. The most accurate option, and the best base for scripture detection. Needs a paid-tier API key and a steady connection — audio leaves the building.",
+  },
+  {
+    id: ENGINE_WHISPER,
+    label: "Whisper (offline)",
+    profile: "offline",
+    latencyMs: 2500,
+    requiresInternet: false,
+    description:
+      "Runs a Whisper model on this machine. Works with no internet and keeps audio local, but transcribes at each pause rather than word by word.",
   },
 ];
 

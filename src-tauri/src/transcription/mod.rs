@@ -1,3 +1,5 @@
+pub mod whisper;
+
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

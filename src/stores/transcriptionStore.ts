@@ -32,8 +32,14 @@ import {
   ensureMicrophoneAccess,
   listAudioInputDevices,
   pickValidAudioDeviceId,
-  WebSpeechTranscriptionEngine,
 } from "@/lib/transcription/webSpeechProvider";
+import type { TranscriptionEngine } from "@/lib/transcription/engine";
+import { createTranscriptionEngine } from "@/lib/transcription/engineFactory";
+import {
+  engineConfigError,
+  loadStoredEngineConfig,
+  toEngineConfig,
+} from "@/lib/transcription/engineConfig";
 import { isSpeechRecognitionSupported } from "@/lib/transcription/speechTypes";
 import {
   TRANSCRIPTION_MODELS,
@@ -125,7 +131,9 @@ interface TranscriptionState {
   resetListeningWorkspace: () => void;
 }
 
-let engine: WebSpeechTranscriptionEngine | null = null;
+let engine: TranscriptionEngine | null = null;
+/** Which engine the current instance was built for, so a model change swaps it out. */
+let engineModelId: string | null = null;
 let levelMonitor: AudioLevelMonitor | null = null;
 let segmentCounter = 0;
 let partialScanTimer: number | undefined;
@@ -876,7 +884,11 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
     const state = get();
     if (state.status === "listening") return;
 
-    if (!engine) engine = new WebSpeechTranscriptionEngine();
+    if (!engine || engineModelId !== state.modelId) {
+      engine?.stop();
+      engine = createTranscriptionEngine(state.modelId);
+      engineModelId = state.modelId;
+    }
 
     if (!engine.isSupported()) {
       set({
@@ -897,6 +909,14 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
     const model = state.models.find((m) => m.id === state.modelId) ?? state.models[0];
     if (model?.requiresInternet && !navigator.onLine) {
       set({ error: "Selected model requires internet during live service.", status: "unavailable" });
+      return;
+    }
+
+    // Fail here with a clear instruction rather than inside the engine mid-service.
+    const storedEngineConfig = await loadStoredEngineConfig();
+    const configProblem = engineConfigError(state.modelId, storedEngineConfig);
+    if (configProblem) {
+      set({ error: configProblem, status: "unavailable" });
       return;
     }
 
@@ -1001,7 +1021,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
         },
         onError: (message) => set({ error: message, status: "unavailable" }),
       },
-      { modelId: state.modelId },
+      { modelId: state.modelId, config: toEngineConfig(storedEngineConfig) },
       audioDeviceId,
     );
   },

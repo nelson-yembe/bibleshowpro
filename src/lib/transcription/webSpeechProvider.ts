@@ -19,20 +19,18 @@ export {
 } from "@/lib/transcription/audioInput";
 export { AudioLevelMonitor } from "@/lib/transcription/audioLevelMonitor";
 
-export interface TranscriptionCallbacks {
-  onPartial: (text: string) => void;
-  onFinal: (text: string) => void;
-  onStatus: (status: "listening" | "paused" | "stopped" | "unavailable" | "reconnecting") => void;
-  onError: (message: string) => void;
-  onAudioActivity?: (level: number) => void;
-}
+export type {
+  TranscriptionCallbacks,
+  TranscriptionEngineOptions,
+} from "@/lib/transcription/engine";
 
-export interface TranscriptionEngineOptions {
-  modelId: string;
-  language?: string;
-}
+import type {
+  TranscriptionCallbacks,
+  TranscriptionEngine,
+  TranscriptionEngineOptions,
+} from "@/lib/transcription/engine";
 
-export class WebSpeechTranscriptionEngine {
+export class WebSpeechTranscriptionEngine implements TranscriptionEngine {
   private recognition: SpeechRecognitionInstance | null = null;
   private paused = false;
   private shouldRestart = false;

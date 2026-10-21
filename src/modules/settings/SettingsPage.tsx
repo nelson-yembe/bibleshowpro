@@ -4,6 +4,7 @@ import {
   Upload,
   Antenna,
   BookOpen,
+  Mic,
   DatabaseBackup,
   Info,
   ChevronsDownUp,
@@ -12,6 +13,7 @@ import {
 import { TopBar } from "@/components/layout/TopBar";
 import { BibleVersionsPanel } from "@/modules/settings/BibleVersionsPanel";
 import { NdiOutputPanel } from "@/modules/settings/NdiOutputPanel";
+import { TranscriptionEnginePanel } from "@/modules/settings/TranscriptionEnginePanel";
 import { CollapsibleSection, type CollapsibleSignal } from "@/components/ui/CollapsibleSection";
 import { StatusBadge } from "@/components/ui/pill";
 import { downloadTextFile } from "@/lib/utils";
@@ -95,6 +97,16 @@ export function SettingsPage() {
             }
           >
             <BibleVersionsPanel embedded />
+          </CollapsibleSection>
+
+          <CollapsibleSection
+            id="transcription-engines"
+            title="Transcription Engine"
+            description="Choose the engine and supply its credentials"
+            icon={<Mic className="h-4 w-4" />}
+            signal={signal}
+          >
+            <TranscriptionEnginePanel embedded />
           </CollapsibleSection>
 
           <CollapsibleSection
