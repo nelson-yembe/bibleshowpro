@@ -2,6 +2,8 @@
 
 export type TranscriptionStatus =
   | "listening"
+  /** Audio captured, engine working on it — the only sign of life a chunked engine gives. */
+  | "processing"
   | "paused"
   | "stopped"
   | "unavailable"

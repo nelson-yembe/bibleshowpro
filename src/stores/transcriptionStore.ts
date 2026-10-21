@@ -52,7 +52,11 @@ import {
   pickValidAudioDeviceId,
 } from "@/lib/transcription/webSpeechProvider";
 import type { TranscriptionEngine } from "@/lib/transcription/engine";
-import { diagnoseListening, faultMessage } from "@/lib/transcription/engineHealth";
+import {
+  diagnoseListening,
+  faultMessage,
+  silenceWindowMs,
+} from "@/lib/transcription/engineHealth";
 import { createTranscriptionEngine } from "@/lib/transcription/engineFactory";
 import {
   engineConfigError,
@@ -75,7 +79,6 @@ import { usePresentationStore } from "@/stores/presentationStore";
 
 const SESSION_STORAGE_KEY = "bsp-transcription-session";
 const PARTIAL_SCAN_MS = 700;
-const NO_SIGNAL_WARN_MS = 12_000;
 
 interface PersistedPreferences {
   modelId: string;
@@ -205,20 +208,24 @@ async function startLevelMonitor(
   );
 
   window.clearTimeout(noSignalTimer);
+  // A chunked engine returns nothing until a segment closes and inference finishes, so
+  // the streaming window would fire on a perfectly healthy Whisper run.
+  const scheduledFor = get().models.find((m) => m.id === get().modelId);
+  const window_ms = silenceWindowMs(scheduledFor?.streaming ?? true);
+
   noSignalTimer = window.setTimeout(() => {
     const state = get();
     if (state.status !== "listening" && state.status !== "processing" && state.status !== "reconnecting") return;
     // A working microphone used to silence this warning entirely, so an engine that
     // returns nothing looked identical to a healthy session.
     const hasTranscript = state.segments.length > 0 || state.partialText.trim().length > 0;
-    const engineLabel =
-      state.models.find((m) => m.id === state.modelId)?.label ?? "The speech engine";
+    const engine = state.models.find((m) => m.id === state.modelId);
     const message = faultMessage(
       diagnoseListening({ hasTranscript, peakAudioLevel: sessionPeakAudioLevel }),
-      engineLabel,
+      { id: engine?.id ?? state.modelId, label: engine?.label ?? "The speech engine" },
     );
     if (message) set({ audioWarning: message });
-  }, NO_SIGNAL_WARN_MS);
+  }, window_ms);
 }
 
 function loadPersistedPreferences(): PersistedPreferences | null {
@@ -1125,6 +1132,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
         },
         onStatus: (status) => {
           if (status === "reconnecting") set({ status: "reconnecting" });
+          else if (status === "processing") set({ status: "processing" });
           else if (status === "listening") set({ status: "listening" });
           else if (status === "paused") set({ status: "paused" });
           else if (status === "stopped") set({ status: "stopped" });

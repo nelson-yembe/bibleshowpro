@@ -13,6 +13,7 @@ import {
   DEFAULT_SEGMENTER_CONFIG,
   SpeechSegmenter,
 } from "@/lib/transcription/speechSegmenter";
+import { cleanWhisperText } from "@/lib/transcription/whisperText";
 import { tauriInvoke } from "@/lib/tauri";
 
 const SAMPLE_RATE = DEFAULT_SEGMENTER_CONFIG.sampleRate;
@@ -131,20 +132,24 @@ export class WhisperTranscriptionEngine implements TranscriptionEngine {
     // Drop rather than queue: a backlog would put stale words on the projector.
     if (this.busy) return;
     this.busy = true;
+    // The first segment can take tens of seconds once model load is included; without
+    // this the operator sees nothing at all and assumes it is broken.
+    if (!this.stopping && !this.paused) this.callbacks?.onStatus("processing");
     try {
       const text = await tauriInvoke<string>("transcribe_audio_segment", {
         modelPath: this.modelPath,
         sampleRate: SAMPLE_RATE,
         pcmBase64: encodePcmBase64(segment),
       });
-      const trimmed = text?.trim();
-      if (trimmed && !this.stopping) this.callbacks?.onFinal(trimmed);
+      const spoken = cleanWhisperText(text ?? "");
+      if (spoken && !this.stopping) this.callbacks?.onFinal(spoken);
     } catch (err) {
       this.callbacks?.onError(
         err instanceof Error ? err.message : String(err ?? "Whisper could not transcribe."),
       );
     } finally {
       this.busy = false;
+      if (!this.stopping && !this.paused) this.callbacks?.onStatus("listening");
     }
   }
 

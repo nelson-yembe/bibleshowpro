@@ -19,6 +19,11 @@ export interface TranscriptionModel {
   profile: "fast" | "balanced" | "accurate" | "offline";
   latencyMs: number;
   requiresInternet: boolean;
+  /**
+   * True when the engine emits interim text as the speaker talks. False means it only
+   * returns at the end of an utterance, which the silence watchdog has to allow for.
+   */
+  streaming: boolean;
   description: string;
 }
 
@@ -77,6 +82,7 @@ export const TRANSCRIPTION_MODELS: TranscriptionModel[] = [
     profile: "fast",
     latencyMs: 400,
     requiresInternet: true,
+    streaming: true,
     description: "Built-in browser speech recognition. Fast setup, requires internet in most browsers.",
   },
   {
@@ -85,6 +91,7 @@ export const TRANSCRIPTION_MODELS: TranscriptionModel[] = [
     profile: "balanced",
     latencyMs: 600,
     requiresInternet: true,
+    streaming: true,
     description: "Browser recognition tuned for accuracy over speed. Audio still goes to the browser's speech service, so internet is required.",
   },
   {
@@ -93,6 +100,7 @@ export const TRANSCRIPTION_MODELS: TranscriptionModel[] = [
     profile: "accurate",
     latencyMs: 300,
     requiresInternet: true,
+    streaming: true,
     description:
       "Google Gemini Live transcription. The most accurate option, and the best base for scripture detection. Needs a paid-tier API key and a steady connection — audio leaves the building.",
   },
@@ -102,6 +110,7 @@ export const TRANSCRIPTION_MODELS: TranscriptionModel[] = [
     profile: "offline",
     latencyMs: 2500,
     requiresInternet: false,
+    streaming: false,
     description:
       "Runs a Whisper model on this machine. Works with no internet and keeps audio local, but transcribes at each pause rather than word by word.",
   },
