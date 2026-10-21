@@ -1,5 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
+import { tauriInvoke } from "@/lib/tauri";
+import {
+  downloadPercent,
+  downloadStatusText,
+  formatBytes,
+  WHISPER_DOWNLOAD_EVENT,
+  type WhisperDownloadProgress,
+  type WhisperModelInfo,
+} from "@/lib/transcription/whisperModels";
 import {
   EMPTY_ENGINE_CONFIG,
   loadStoredEngineConfig,
@@ -28,6 +38,30 @@ export function TranscriptionEnginePanel({ embedded }: TranscriptionEnginePanelP
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
+  const [catalog, setCatalog] = useState<WhisperModelInfo[]>([]);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [progress, setProgress] = useState<WhisperDownloadProgress | null>(null);
+  // The download finishes outside React's render, so read the latest config from a ref
+  // rather than closing over a stale copy.
+  const configRef = useRef(config);
+  configRef.current = config;
+
+  useEffect(() => {
+    void tauriInvoke<WhisperModelInfo[]>("list_whisper_models")
+      .then(setCatalog)
+      .catch(() => setCatalog([]));
+  }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listen<WhisperDownloadProgress>(WHISPER_DOWNLOAD_EVENT, (event) => {
+      setProgress(event.payload);
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => unlisten?.();
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void loadStoredEngineConfig().then((stored) => {
@@ -55,6 +89,33 @@ export function TranscriptionEnginePanel({ embedded }: TranscriptionEnginePanelP
       setMessage(err instanceof Error ? err.message : "Could not save engine settings.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const downloadModel = async (model: WhisperModelInfo) => {
+    setDownloadingId(model.id);
+    setProgress({ modelId: model.id, received: 0, total: model.sizeBytes });
+    setMessage(null);
+    try {
+      const path = await tauriInvoke<string>("download_whisper_model", { modelId: model.id });
+      // Select it straight away — a downloaded model nobody pointed at helps no one.
+      const next = { ...configRef.current, whisperModelPath: path };
+      setConfig(next);
+      await saveStoredEngineConfig(next);
+      setMessage(`${model.label} ready.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : String(err ?? "Download failed."));
+    } finally {
+      setDownloadingId(null);
+      setProgress(null);
+    }
+  };
+
+  const cancelDownload = async () => {
+    try {
+      await tauriInvoke("cancel_whisper_download");
+    } catch {
+      // Nothing running, or no backend — the download state clears either way.
     }
   };
 
@@ -134,6 +195,67 @@ export function TranscriptionEnginePanel({ embedded }: TranscriptionEnginePanelP
 
       <div className="space-y-2 rounded-lg border border-[var(--color-border-light)] p-3">
         <p className="text-[11px] font-semibold text-[var(--color-muted-foreground)]">Whisper (offline)</p>
+
+        <div className="space-y-1.5">
+          {catalog.map((model) => {
+            const installed =
+              config.whisperModelPath.length > 0 &&
+              config.whisperModelPath.endsWith(model.filename);
+            const busy = downloadingId === model.id;
+            return (
+              <div
+                key={model.id}
+                className="rounded-md border border-[var(--color-border-light)] p-2"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-[11px] text-[var(--color-foreground)]">
+                      {model.label}{" "}
+                      <span className="text-[var(--color-subtle)]">
+                        · {formatBytes(model.sizeBytes)}
+                      </span>
+                    </p>
+                    <p className="truncate text-[10px] text-[var(--color-subtle)]">{model.note}</p>
+                  </div>
+                  {installed ? (
+                    <span className="shrink-0 text-[10px] font-medium text-emerald-400">In use</span>
+                  ) : busy ? (
+                    <button
+                      type="button"
+                      onClick={() => void cancelDownload()}
+                      className="control-btn shrink-0 text-[10px]"
+                    >
+                      Cancel
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={downloadingId !== null}
+                      onClick={() => void downloadModel(model)}
+                      className="control-btn shrink-0 text-[10px]"
+                    >
+                      Download
+                    </button>
+                  )}
+                </div>
+                {busy && progress?.modelId === model.id && (
+                  <div className="mt-1.5">
+                    <div className="h-1 w-full overflow-hidden rounded bg-[var(--color-panel)]">
+                      <div
+                        className="h-full bg-emerald-500 transition-[width] duration-200"
+                        style={{ width: `${downloadPercent(progress.received, progress.total)}%` }}
+                      />
+                    </div>
+                    <p className="mt-1 text-[10px] text-[var(--color-subtle)]">
+                      {downloadStatusText(progress)}
+                    </p>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
         <div>
           <label className={labelClass} htmlFor="whisper-path">
             Model file
@@ -152,8 +274,9 @@ export function TranscriptionEnginePanel({ embedded }: TranscriptionEnginePanelP
           </div>
         </div>
         <p className="text-[10px] leading-snug text-[var(--color-subtle)]">
-          Runs entirely on this machine, so it keeps working when the internet drops. Download a
-          ggml Whisper model once and point at the file. Larger models are more accurate and slower.
+          Runs entirely on this machine, so it keeps working when the internet drops and the audio
+          never leaves the building. Downloads land in the app data folder and are selected
+          automatically; the file picker is there for a model you already have.
         </p>
       </div>
 
