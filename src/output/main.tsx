@@ -3,12 +3,14 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { createRoot } from "react-dom/client";
 import { CaptionOverlay } from "@/components/presentation/CaptionOverlay";
 import { SceneRenderer } from "@/components/presentation/SceneRenderer";
+import { TickerOverlay } from "@/components/presentation/TickerOverlay";
 import type { Scene } from "@/engine/scene";
 import { logoScene } from "@/engine/scene";
 import { isTransparentLowerThirdOutput } from "@/lib/lowerThird";
 import { api } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import { startCaptionBridge } from "@/stores/captionStore";
+import { startTickerBridge } from "@/stores/tickerStore";
 import { startVideoPlaybackBridge } from "@/stores/videoPlaybackStore";
 import "../index.css";
 
@@ -64,6 +66,7 @@ function OutputApp() {
 
   useEffect(() => startVideoPlaybackBridge({ applyRemote: true }), []);
   useEffect(() => startCaptionBridge({ applyRemote: true }), []);
+  useEffect(() => startTickerBridge({ applyRemote: true }), []);
 
   const transparent = isTransparentLowerThirdOutput(scene, null, false);
 
@@ -106,6 +109,7 @@ function OutputApp() {
     >
       <SceneRenderer scene={scene} className="h-full w-full" label="" />
       <CaptionOverlay />
+      <TickerOverlay />
     </div>
   );
 }

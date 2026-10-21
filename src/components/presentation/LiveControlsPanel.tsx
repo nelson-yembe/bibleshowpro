@@ -7,9 +7,11 @@ import { VideoPlaybackControls } from "@/components/presentation/VideoPlaybackCo
 import type { DisplayOptions } from "@/components/presentation/displayOptions";
 import { buildSlidesFromSong } from "@/lib/songTypes";
 import { cn } from "@/lib/utils";
+import { TICKER_MAX_SPEED, TICKER_MIN_SPEED } from "@/lib/ticker";
 import { useLiveNavigationStore } from "@/stores/liveNavigationStore";
 import { usePresentationStore } from "@/stores/presentationStore";
 import { useSongStore } from "@/stores/songStore";
+import { useTickerStore } from "@/stores/tickerStore";
 import { useTranscriptionStore } from "@/stores/transcriptionStore";
 
 type ControlAction = "clear" | "undo" | "blackout" | "logo" | "freeze";
@@ -138,6 +140,9 @@ export function LiveControlsPanel({ displayOptions }: LiveControlsPanelProps) {
     if (btn.action === "freeze") freeze();
   };
 
+  const tickerSettings = useTickerStore((s) => s.settings);
+  const updateTicker = useTickerStore((s) => s.updateSettings);
+
   return (
     <aside className="flex w-[320px] shrink-0 flex-col border-l border-[var(--color-border)] bg-[#0a0c12]">
       <div className="border-b border-[var(--color-border)] p-4">
@@ -245,6 +250,61 @@ export function LiveControlsPanel({ displayOptions }: LiveControlsPanelProps) {
 
       <div className="border-t border-[var(--color-border)] p-4">
         <ServiceQueueStrip />
+      </div>
+
+      <div className="border-t border-[var(--color-border)] p-4">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <p className="section-label">Ticker</p>
+          <label className="flex items-center gap-1.5 text-[10px] text-[var(--color-muted-foreground)]">
+            <input
+              type="checkbox"
+              checked={tickerSettings.enabled}
+              onChange={(e) => updateTicker({ enabled: e.target.checked })}
+            />
+            On air
+          </label>
+        </div>
+        <input
+          value={tickerSettings.text}
+          onChange={(e) => updateTicker({ text: e.target.value })}
+          placeholder="Message to scroll across the output"
+          className="h-8 w-full rounded-md border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 text-[11px]"
+        />
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <label className="block">
+            <span className="mb-1 block text-[9px] uppercase tracking-wide text-[var(--color-subtle)]">Edge</span>
+            <select
+              value={tickerSettings.position}
+              onChange={(e) => updateTicker({ position: e.target.value === "top" ? "top" : "bottom" })}
+              className="h-7 w-full rounded-md border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 text-[11px]"
+            >
+              <option value="bottom">Bottom</option>
+              <option value="top">Top</option>
+            </select>
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-[9px] uppercase tracking-wide text-[var(--color-subtle)]">Speed</span>
+            <select
+              value={String(tickerSettings.speed)}
+              onChange={(e) => updateTicker({ speed: Number(e.target.value) })}
+              className="h-7 w-full rounded-md border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 text-[11px]"
+            >
+              {Array.from(
+                { length: TICKER_MAX_SPEED - TICKER_MIN_SPEED + 1 },
+                (_, i) => TICKER_MIN_SPEED + i,
+              ).map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        {tickerSettings.enabled && !tickerSettings.text.trim() && (
+          <p className="mt-2 text-[10px] text-amber-400">
+            Add a message — an empty ticker draws nothing.
+          </p>
+        )}
       </div>
 
       <div className="mt-auto border-t border-[var(--color-border)] p-4">
