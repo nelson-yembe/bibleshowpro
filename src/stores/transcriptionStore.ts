@@ -45,6 +45,7 @@ import {
   type ConfidenceLevel,
 } from "@/lib/transcription/types";
 import { useBibleStore } from "@/stores/bibleStore";
+import { useCaptionStore } from "@/stores/captionStore";
 import { usePresentationStore } from "@/stores/presentationStore";
 
 const SESSION_STORAGE_KEY = "bsp-transcription-session";
@@ -960,6 +961,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
       {
         onPartial: (text) => {
           set({ partialText: text, audioWarning: null });
+          useCaptionStore.getState().pushPartial(text);
           const cleaned = preprocessTranscriptForDetection(text);
           if (isLikelyVoiceCommand(cleaned)) {
             void processVoiceCommands(cleaned, get, set);
@@ -967,6 +969,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
           schedulePartialScan(get, set);
         },
         onFinal: async (text) => {
+          useCaptionStore.getState().pushFinal(text);
           const startedAt = get().startedAt ?? Date.now();
           const offsetMs = Date.now() - startedAt;
           const segment: TranscriptSegment = {
@@ -1008,6 +1011,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
     window.clearTimeout(partialScanTimer);
     void stopLevelMonitor();
     set({ status: "paused", partialText: "", audioLevel: 0 });
+    useCaptionStore.getState().clear();
   },
 
   resumeListening: async () => {
@@ -1029,6 +1033,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
     lastReportedAudioLevel = 0;
     sessionPeakAudioLevel = 0;
     set({ status: "stopped", partialText: "", audioLevel: 0, audioWarning: null });
+    useCaptionStore.getState().clear();
   },
 
   rescanTranscript: async () => {

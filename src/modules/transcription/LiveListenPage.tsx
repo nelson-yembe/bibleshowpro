@@ -19,6 +19,12 @@ import { TranscriptionElapsed } from "@/modules/transcription/TranscriptionElaps
 import { canStepVerse } from "@/lib/transcription/verseSession";
 import { useLiveNavigationStore } from "@/stores/liveNavigationStore";
 import { useBibleStore } from "@/stores/bibleStore";
+import { useCaptionStore } from "@/stores/captionStore";
+import {
+  CAPTION_MAX_LINES,
+  CAPTION_MIN_LINES,
+  CAPTION_STALE_MS,
+} from "@/lib/captions";
 import {
   Mic,
   MicOff,
@@ -74,6 +80,8 @@ export function LiveListenPage() {
   const preflightStatus = useTranscriptionStore((s) => s.preflightStatus);
   const preflightMessage = useTranscriptionStore((s) => s.preflightMessage);
   const paraphraseEnabled = useTranscriptionStore((s) => s.paraphraseEnabled);
+  const captionSettings = useCaptionStore((s) => s.settings);
+  const updateCaptionSettings = useCaptionStore((s) => s.updateSettings);
   const minConfidence = useTranscriptionStore((s) => s.minConfidence);
   const lastScanAt = useTranscriptionStore((s) => s.lastScanAt);
   const scanning = useTranscriptionStore((s) => s.scanning);
@@ -414,6 +422,69 @@ export function LiveListenPage() {
             <p className="mt-2 inline-flex items-center gap-1 text-[10px] text-[var(--color-subtle)]">
               {model?.requiresInternet ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
               {model?.requiresInternet ? "Internet required" : "Local preferred"}
+            </p>
+          </section>
+
+          <section className="rounded-xl border border-[var(--color-border)] bg-[#0a0c12] p-3">
+            <h2 className="section-label mb-2">Live captions</h2>
+            <label className="flex items-center gap-1.5 text-[11px] text-[var(--color-muted-foreground)]">
+              <input
+                type="checkbox"
+                checked={captionSettings.enabled}
+                onChange={(e) => updateCaptionSettings({ enabled: e.target.checked })}
+              />
+              Show captions on the output screen
+            </label>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <label className="block">
+                <span className="mb-1 block text-[10px] uppercase tracking-wide text-[var(--color-subtle)]">Position</span>
+                <select
+                  value={captionSettings.position}
+                  onChange={(e) => updateCaptionSettings({ position: e.target.value === "top" ? "top" : "bottom" })}
+                  disabled={!captionSettings.enabled}
+                  className="h-8 w-full rounded-md border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 text-[11px]"
+                >
+                  <option value="bottom">Bottom</option>
+                  <option value="top">Top</option>
+                </select>
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[10px] uppercase tracking-wide text-[var(--color-subtle)]">Lines</span>
+                <select
+                  value={String(captionSettings.maxLines)}
+                  onChange={(e) => updateCaptionSettings({ maxLines: Number(e.target.value) })}
+                  disabled={!captionSettings.enabled}
+                  className="h-8 w-full rounded-md border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 text-[11px]"
+                >
+                  {Array.from(
+                    { length: CAPTION_MAX_LINES - CAPTION_MIN_LINES + 1 },
+                    (_, i) => CAPTION_MIN_LINES + i,
+                  ).map((n) => (
+                    <option key={n} value={n}>
+                      {n === 1 ? "1 line" : `${n} lines`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <label className="mt-2 block">
+              <span className="mb-1 block text-[10px] uppercase tracking-wide text-[var(--color-subtle)]">Text size</span>
+              <select
+                value={String(captionSettings.fontScale)}
+                onChange={(e) => updateCaptionSettings({ fontScale: Number(e.target.value) })}
+                disabled={!captionSettings.enabled}
+                className="h-8 w-full rounded-md border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 text-[11px]"
+              >
+                <option value="0.8">Small</option>
+                <option value="1">Normal</option>
+                <option value="1.3">Large</option>
+                <option value="1.6">Extra large</option>
+              </select>
+            </label>
+            <p className="mt-2 text-[10px] text-[var(--color-subtle)]">
+              Captions draw on the output window, so they are part of the NDI feed. They clear
+              themselves after {Math.round(CAPTION_STALE_MS / 1000)}s without new speech, and stop
+              when you pause or stop listening.
             </p>
           </section>
         </div>

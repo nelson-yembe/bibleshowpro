@@ -1,0 +1,67 @@
+import { useEffect, useState } from "react";
+import { CAPTION_STALE_MS, composeCaptionLines } from "@/lib/captions";
+import { useCaptionStore } from "@/stores/captionStore";
+import { cn } from "@/lib/utils";
+
+/** Base size at scale 1 — viewport-relative so captions track the projector resolution. */
+const BASE_FONT_VW = 2.6;
+
+interface CaptionOverlayProps {
+  className?: string;
+}
+
+/**
+ * Live transcript drawn over whatever scene is on air.
+ *
+ * Deliberately not a SceneType: a scene replaces the output, whereas captions sit on top
+ * of it, and interim results arrive far too often to push a whole scene each time.
+ * Sized in vw, so this belongs in the full-screen output window rather than a scaled
+ * console monitor.
+ */
+export function CaptionOverlay({ className }: CaptionOverlayProps) {
+  const settings = useCaptionStore((s) => s.settings);
+  const finalLines = useCaptionStore((s) => s.finalLines);
+  const partial = useCaptionStore((s) => s.partial);
+  const revision = useCaptionStore((s) => s.revision);
+
+  // Blank the overlay when the engine goes quiet, so dead text never sticks on screen.
+  const [stale, setStale] = useState(true);
+  useEffect(() => {
+    if (revision === 0) {
+      setStale(true);
+      return;
+    }
+    setStale(false);
+    const timer = window.setTimeout(() => setStale(true), CAPTION_STALE_MS);
+    return () => window.clearTimeout(timer);
+  }, [revision]);
+
+  if (!settings.enabled || stale) return null;
+
+  const lines = composeCaptionLines(finalLines, partial, settings.maxLines);
+  if (lines.length === 0) return null;
+
+  return (
+    <div
+      className={cn(
+        "pointer-events-none absolute inset-x-0 z-30 flex flex-col items-center gap-[0.4vw] px-[4vw]",
+        settings.position === "top" ? "top-[6%]" : "bottom-[6%]",
+        className,
+      )}
+      aria-live="polite"
+    >
+      {lines.map((line, index) => (
+        <span
+          key={`${revision}-${index}`}
+          className="max-w-full rounded-[0.3vw] bg-black/70 px-[1.2vw] py-[0.4vw] text-center font-medium leading-tight text-white"
+          style={{
+            fontSize: `${BASE_FONT_VW * settings.fontScale}vw`,
+            textShadow: "0 0.15vw 0.3vw rgba(0,0,0,0.85)",
+          }}
+        >
+          {line}
+        </span>
+      ))}
+    </div>
+  );
+}
