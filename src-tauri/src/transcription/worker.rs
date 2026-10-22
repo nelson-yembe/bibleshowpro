@@ -84,6 +84,9 @@ impl WorkerResponse {
 /// Entry point when launched with [`WORKER_FLAG`]. Returns the process exit code.
 pub fn run_worker() -> i32 {
     let cpu = cpu_support();
+    // What whisper.cpp was compiled with, for the worker log: a slow PC and a slow build
+    // look the same from the outside.
+    eprintln!("{}", whisper_rs::print_system_info());
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout().lock();
     let mut engine: Option<WhisperEngine> = None;

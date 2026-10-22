@@ -24,6 +24,13 @@ jobs:
       GGML_AVX512_VBMI: "OFF"
       GGML_AVX512_VNNI: "OFF"
       GGML_AVX_VNNI: "OFF"
+      # In a release build the `cmake` crate replaces CMake's release flags with its own,
+      # which carry no optimization switch, so whisper.cpp was compiled unoptimized:
+      # ~7x slower than a debug build of the same app. whisper-rs-sys forwards CMAKE_*
+      # variables, and the crate leaves a flag alone once it is defined. Dash form, so
+      # no shell mistakes "/O2" for a path.
+      CMAKE_C_FLAGS_RELEASE: "-O2 -Ob2 -DNDEBUG"
+      CMAKE_CXX_FLAGS_RELEASE: "-O2 -Ob2 -DNDEBUG"
     steps:
       - uses: actions/checkout@v4
 
@@ -35,13 +42,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       # Without this every run recompiles whisper.cpp from source.
-      # whisper-rs-sys does not declare rerun-if-env-changed for GGML_*, so a restored
-      # cache would silently keep the previous instruction set. Bump this key whenever
-      # the GGML_* flags above change, or the fix will not take effect.
+      # whisper-rs-sys does not declare rerun-if-env-changed for GGML_* or CMAKE_*, so a
+      # restored cache would silently keep the previous build. Bump this key whenever the
+      # flags above change, or the fix will not take effect.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-          key: ggml-avx2-floor-v1
+          key: ggml-avx2-floor-o2-v2
 
       - name: Install dependencies
         run: npm ci
