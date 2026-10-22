@@ -67,7 +67,7 @@ export function preprocessTranscriptForDetection(text: string): string {
   s = s.replace(/(\d)\s*\+\s*(\d)/g, "$1 $2");
   s = s.replace(/(\d{1,3})\s*\/\s*(\d{1,3})/g, "$1:$2");
   s = s.replace(/(\d)\s*%/g, "$1");
-  s = s.replace(/\bnumbers\s+(?:are|is)\s+(?:the\s+)?(\d{1,3})\b/gi, "Numbers $1");
+  s = s.replace(/\bnumbers\s+(?:are|is)\s+(?:the\s+)?(\d{1,3})\b/gi, "Numbers chapter $1");
   s = s.replace(/\bchapter\s+(\d{1,3})\s+(\d{1,3})\b/gi, "chapter $1 verse $2");
 
   // Gated phonetic book confusions — only when a scripture cue follows.

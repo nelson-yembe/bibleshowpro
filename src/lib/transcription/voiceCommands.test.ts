@@ -21,6 +21,14 @@ describe("voiceCommands", () => {
     expect(isLikelyVoiceCommand("next verse")).toBe(true);
   });
 
+  it("detects French navigation phrases", () => {
+    expect(parseVoiceCommands("verset suivant", translations).type).toBe("next_verse");
+    expect(parseVoiceCommands("Allons au verset suivant", translations).type).toBe("next_verse");
+    expect(parseVoiceCommands("le verset d'après", translations).type).toBe("next_verse");
+    expect(parseVoiceCommands("Revenons au verset précédent", translations).type).toBe("prev_verse");
+    expect(parseVoiceCommands("verset precedent", translations).type).toBe("prev_verse");
+  });
+
   it("detects navigation inside longer speech", () => {
     expect(
       parseVoiceCommands("Okay church, let's go to the next verse now", translations).type,

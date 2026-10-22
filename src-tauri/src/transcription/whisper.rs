@@ -5,13 +5,42 @@ use std::ops::Range;
 use std::path::Path;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use serde::{Deserialize, Serialize};
 use whisper_rs::{
-    FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperVadContext,
-    WhisperVadContextParams, WhisperVadParams,
+    get_lang_id, FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState,
+    WhisperVadContext, WhisperVadContextParams, WhisperVadParams,
 };
 
 /// whisper.cpp only accepts 16 kHz mono; the frontend resamples to exactly this.
 pub const WHISPER_SAMPLE_RATE: u32 = 16000;
+
+/// What "auto" may choose between. Left to pick from all ~100 languages, Whisper heard
+/// short or unclear phrases as Hindi and Korean.
+pub const AUTO_LANGUAGES: &[&str] = &["en", "fr"];
+
+/// A phrase must be at least this clearly one language to switch away from the language
+/// of the phrase before: "Amen" or a name is no evidence the preacher changed language.
+const SWITCH_CONFIDENCE: f32 = 0.65;
+
+/// The most probable candidate, unless it is too close a call to leave `previous`.
+pub fn pick_language(scores: &[(&'static str, f32)], previous: Option<&'static str>) -> Option<&'static str> {
+    let total: f32 = scores.iter().map(|(_, p)| p.max(0.0)).sum();
+    let (best, probability) = scores.iter().copied().max_by(|a, b| a.1.total_cmp(&b.1))?;
+    let share = if total > 0.0 { probability / total } else { 0.0 };
+    match previous {
+        Some(prev) if share < SWITCH_CONFIDENCE && scores.iter().any(|(l, _)| *l == prev) => Some(prev),
+        _ => Some(best),
+    }
+}
+
+/// One segment's words and the language they were heard in.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Transcript {
+    pub text: String,
+    #[serde(default)]
+    pub language: Option<String>,
+}
 
 /// Audio kept either side of detected speech, so the edges of words are not clipped.
 const SPEECH_PAD_SECONDS: f32 = 0.2;
@@ -111,6 +140,8 @@ pub struct WhisperEngine {
     path: String,
     ctx: WhisperContext,
     detector: Option<SpeechDetector>,
+    /// Language of the last segment in "auto" mode, kept when the next one is ambiguous.
+    last_language: Option<&'static str>,
 }
 
 impl WhisperEngine {
@@ -141,7 +172,39 @@ impl WhisperEngine {
             path: path.to_string(),
             ctx,
             detector,
+            last_language: None,
         })
+    }
+
+    /// English or French for this segment. English-only models have nothing to choose.
+    fn choose_language(&mut self, state: &mut WhisperState, samples: &[f32], threads: i32) -> &'static str {
+        if !self.ctx.is_multilingual() {
+            return "en";
+        }
+        let threads = threads.max(1) as usize;
+        let detected = state
+            .pcm_to_mel(samples, threads)
+            .and_then(|_| state.lang_detect(0, threads));
+        let choice = match detected {
+            Ok((_, probabilities)) => {
+                let scores: Vec<(&'static str, f32)> = AUTO_LANGUAGES
+                    .iter()
+                    .filter_map(|&lang| {
+                        let id = usize::try_from(get_lang_id(lang)?).ok()?;
+                        probabilities.get(id).map(|&p| (lang, p))
+                    })
+                    .collect();
+                pick_language(&scores, self.last_language)
+            }
+            Err(e) => {
+                eprintln!("Language detection failed ({e}); keeping the last language");
+                None
+            }
+        }
+        .or(self.last_language)
+        .unwrap_or(AUTO_LANGUAGES[0]);
+        self.last_language = Some(choice);
+        choice
     }
 
     pub fn path(&self) -> &str {
@@ -153,13 +216,13 @@ impl WhisperEngine {
     }
 
     /// `language` is an ISO code ("en", "fr") or "auto" to let the model decide.
-    pub fn transcribe(&mut self, samples: &[f32], language: &str, threads: i32) -> Result<String, String> {
+    pub fn transcribe(&mut self, samples: &[f32], language: &str, threads: i32) -> Result<Transcript, String> {
         if samples.is_empty() {
-            return Ok(String::new());
+            return Ok(Transcript::default());
         }
         let samples = match self.detector.as_mut().map(|d| d.find_speech(samples)) {
             Some(Ok(Some(span))) => &samples[span],
-            Some(Ok(None)) => return Ok(String::new()),
+            Some(Ok(None)) => return Ok(Transcript::default()),
             // Never lose speech to a detector fault: give Whisper everything instead.
             Some(Err(e)) => {
                 eprintln!("{e}");
@@ -172,6 +235,11 @@ impl WhisperEngine {
             .ctx
             .create_state()
             .map_err(|e| format!("Could not start Whisper: {e}"))?;
+        let language = if language == "auto" {
+            self.choose_language(&mut state, samples, threads)
+        } else {
+            language
+        };
 
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
         params.set_n_threads(threads.max(1));
@@ -216,7 +284,10 @@ impl WhisperEngine {
             }
             out.push_str(trimmed);
         }
-        Ok(out)
+        Ok(Transcript {
+            text: out,
+            language: Some(language.to_string()),
+        })
     }
 }
 
@@ -290,6 +361,29 @@ mod tests {
         assert!(!is_prompt_echo("James chapter 4 verse 5", prompt));
         assert!(!is_prompt_echo("the book", prompt), "short fragments are too common to drop");
         assert!(!is_prompt_echo("", prompt));
+    }
+
+    #[test]
+    fn auto_picks_the_clearer_language() {
+        assert_eq!(pick_language(&[("en", 0.8), ("fr", 0.1)], None), Some("en"));
+        assert_eq!(pick_language(&[("en", 0.05), ("fr", 0.6)], Some("en")), Some("fr"));
+    }
+
+    #[test]
+    fn auto_ignores_languages_it_may_not_choose() {
+        // Hindi at 0.9 is not on the list; between English and French, French is clearer.
+        assert_eq!(pick_language(&[("en", 0.02), ("fr", 0.06)], None), Some("fr"));
+    }
+
+    #[test]
+    fn auto_keeps_the_language_through_an_ambiguous_phrase() {
+        assert_eq!(pick_language(&[("en", 0.45), ("fr", 0.55)], Some("en")), Some("en"));
+        assert_eq!(pick_language(&[("en", 0.45), ("fr", 0.55)], None), Some("fr"));
+    }
+
+    #[test]
+    fn auto_has_nothing_to_pick_without_scores() {
+        assert_eq!(pick_language(&[], Some("en")), None);
     }
 
     #[test]

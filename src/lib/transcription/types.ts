@@ -34,6 +34,8 @@ export interface TranscriptSegment {
   offsetMs: number;
   timestamp: string;
   hasDetection?: boolean;
+  /** Language the engine heard this segment in, when it reported one. */
+  language?: string;
 }
 
 export interface ScriptureSuggestion {

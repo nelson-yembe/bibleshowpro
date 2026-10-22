@@ -10,6 +10,7 @@ import {
   formatBytes,
   formatMemory,
   LANGUAGE_OPTIONS,
+  languageHint,
   modelsForLanguage,
   recommendedModelId,
   selectedModel,
@@ -119,6 +120,25 @@ export function TranscriptionEnginePanel({ embedded }: TranscriptionEnginePanelP
         ))}
       </fieldset>
 
+      <div>
+        <label className={labelClass} htmlFor="spoken-language">
+          Language spoken in the service
+        </label>
+        <select
+          id="spoken-language"
+          value={language}
+          onChange={(e) => void setLanguage(normalizeLanguage(e.target.value))}
+          className={inputClass}
+        >
+          {LANGUAGE_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <p className="mt-1 text-[10px] leading-snug text-[var(--color-subtle)]">{languageHint(language, modelId)}</p>
+      </div>
+
       <p role="status" className={cn("text-[11px] font-medium", readinessTone(readiness))}>
         {loaded ? readiness.message : "Checking this PC…"}
       </p>
@@ -135,29 +155,6 @@ export function TranscriptionEnginePanel({ embedded }: TranscriptionEnginePanelP
               )}
             </p>
           )}
-
-          <div>
-            <label className={labelClass} htmlFor="whisper-language">
-              Language spoken
-            </label>
-            <select
-              id="whisper-language"
-              value={language}
-              onChange={(e) => void setLanguage(normalizeLanguage(e.target.value))}
-              className={inputClass}
-            >
-              {LANGUAGE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            {language !== "en" && (
-              <p className="mt-1 text-[10px] text-[var(--color-subtle)]">
-                Captions work in any language; automatic scripture detection is tuned for English.
-              </p>
-            )}
-          </div>
 
           <div className="space-y-1.5">
             <p className={labelClass}>Speech model</p>

@@ -166,6 +166,13 @@ mod tests {
     }
 
     #[test]
+    fn resolves_typed_french_names() {
+        assert_eq!(resolve_book("Genèse"), Some((1, "Genesis")));
+        assert_eq!(resolve_book("1 Jean"), Some((62, "1 John")));
+        assert_eq!(resolve_book("Apocalypse"), Some((66, "Revelation")));
+    }
+
+    #[test]
     fn resolves_song_aliases() {
         assert_eq!(resolve_book("songs of solomon"), Some((22, "Song of Solomon")));
         assert_eq!(resolve_book("song of songs"), Some((22, "Song of Solomon")));
@@ -187,6 +194,11 @@ pub fn resolve_book(name: &str) -> Option<(i32, &'static str)> {
                 return Some((book.number, book.name));
             }
         }
+    }
+
+    // Whole spoken names, French included: "Genèse", "1 Jean", "Apocalypse".
+    if let Some(book) = crate::bible::spoken_book::resolve_spoken_book(name).filter(|b| !b.repaired) {
+        return Some((book.number, book.name));
     }
 
     for book in CANONICAL_BOOKS {

@@ -156,7 +156,15 @@ describe("TranscriptionEnginePanel", () => {
     backend({ config: { whisperLanguage: "fr" } });
     render(<TranscriptionEnginePanel embedded />);
     await waitFor(() => expect(screen.getAllByRole("button", { name: "Download" })).toHaveLength(3));
-    expect(screen.getByText(/scripture detection is tuned for English/)).toBeInTheDocument();
+    expect(screen.getByText(/French book names too/)).toBeInTheDocument();
+  });
+
+  it("shows the language choice for every engine, not only Whisper", async () => {
+    backend({ config: { whisperLanguage: "auto" } });
+    useTranscriptionStore.setState({ modelId: "gemini-transcribe-live" });
+    render(<TranscriptionEnginePanel embedded />);
+    expect(await screen.findByLabelText("Language spoken in the service")).toHaveValue("auto");
+    expect(screen.getByText("Gemini listens for English and French.")).toBeInTheDocument();
   });
 
   it("still renders when no backend answers", async () => {

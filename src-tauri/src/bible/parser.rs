@@ -21,7 +21,9 @@ pub struct ParsedReference {
 }
 
 pub fn parse_reference(input: &str) -> Option<ParsedReference> {
-    let trimmed = input.trim();
+    // The pattern reads ASCII letters; "Genèse 1:1" is typed as often as "Genesis 1:1".
+    let folded = crate::bible::spoken_book::fold_accents(input.trim());
+    let trimmed = folded.as_str();
     if trimmed.is_empty() {
         return None;
     }

@@ -14,7 +14,10 @@ import {
   GEMINI_CHUNK_FRAMES,
   GEMINI_SAMPLE_RATE,
   parseServerMessage,
+  supportsCustomVocabulary,
 } from "@/lib/transcription/geminiProtocol";
+import { normalizeLanguage } from "@/lib/transcription/engineConfig";
+import { scriptureVocabulary } from "@/lib/transcription/scriptureVocabulary";
 
 const MAX_RECONNECTS = 3;
 const RECONNECT_DELAY_MS = 1200;
@@ -126,7 +129,10 @@ export class GeminiTranscriptionEngine implements TranscriptionEngine {
     socket.onopen = () => {
       const model = this.options?.config?.geminiModel?.trim() || DEFAULT_GEMINI_MODEL;
       const languages = this.options?.config?.languageCodes ?? [];
-      socket.send(buildSetupMessage(model, languages));
+      const vocabulary = supportsCustomVocabulary(model)
+        ? scriptureVocabulary(normalizeLanguage(this.options?.config?.whisperLanguage))
+        : [];
+      socket.send(buildSetupMessage(model, languages, vocabulary));
     };
 
     socket.onmessage = (event: MessageEvent) => {

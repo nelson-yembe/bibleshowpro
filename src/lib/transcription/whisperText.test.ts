@@ -31,6 +31,17 @@ describe("cleanWhisperText", () => {
     expect(cleanWhisperText("the Lord [cough] is my shepherd")).toBe("the Lord is my shepherd");
   });
 
+  it("drops subtitle credits Whisper invents on unclear audio", () => {
+    expect(cleanWhisperText("Thanks for watching!")).toBe("");
+    expect(cleanWhisperText("Sous-titres réalisés par la communauté d'Amara.org")).toBe("");
+    expect(cleanWhisperText("Merci d'avoir regardé cette vidéo")).toBe("");
+  });
+
+  it("keeps thanks that a congregation actually says", () => {
+    expect(cleanWhisperText("Thank you.")).toBe("Thank you.");
+    expect(cleanWhisperText("Thank you Lord for watching over us")).toBe("Thank you Lord for watching over us");
+  });
+
   it("handles empty input", () => {
     expect(cleanWhisperText("")).toBe("");
     expect(cleanWhisperText("   ")).toBe("");

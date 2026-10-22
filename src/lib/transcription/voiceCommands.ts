@@ -12,10 +12,10 @@ export type VoiceCommand =
  * ("please", "now", "and then") while avoiding ordinary "next year" speech.
  */
 const NEXT_VERSE =
-  /\b(?:(?:please\s+|and\s+(?:then\s+)?|so\s+|now\s+|let'?s\s+|let\s+us\s+)?(?:(?:go|move|skip|jump|turn|advance)(?:\s+(?:on|ahead|forward))?\s+(?:to\s+)?(?:the\s+)?)?(?:next|following)\s+(?:verse|verses|one)|next\s+verse|following\s+verse|(?:go|move)\s+(?:to\s+)?next)\b/i;
+  /\b(?:(?:please\s+|and\s+(?:then\s+)?|so\s+|now\s+|let'?s\s+|let\s+us\s+)?(?:(?:go|move|skip|jump|turn|advance)(?:\s+(?:on|ahead|forward))?\s+(?:to\s+)?(?:the\s+)?)?(?:next|following)\s+(?:verse|verses|one)|next\s+verse|following\s+verse|(?:go|move)\s+(?:to\s+)?next|verset\s+suivant|verset\s+d['’ ]?apr[eè]s)\b/i;
 
 const PREV_VERSE =
-  /\b(?:(?:please\s+|and\s+(?:then\s+)?|so\s+|now\s+|let'?s\s+|let\s+us\s+)?(?:(?:go|move|skip|jump|turn)(?:\s+back)?\s+(?:to\s+)?(?:the\s+)?)?(?:previous|prior|last|preceding)\s+(?:verse|verses|one)|previous\s+verse|go\s+back(?:\s+(?:a\s+)?(?:verse|one))?(?:\s+please)?|back\s+(?:up\s+)?(?:a\s+)?verse|(?:go|move)\s+(?:to\s+)?(?:the\s+)?previous)\b/i;
+  /\b(?:(?:please\s+|and\s+(?:then\s+)?|so\s+|now\s+|let'?s\s+|let\s+us\s+)?(?:(?:go|move|skip|jump|turn)(?:\s+back)?\s+(?:to\s+)?(?:the\s+)?)?(?:previous|prior|last|preceding)\s+(?:verse|verses|one)|previous\s+verse|go\s+back(?:\s+(?:a\s+)?(?:verse|one))?(?:\s+please)?|back\s+(?:up\s+)?(?:a\s+)?verse|(?:go|move)\s+(?:to\s+)?(?:the\s+)?previous|verset\s+pr[eé]c[eé]dent)\b/i;
 
 /** Spoken names that map to common translation abbreviations / ids. */
 const SPOKEN_TRANSLATION_ALIASES: Record<string, string[]> = {

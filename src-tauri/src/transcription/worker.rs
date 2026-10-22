@@ -19,7 +19,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::transcription::system::{cpu_support, unsupported_cpu_message, CpuSupport};
-use crate::transcription::whisper::{decode_pcm16, WhisperEngine, WHISPER_SAMPLE_RATE};
+use crate::transcription::whisper::{decode_pcm16, Transcript, WhisperEngine, WHISPER_SAMPLE_RATE};
 
 /// Command-line flag that makes the executable run as a worker instead of the app.
 pub const WORKER_FLAG: &str = "--whisper-worker";
@@ -52,6 +52,9 @@ pub struct WorkerResponse {
     pub text: String,
     #[serde(default)]
     pub error: Option<String>,
+    /// Language the segment was heard in, when Whisper had to choose.
+    #[serde(default)]
+    pub language: Option<String>,
 }
 
 impl WorkerResponse {
@@ -60,6 +63,7 @@ impl WorkerResponse {
             ok: true,
             text: text.into(),
             error: None,
+            language: None,
         }
     }
 
@@ -68,6 +72,7 @@ impl WorkerResponse {
             ok: false,
             text: String::new(),
             error: Some(message.into()),
+            language: None,
         }
     }
 }
@@ -151,7 +156,10 @@ pub(crate) fn handle(
                 Err(message) => return WorkerResponse::err(message),
             };
             match loaded.transcribe(&samples, &language, threads) {
-                Ok(text) => WorkerResponse::ok(text),
+                Ok(heard) => WorkerResponse {
+                    language: heard.language,
+                    ..WorkerResponse::ok(heard.text)
+                },
                 Err(message) => WorkerResponse::err(message),
             }
         }
@@ -279,7 +287,7 @@ fn call(
     request: &WorkerRequest,
     timeout: Duration,
     log_path: Option<&Path>,
-) -> Result<String, String> {
+) -> Result<WorkerResponse, String> {
     if slot.is_none() {
         *slot = Some(spawn(log_path)?);
     }
@@ -293,7 +301,7 @@ fn call(
             let response: WorkerResponse = serde_json::from_str(&reply)
                 .map_err(|e| format!("Unreadable reply from the offline engine: {e}"))?;
             if response.ok {
-                Ok(response.text)
+                Ok(response)
             } else {
                 Err(response.error.unwrap_or_else(|| "The offline engine reported an error.".into()))
             }
@@ -345,7 +353,7 @@ pub fn transcribe(
     language: String,
     threads: i32,
     log_path: Option<&Path>,
-) -> Result<String, String> {
+) -> Result<Transcript, String> {
     let mut slot = WORKER.lock();
     ensure_loaded_in(&mut slot, path, speech_detector, log_path)?;
     let timeout = transcribe_timeout(audio_seconds_in(&pcm_base64, sample_rate));
@@ -360,6 +368,10 @@ pub fn transcribe(
         timeout,
         log_path,
     )
+    .map(|reply| Transcript {
+        text: reply.text,
+        language: reply.language,
+    })
 }
 
 /// The path of the model currently resident in the worker, if any.

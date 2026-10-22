@@ -11,6 +11,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::transcription::models::{self, WhisperModelInfo};
 use crate::transcription::system::{self, SystemProfile};
+use crate::transcription::whisper::Transcript;
 use crate::transcription::worker;
 
 /// Physical cores never change while the app runs, so size the thread pool once.
@@ -186,7 +187,7 @@ pub async fn transcribe_audio_segment(
     sample_rate: u32,
     pcm_base64: String,
     language: Option<String>,
-) -> Result<String, String> {
+) -> Result<Transcript, String> {
     let log = worker_log(&app);
     let detector = speech_detector(&app);
     let language = effective_language(&model_path, language.as_deref());

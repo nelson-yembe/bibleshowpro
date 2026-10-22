@@ -9,9 +9,15 @@ export type TranscriptionStatus =
   | "unavailable"
   | "reconnecting";
 
+/** What an engine knows about a final segment beyond its words. */
+export interface FinalSegmentInfo {
+  /** Language the segment was heard in ("en", "fr"), when the engine chose one. */
+  language?: string;
+}
+
 export interface TranscriptionCallbacks {
   onPartial: (text: string) => void;
-  onFinal: (text: string) => void;
+  onFinal: (text: string, info?: FinalSegmentInfo) => void;
   onStatus: (status: TranscriptionStatus) => void;
   onError: (message: string) => void;
   onAudioActivity?: (level: number) => void;
@@ -22,7 +28,7 @@ export interface TranscriptionEngineConfig {
   geminiApiKey?: string;
   geminiModel?: string;
   whisperModelPath?: string;
-  /** "en", "fr" or "auto". English-only Whisper models ignore it. */
+  /** Language spoken in the service: "en", "fr" or "auto" (English and French). */
   whisperLanguage?: string;
   /** Empty list asks the service to auto-detect. */
   languageCodes?: string[];

@@ -7,7 +7,9 @@ import {
   floatTo16BitPcm,
   GEMINI_SAMPLE_RATE,
   parseServerMessage,
+  supportsCustomVocabulary,
 } from "@/lib/transcription/geminiProtocol";
+import { scriptureVocabulary } from "@/lib/transcription/scriptureVocabulary";
 
 describe("gemini live url", () => {
   it("escapes the api key", () => {
@@ -30,6 +32,38 @@ describe("setup message", () => {
   it("passes language hints through", () => {
     const setup = JSON.parse(buildSetupMessage("m", ["en-GB"]));
     expect(setup.setup.inputAudioTranscription.languageCodes).toEqual(["en-GB"]);
+  });
+
+  it("sends a custom vocabulary only when there is one", () => {
+    const withWords = JSON.parse(buildSetupMessage("m", ["en-US"], ["Habakkuk", "Philemon"]));
+    expect(withWords.setup.inputAudioTranscription.customVocabulary).toEqual(["Habakkuk", "Philemon"]);
+    const without = JSON.parse(buildSetupMessage("m", ["en-US"]));
+    expect(without.setup.inputAudioTranscription).not.toHaveProperty("customVocabulary");
+  });
+
+  it("offers custom vocabulary only to transcription models", () => {
+    expect(supportsCustomVocabulary("gemini-3.5-transcribe-live")).toBe(true);
+    expect(supportsCustomVocabulary("models/gemini-live-2.5-flash")).toBe(false);
+  });
+});
+
+describe("scripture vocabulary", () => {
+  it("lists every English book once, numbered books under one name", () => {
+    const words = scriptureVocabulary("en");
+    expect(words).toContain("Habakkuk");
+    expect(words).toContain("Corinthians");
+    expect(words).not.toContain("1 Corinthians");
+    expect(words).toContain("verse");
+  });
+
+  it("uses French names for French services and both for bilingual ones", () => {
+    expect(scriptureVocabulary("fr")).toContain("Ésaïe");
+    expect(scriptureVocabulary("fr")).not.toContain("Isaiah");
+    const both = scriptureVocabulary("auto");
+    expect(both).toContain("Isaiah");
+    expect(both).toContain("Ésaïe");
+    expect(both.length).toBeLessThanOrEqual(150);
+    expect(new Set(both).size).toBe(both.length);
   });
 });
 

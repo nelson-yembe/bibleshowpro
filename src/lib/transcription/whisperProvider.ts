@@ -141,14 +141,16 @@ export class WhisperTranscriptionEngine implements TranscriptionEngine {
     this.busy = true;
     if (!this.stopping && !this.paused) this.callbacks?.onStatus("processing");
     try {
-      const text = await tauriInvoke<string>("transcribe_audio_segment", {
+      const heard = await tauriInvoke<{ text: string; language?: string | null }>("transcribe_audio_segment", {
         modelPath: this.modelPath,
         sampleRate: SAMPLE_RATE,
         pcmBase64: encodePcmBase64(segment),
         language: this.language,
       });
-      const spoken = cleanWhisperText(text ?? "");
-      if (spoken && !this.stopping) this.callbacks?.onFinal(spoken);
+      const spoken = cleanWhisperText(heard?.text ?? "");
+      if (spoken && !this.stopping) {
+        this.callbacks?.onFinal(spoken, { language: heard?.language ?? undefined });
+      }
     } catch (err) {
       // The worker restarts itself on the next request, so keep listening: one bad
       // segment should not end a service's captions.

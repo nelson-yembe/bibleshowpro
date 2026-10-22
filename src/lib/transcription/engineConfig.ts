@@ -22,6 +22,22 @@ export function normalizeLanguage(value: unknown): WhisperLanguage {
   return value === "fr" || value === "auto" ? value : "en";
 }
 
+/**
+ * BCP-47 locales for the spoken-language setting. Online engines asked to detect the
+ * language unaided pick from about a hundred, and turned unclear phrases into Hindi and
+ * Korean; naming the service's languages keeps them to English and French.
+ */
+export function speechLocales(language: WhisperLanguage): string[] {
+  switch (language) {
+    case "fr":
+      return ["fr-FR"];
+    case "auto":
+      return ["en-US", "fr-FR"];
+    default:
+      return ["en-US"];
+  }
+}
+
 function normalize(stored: Partial<StoredEngineConfig> | null | undefined): StoredEngineConfig {
   return {
     geminiApiKey: typeof stored?.geminiApiKey === "string" ? stored.geminiApiKey : "",
@@ -56,7 +72,7 @@ export function toEngineConfig(stored: StoredEngineConfig): TranscriptionEngineC
     geminiModel: stored.geminiModel.trim() || undefined,
     whisperModelPath: stored.whisperModelPath.trim() || undefined,
     whisperLanguage: normalizeLanguage(stored.whisperLanguage),
-    languageCodes: [],
+    languageCodes: speechLocales(normalizeLanguage(stored.whisperLanguage)),
   };
 }
 

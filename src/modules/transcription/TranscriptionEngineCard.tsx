@@ -3,10 +3,13 @@ import { useNavigate } from "react-router-dom";
 import { ENGINE_WHISPER } from "@/lib/transcription/engine";
 import { engineReadiness, isDesktopApp } from "@/lib/transcription/engineReadiness";
 import { TRANSCRIPTION_MODELS } from "@/lib/transcription/types";
+import { normalizeLanguage } from "@/lib/transcription/engineConfig";
 import {
   downloadPercent,
   downloadStatusText,
   formatBytes,
+  LANGUAGE_OPTIONS,
+  languageName,
   modelsForLanguage,
   selectedModel,
 } from "@/lib/transcription/whisperModels";
@@ -27,6 +30,7 @@ export function TranscriptionEngineCard({ disabled }: { disabled: boolean }) {
   const navigate = useNavigate();
   const modelId = useTranscriptionStore((s) => s.modelId);
   const setModelId = useTranscriptionStore((s) => s.setModelId);
+  const heardLanguage = useTranscriptionStore((s) => s.heardLanguage);
 
   const loaded = useTranscriptionSetupStore((s) => s.loaded);
   const config = useTranscriptionSetupStore((s) => s.config);
@@ -37,6 +41,7 @@ export function TranscriptionEngineCard({ disabled }: { disabled: boolean }) {
   const message = useTranscriptionSetupStore((s) => s.message);
   const load = useTranscriptionSetupStore((s) => s.load);
   const useModel = useTranscriptionSetupStore((s) => s.useModel);
+  const setLanguage = useTranscriptionSetupStore((s) => s.setLanguage);
   const download = useTranscriptionSetupStore((s) => s.download);
   const cancelDownload = useTranscriptionSetupStore((s) => s.cancelDownload);
 
@@ -60,7 +65,7 @@ export function TranscriptionEngineCard({ disabled }: { disabled: boolean }) {
   return (
     <section className="rounded-xl border border-[var(--color-border)] bg-[#0a0c12] p-3">
       <h2 className="section-label mb-2">Transcription engine</h2>
-      <div className={cn("grid gap-2", modelId === ENGINE_WHISPER && downloaded.length > 0 && "grid-cols-2")}>
+      <div className="grid grid-cols-2 gap-2">
         <label className="block">
           <span className={labelClass}>Engine</span>
           <select
@@ -76,8 +81,23 @@ export function TranscriptionEngineCard({ disabled }: { disabled: boolean }) {
             ))}
           </select>
         </label>
+        <label className="block">
+          <span className={labelClass}>Language</span>
+          <select
+            value={config.whisperLanguage}
+            onChange={(e) => void setLanguage(normalizeLanguage(e.target.value))}
+            disabled={disabled}
+            className={selectClass}
+          >
+            {LANGUAGE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.value === "auto" ? "English + French" : option.label}
+              </option>
+            ))}
+          </select>
+        </label>
         {modelId === ENGINE_WHISPER && downloaded.length > 0 && (
-          <label className="block">
+          <label className="col-span-2 block">
             <span className={labelClass}>Speech model</span>
             <select
               value={inUse?.id ?? ""}
@@ -102,6 +122,11 @@ export function TranscriptionEngineCard({ disabled }: { disabled: boolean }) {
       <p role="status" className={cn("mt-2 text-[11px] font-medium leading-snug", readinessTone(readiness))}>
         {loaded ? readiness.message : "Checking this PC…"}
       </p>
+      {config.whisperLanguage === "auto" && heardLanguage && (
+        <p className="mt-1 text-[10px] text-[var(--color-subtle)]">
+          Last sentence heard in: <span className="text-[var(--color-foreground)]">{languageName(heardLanguage)}</span>
+        </p>
+      )}
 
       {fixModel && (
         <div className="mt-2">

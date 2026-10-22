@@ -185,12 +185,203 @@ pub fn normalize_spoken_numbers(text: &str) -> String {
     out.join(" ")
 }
 
+/// French number words, accent-folded and with hyphens already split ("dix-sept" arrives
+/// as "dix sept"). Ordinals fold to the same values as cardinals.
+fn french_value(word: &str) -> Option<i64> {
+    let base = match word.strip_suffix("ieme") {
+        Some(stem) => match stem {
+            "deux" => "deux",
+            "trois" => "trois",
+            "quatr" => "quatre",
+            "cinqu" => "cinq",
+            "six" => "six",
+            "sept" => "sept",
+            "huit" => "huit",
+            "neuv" => "neuf",
+            "dix" => "dix",
+            "onz" => "onze",
+            "douz" => "douze",
+            "treiz" => "treize",
+            "quatorz" => "quatorze",
+            "quinz" => "quinze",
+            "seiz" => "seize",
+            "vingt" => "vingt",
+            "trent" => "trente",
+            "quarant" => "quarante",
+            "cinquant" => "cinquante",
+            "soixant" => "soixante",
+            "cent" => "cent",
+            _ => return None,
+        },
+        None => word,
+    };
+    Some(match base {
+        "un" | "une" => 1,
+        "deux" => 2,
+        "trois" => 3,
+        "quatre" => 4,
+        "cinq" => 5,
+        "six" => 6,
+        "sept" => 7,
+        "huit" => 8,
+        "neuf" => 9,
+        "dix" => 10,
+        "onze" => 11,
+        "douze" => 12,
+        "treize" => 13,
+        "quatorze" => 14,
+        "quinze" => 15,
+        "seize" => 16,
+        "vingt" | "vingts" => 20,
+        "trente" => 30,
+        "quarante" => 40,
+        "cinquante" => 50,
+        "soixante" => 60,
+        "cent" | "cents" => 100,
+        _ => return None,
+    })
+}
+
+/// 0–19, the part of French counting that "dix sept" and "soixante douze" build on.
+fn french_below_twenty(tokens: &[&str], i: usize) -> Option<(i64, usize)> {
+    let value = french_value(tokens.get(i)?)?;
+    match value {
+        1..=9 => Some((value, i + 1)),
+        10 => match tokens.get(i + 1).and_then(|t| french_value(t)) {
+            Some(unit @ 7..=9) => Some((10 + unit, i + 2)),
+            _ => Some((10, i + 1)),
+        },
+        11..=16 => Some((value, i + 1)),
+        _ => None,
+    }
+}
+
+fn french_below_hundred(tokens: &[&str], i: usize) -> Option<(i64, usize)> {
+    let word = *tokens.get(i)?;
+    let value = french_value(word)?;
+    // "quatre vingt(s)" is 80, and takes 1–19 after it: "quatre vingt dix neuf" = 99.
+    if value == 4 && tokens.get(i + 1).and_then(|t| french_value(t)) == Some(20) {
+        return Some(match french_below_twenty(tokens, i + 2) {
+            Some((rest, next)) => (80 + rest, next),
+            None => (80, i + 2),
+        });
+    }
+    match value {
+        20 | 30 | 40 | 50 | 60 => {
+            // "vingt et un", "soixante et onze"
+            if tokens.get(i + 1) == Some(&"et") {
+                if let Some(unit @ (1 | 11)) = tokens.get(i + 2).and_then(|t| french_value(t)) {
+                    return Some((value + unit, i + 3));
+                }
+            }
+            match tokens.get(i + 1).and_then(|_| french_below_twenty(tokens, i + 1)) {
+                // Only sixty takes a teen: "soixante douze" = 72, but "vingt douze" is two numbers.
+                Some((rest, next)) if rest < 10 || value == 60 => Some((value + rest, next)),
+                _ => Some((value, i + 1)),
+            }
+        }
+        _ => french_below_twenty(tokens, i),
+    }
+}
+
+fn french_number(tokens: &[&str], i: usize) -> Option<(i64, usize)> {
+    let first = french_value(tokens.get(i)?)?;
+    let (hundreds, next) = if first == 100 {
+        (100, i + 1)
+    } else if (2..=9).contains(&first) && tokens.get(i + 1).and_then(|t| french_value(t)) == Some(100) {
+        (first * 100, i + 2)
+    } else {
+        return french_below_hundred(tokens, i);
+    };
+    match french_below_hundred(tokens, next) {
+        Some((rest, after)) => Some((hundreds + rest, after)),
+        None => Some((hundreds, next)),
+    }
+}
+
+/// French counterpart of [`normalize_spoken_numbers`], for text that is already
+/// lowercase and accent-folded. "Un"/"une" are numbers only after a chapter or verse
+/// word — everywhere else they are the article "a".
+pub fn normalize_french_numbers(text: &str) -> String {
+    let prepared = text
+        .char_indices()
+        .map(|(idx, ch)| {
+            if ch != '-' {
+                return ch;
+            }
+            let prev = text[..idx].chars().next_back().unwrap_or(' ');
+            let next = text[idx + 1..].chars().next().unwrap_or(' ');
+            if prev.is_ascii_digit() && next.is_ascii_digit() {
+                '-'
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>();
+    let tokens: Vec<&str> = prepared.split_whitespace().collect();
+
+    let mut out: Vec<String> = Vec::with_capacity(tokens.len());
+    let mut i = 0;
+    while i < tokens.len() {
+        let word = tokens[i];
+        let is_article = matches!(word, "un" | "une");
+        let counts = !is_article
+            || out
+                .last()
+                .is_some_and(|prev| matches!(prev.as_str(), "chapter" | "verse" | "verses" | "to" | "and"));
+        match counts.then(|| french_number(&tokens, i)).flatten() {
+            Some((value, next)) => {
+                out.push(value.to_string());
+                i = next;
+            }
+            None => {
+                out.push(word.to_string());
+                i += 1;
+            }
+        }
+    }
+    out.join(" ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn norm(text: &str) -> String {
         normalize_spoken_numbers(text)
+    }
+
+    fn fr(text: &str) -> String {
+        normalize_french_numbers(text)
+    }
+
+    #[test]
+    fn folds_french_numbers() {
+        assert_eq!(fr("jean trois seize"), "jean 3 16");
+        assert_eq!(fr("dix sept"), "17");
+        assert_eq!(fr("dix-neuf"), "19");
+        assert_eq!(fr("vingt et un"), "21");
+        assert_eq!(fr("vingt-trois"), "23");
+        assert_eq!(fr("soixante et onze"), "71");
+        assert_eq!(fr("soixante douze"), "72");
+        assert_eq!(fr("quatre vingts"), "80");
+        assert_eq!(fr("quatre-vingt-dix-neuf"), "99");
+        assert_eq!(fr("cent dix neuf"), "119");
+        assert_eq!(fr("cent cinquante"), "150");
+        assert_eq!(fr("le troisieme"), "le 3");
+    }
+
+    #[test]
+    fn french_articles_stay_words_outside_a_reference() {
+        assert_eq!(fr("un homme et une femme"), "un homme et une femme");
+        assert_eq!(fr("chapter un verse une"), "chapter 1 verse 1");
+    }
+
+    #[test]
+    fn french_folding_keeps_adjacent_numbers_apart() {
+        assert_eq!(fr("psaume cent dix neuf verse cent cinq"), "psaume 119 verse 105");
+        assert_eq!(fr("vingt douze"), "20 12");
+        assert_eq!(fr("versets 16-18"), "versets 16-18");
     }
 
     #[test]

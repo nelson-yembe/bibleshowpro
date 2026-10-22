@@ -67,6 +67,8 @@ import { ENGINE_WEB_SPEECH } from "@/lib/transcription/engine";
 import {
   engineConfigError,
   loadStoredEngineConfig,
+  normalizeLanguage,
+  speechLocales,
   toEngineConfig,
 } from "@/lib/transcription/engineConfig";
 import {
@@ -113,6 +115,8 @@ interface TranscriptionState {
   audioDeviceLabel: string | null;
   audioLevel: number;
   audioWarning: string | null;
+  /** Language of the latest final segment, when the engine reports one ("en", "fr"). */
+  heardLanguage: string | null;
   preflightStatus: "idle" | "checking" | "ready" | "failed";
   preflightMessage: string | null;
   paraphraseEnabled: boolean;
@@ -319,6 +323,7 @@ function resetWorkspaceState(): Pick<
   | "lastVoiceAction"
   | "lastScanAt"
   | "error"
+  | "heardLanguage"
 > {
   return {
     sessionId: null,
@@ -332,6 +337,7 @@ function resetWorkspaceState(): Pick<
     lastVoiceAction: null,
     lastScanAt: null,
     error: null,
+    heardLanguage: null,
   };
 }
 
@@ -781,6 +787,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
   audioDeviceLabel: null,
   audioLevel: 0,
   audioWarning: null,
+  heardLanguage: null,
   preflightStatus: "idle",
   preflightMessage: null,
   paraphraseEnabled: false,
@@ -1142,7 +1149,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
           useCaptionStore.getState().pushPartial(text);
           schedulePartialScan(get, set);
         },
-        onFinal: async (text) => {
+        onFinal: async (text, info) => {
           useCaptionStore.getState().pushFinal(text);
           const startedAt = get().startedAt ?? Date.now();
           const offsetMs = Date.now() - startedAt;
@@ -1152,12 +1159,14 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
             isFinal: true,
             offsetMs,
             timestamp: timestampNow(),
+            language: info?.language,
           };
           set((s) => ({
             partialText: "",
             segments: [...s.segments, segment],
             status: "processing",
             audioWarning: null,
+            heardLanguage: info?.language ?? s.heardLanguage,
           }));
 
           // Verse nav runs on finalized speech only — exactly ±1 per cue.
@@ -1178,7 +1187,12 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
         },
         onError: (message) => set({ error: message, status: "unavailable" }),
       },
-      { modelId: state.modelId, config: toEngineConfig(storedEngineConfig) },
+      {
+        modelId: state.modelId,
+        // Browser speech takes one locale; bilingual services fall back to its first.
+        language: speechLocales(normalizeLanguage(storedEngineConfig.whisperLanguage))[0],
+        config: toEngineConfig(storedEngineConfig),
+      },
       audioDeviceId,
     );
   },

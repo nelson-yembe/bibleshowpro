@@ -20,13 +20,28 @@ export function buildLiveUrl(apiKey: string): string {
   return `${GEMINI_LIVE_HOST}?key=${encodeURIComponent(apiKey)}`;
 }
 
-export function buildSetupMessage(model: string, languageCodes: string[] = []): string {
+export function buildSetupMessage(
+  model: string,
+  languageCodes: string[] = [],
+  customVocabulary: string[] = [],
+): string {
   return JSON.stringify({
     setup: {
       model: model.startsWith("models/") ? model : `models/${model}`,
-      inputAudioTranscription: { languageCodes },
+      inputAudioTranscription: {
+        languageCodes,
+        ...(customVocabulary.length > 0 ? { customVocabulary } : {}),
+      },
     },
   });
+}
+
+/**
+ * Custom vocabulary is documented for the transcription models; a general model given
+ * an operator override might reject the field and refuse the whole session.
+ */
+export function supportsCustomVocabulary(model: string): boolean {
+  return /transcribe/i.test(model);
 }
 
 export function buildAudioMessage(base64Pcm: string, sampleRate = GEMINI_SAMPLE_RATE): string {

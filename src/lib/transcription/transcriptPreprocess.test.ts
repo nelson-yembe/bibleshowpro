@@ -50,7 +50,7 @@ describe("transcriptPreprocess", () => {
   });
 
   it("repairs Numbers are the N", () => {
-    expect(preprocessTranscriptForDetection("Numbers are the 14 again")).toMatch(/Numbers 14/i);
+    expect(preprocessTranscriptForDetection("Numbers are the 14 again")).toMatch(/Numbers chapter 14/i);
   });
 
   it("joins chapter then bare verse digit", () => {

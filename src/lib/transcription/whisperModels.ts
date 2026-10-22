@@ -1,5 +1,6 @@
 /** Downloadable whisper.cpp models and the PC facts used to choose between them. */
 
+import { ENGINE_GEMINI, ENGINE_WHISPER } from "@/lib/transcription/engine";
 import type { WhisperLanguage } from "@/lib/transcription/engineConfig";
 
 export interface WhisperModelInfo {
@@ -54,8 +55,32 @@ export const WHISPER_DOWNLOAD_EVENT = "whisper-download-progress";
 export const LANGUAGE_OPTIONS: { value: WhisperLanguage; label: string }[] = [
   { value: "en", label: "English" },
   { value: "fr", label: "Français" },
-  { value: "auto", label: "Detect automatically (mixed services)" },
+  { value: "auto", label: "English + French (bilingual or interpreted services)" },
 ];
+
+const LANGUAGE_NAMES: Record<string, string> = { en: "English", fr: "Français" };
+
+/** "Français" for "fr"; unknown codes pass through. */
+export function languageName(code: string): string {
+  return LANGUAGE_NAMES[code] ?? code;
+}
+
+/** What the language choice means for the engine the operator picked. */
+export function languageHint(language: WhisperLanguage, engineId: string): string {
+  if (language === "auto") {
+    if (engineId === ENGINE_WHISPER) {
+      return "Each sentence is heard as English or French. Needs a multilingual model (one without “English” in its name).";
+    }
+    if (engineId === ENGINE_GEMINI) return "Gemini listens for English and French.";
+    return "Browser speech listens for one language only and will use English — choose Whisper or Gemini for bilingual services.";
+  }
+  if (language === "fr") {
+    return engineId === ENGINE_WHISPER
+      ? "Scripture is detected from French book names too (Jean 3:16, Psaume 23). Needs a multilingual model."
+      : "Scripture is detected from French book names too (Jean 3:16, Psaume 23).";
+  }
+  return "Best accuracy for services held entirely in English.";
+}
 
 /** English uses the English-only models; anything else needs a multilingual one. */
 export function modelsForLanguage<T extends WhisperModelInfo>(models: T[], language: WhisperLanguage): T[] {

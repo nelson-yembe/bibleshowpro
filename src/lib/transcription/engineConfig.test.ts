@@ -30,8 +30,10 @@ describe("toEngineConfig", () => {
     expect(config.whisperModelPath).toBe("C:/m.bin");
   });
 
-  it("asks the service to auto-detect language", () => {
-    expect(toEngineConfig(stored()).languageCodes).toEqual([]);
+  it("tells online engines which languages to listen for instead of letting them guess", () => {
+    expect(toEngineConfig(stored()).languageCodes).toEqual(["en-US"]);
+    expect(toEngineConfig(stored({ whisperLanguage: "fr" })).languageCodes).toEqual(["fr-FR"]);
+    expect(toEngineConfig(stored({ whisperLanguage: "auto" })).languageCodes).toEqual(["en-US", "fr-FR"]);
   });
 });
 

@@ -65,7 +65,8 @@ pub struct TranscriptionEngineConfig {
     pub gemini_model: String,
     #[serde(default)]
     pub whisper_model_path: String,
-    /// "en", "fr" or "auto". English-only models ignore it.
+    /// Language spoken in the service, for every engine: "en", "fr" or "auto" (English
+    /// and French). English-only Whisper models always hear English.
     #[serde(default = "default_whisper_language")]
     pub whisper_language: String,
 }
