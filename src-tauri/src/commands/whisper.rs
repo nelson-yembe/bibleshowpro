@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use once_cell::sync::Lazy;
 use serde::Serialize;
+use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::transcription::models::{self, WhisperModelInfo};
@@ -31,6 +32,15 @@ fn worker_log(app: &AppHandle) -> Option<PathBuf> {
     let dir = app.path().app_log_dir().ok()?;
     fs::create_dir_all(&dir).ok()?;
     Some(dir.join("whisper-worker.log"))
+}
+
+/// Silero speech detector, shipped as a bundle resource (see tauri.conf.json).
+const SPEECH_DETECTOR: &str = "resources/ggml-silero-v6.2.0.bin";
+
+/// Absent only in a build that skipped bundling; transcription then runs without it.
+fn speech_detector(app: &AppHandle) -> Option<String> {
+    let path = app.path().resolve(SPEECH_DETECTOR, BaseDirectory::Resource).ok()?;
+    path.exists().then(|| path_string(&path))
 }
 
 fn file_len(path: &Path) -> Option<u64> {
@@ -141,6 +151,7 @@ pub fn list_whisper_models(app: AppHandle) -> Result<Vec<WhisperModelListing>, S
 #[tauri::command]
 pub async fn load_whisper_model(app: AppHandle, model_path: String) -> Result<String, String> {
     let log = worker_log(&app);
+    let detector = speech_detector(&app);
     tauri::async_runtime::spawn_blocking(move || {
         let profile = system::system_profile();
         if !profile.cpu.supported {
@@ -160,7 +171,7 @@ pub async fn load_whisper_model(app: AppHandle, model_path: String) -> Result<St
                 ));
             }
         }
-        worker::ensure_loaded(&model_path, log.as_deref())?;
+        worker::ensure_loaded(&model_path, detector.as_deref(), log.as_deref())?;
         Ok(model_path)
     })
     .await
@@ -177,10 +188,12 @@ pub async fn transcribe_audio_segment(
     language: Option<String>,
 ) -> Result<String, String> {
     let log = worker_log(&app);
+    let detector = speech_detector(&app);
     let language = effective_language(&model_path, language.as_deref());
     tauri::async_runtime::spawn_blocking(move || {
         worker::transcribe(
             &model_path,
+            detector.as_deref(),
             pcm_base64,
             sample_rate,
             language,

@@ -46,6 +46,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis", "msi"],
+    "resources": ["resources/ggml-silero-v6.2.0.bin"],
     "copyright": "Copyright © 2026 Bible Show Pro",
     "shortDescription": "Church Bible presentation software",
     "longDescription": "Bible Show Pro is a desktop presentation platform for churches — search scripture, build service plans, and project to external displays.",

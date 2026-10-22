@@ -41,7 +41,9 @@ export function diagnoseListening(args: {
 /** What to try next, which depends on which engine went quiet. */
 function silentEngineRemedy(engineId: string): string {
   if (engineId === ENGINE_WHISPER) {
-    return "The model is running but hearing nothing usable. Check the input level and that the right microphone is selected, then try a larger model.";
+    // Music and noise are filtered out before Whisper, so this also appears during a long
+    // instrumental — and clears by itself once someone speaks.
+    return "It has not heard any speech yet. If someone is speaking, check the input level and that the right microphone is selected.";
   }
   if (engineId === ENGINE_GEMINI) {
     return "Check the API key and that this machine can reach the internet.";

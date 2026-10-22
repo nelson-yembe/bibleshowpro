@@ -28,7 +28,13 @@ pub const WORKER_FLAG: &str = "--whisper-worker";
 #[serde(tag = "op", rename_all = "camelCase")]
 pub enum WorkerRequest {
     #[serde(rename_all = "camelCase")]
-    Load { path: String },
+    Load {
+        path: String,
+        /// Silero model that keeps non-speech away from Whisper; optional so a worker
+        /// still runs where it is missing.
+        #[serde(default)]
+        speech_detector: Option<String>,
+    },
     #[serde(rename_all = "camelCase")]
     Transcribe {
         pcm_base64: String,
@@ -101,7 +107,10 @@ pub(crate) fn handle(
 ) -> WorkerResponse {
     match request {
         WorkerRequest::Ping => WorkerResponse::ok(""),
-        WorkerRequest::Load { path } => {
+        WorkerRequest::Load {
+            path,
+            speech_detector,
+        } => {
             // Belt and braces: the parent checks too, but the worker must never execute
             // an instruction the CPU cannot decode.
             if !cpu.supported {
@@ -113,8 +122,10 @@ pub(crate) fn handle(
             // Free the old model before loading the new one — on a 4 GB machine two
             // resident models is the difference between working and not.
             *engine = None;
-            match WhisperEngine::load(&path) {
+            match WhisperEngine::load(&path, speech_detector.as_deref()) {
                 Ok(loaded) => {
+                    let detector = if loaded.has_detector() { "on" } else { "off" };
+                    eprintln!("Loaded {path} (speech detector {detector})");
                     *engine = Some(loaded);
                     WorkerResponse::ok("")
                 }
@@ -127,7 +138,7 @@ pub(crate) fn handle(
             language,
             threads,
         } => {
-            let Some(loaded) = engine.as_ref() else {
+            let Some(loaded) = engine.as_mut() else {
                 return WorkerResponse::err("No Whisper model is loaded.");
             };
             if sample_rate != WHISPER_SAMPLE_RATE {
@@ -197,10 +208,7 @@ fn spawn(log_path: Option<&Path>) -> Result<WorkerProcess, String> {
     let exe = std::env::current_exe()
         .map_err(|e| format!("Could not locate the app to start the offline engine: {e}"))?;
     let mut command = Command::new(exe);
-    command
-        .arg(WORKER_FLAG)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped());
+    command.arg(WORKER_FLAG);
     match log_path.and_then(|p| std::fs::File::create(p).ok()) {
         Some(file) => command.stderr(Stdio::from(file)),
         None => command.stderr(Stdio::null()),
@@ -211,7 +219,13 @@ fn spawn(log_path: Option<&Path>) -> Result<WorkerProcess, String> {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
+    start(command)
+}
 
+/// Wire up any process that speaks the worker protocol; tests use stand-ins that crash
+/// or hang the way a real worker can.
+fn start(mut command: Command) -> Result<WorkerProcess, String> {
+    command.stdin(Stdio::piped()).stdout(Stdio::piped());
     let mut child = command
         .spawn()
         .map_err(|e| format!("Could not start the offline transcription engine: {e}"))?;
@@ -295,6 +309,7 @@ fn call(
 fn ensure_loaded_in(
     slot: &mut Option<WorkerProcess>,
     path: &str,
+    speech_detector: Option<&str>,
     log_path: Option<&Path>,
 ) -> Result<(), String> {
     if slot.as_ref().and_then(|w| w.loaded_path.as_deref()) == Some(path) {
@@ -304,6 +319,7 @@ fn ensure_loaded_in(
         slot,
         &WorkerRequest::Load {
             path: path.to_string(),
+            speech_detector: speech_detector.map(str::to_string),
         },
         LOAD_TIMEOUT,
         log_path,
@@ -315,14 +331,15 @@ fn ensure_loaded_in(
 }
 
 /// Start the worker if needed and make sure `path` is the resident model.
-pub fn ensure_loaded(path: &str, log_path: Option<&Path>) -> Result<(), String> {
+pub fn ensure_loaded(path: &str, speech_detector: Option<&str>, log_path: Option<&Path>) -> Result<(), String> {
     let mut slot = WORKER.lock();
-    ensure_loaded_in(&mut slot, path, log_path)
+    ensure_loaded_in(&mut slot, path, speech_detector, log_path)
 }
 
 /// Transcribe one segment. Reloads the model first if the worker had to be restarted.
 pub fn transcribe(
     path: &str,
+    speech_detector: Option<&str>,
     pcm_base64: String,
     sample_rate: u32,
     language: String,
@@ -330,7 +347,7 @@ pub fn transcribe(
     log_path: Option<&Path>,
 ) -> Result<String, String> {
     let mut slot = WORKER.lock();
-    ensure_loaded_in(&mut slot, path, log_path)?;
+    ensure_loaded_in(&mut slot, path, speech_detector, log_path)?;
     let timeout = transcribe_timeout(audio_seconds_in(&pcm_base64, sample_rate));
     call(
         &mut slot,
@@ -387,6 +404,15 @@ mod tests {
     }
 
     #[test]
+    fn load_requests_without_a_detector_still_parse() {
+        let request: WorkerRequest = serde_json::from_str(r#"{"op":"load","path":"m.bin"}"#).unwrap();
+        assert!(matches!(request, WorkerRequest::Load { speech_detector: None, .. }));
+        let request: WorkerRequest =
+            serde_json::from_str(r#"{"op":"load","path":"m.bin","speechDetector":"vad.bin"}"#).unwrap();
+        assert!(matches!(request, WorkerRequest::Load { speech_detector: Some(ref d), .. } if d == "vad.bin"));
+    }
+
+    #[test]
     fn ping_answers_without_a_model() {
         let mut engine = None;
         assert_eq!(handle(WorkerRequest::Ping, &mut engine, &supported()), WorkerResponse::ok(""));
@@ -419,6 +445,7 @@ mod tests {
         let response = handle(
             WorkerRequest::Load {
                 path: "anything.bin".into(),
+                speech_detector: None,
             },
             &mut engine,
             &cpu,
@@ -433,6 +460,7 @@ mod tests {
         let response = handle(
             WorkerRequest::Load {
                 path: "no-such-model.bin".into(),
+                speech_detector: None,
             },
             &mut engine,
             &supported(),
@@ -448,6 +476,51 @@ mod tests {
         assert!(describe_exit(Some(0xC000_0005u32 as i32)).contains("crashed"));
         assert!(describe_exit(Some(0x1234)).contains("0x00001234"));
         assert!(describe_exit(None).contains("unexpectedly"));
+    }
+
+    #[cfg(windows)]
+    fn stand_in(program: &str, args: &[&str]) -> Option<WorkerProcess> {
+        let mut command = Command::new(program);
+        command.args(args).stderr(Stdio::null());
+        Some(start(command).unwrap())
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn a_worker_killed_by_a_missing_instruction_is_explained_and_replaced() {
+        // The exit status Windows gives a process that executed an instruction the CPU
+        // lacks — the crash that used to take the whole app down.
+        let mut slot = stand_in("cmd", &["/C", "exit -1073741795"]);
+        let err = call(&mut slot, &WorkerRequest::Ping, Duration::from_secs(10), None).unwrap_err();
+        assert!(err.contains("processor"), "{err}");
+        assert!(slot.is_none(), "a dead worker must be cleared so the next call starts a fresh one");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn a_worker_that_runs_out_of_memory_is_explained() {
+        let mut slot = stand_in("cmd", &["/C", "exit -1073741801"]);
+        let err = call(&mut slot, &WorkerRequest::Ping, Duration::from_secs(10), None).unwrap_err();
+        assert!(err.contains("memory"), "{err}");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn a_hung_worker_is_killed_instead_of_freezing_the_app() {
+        let mut slot = stand_in("powershell", &["-NoProfile", "-Command", "Start-Sleep -Seconds 60"]);
+        let started = std::time::Instant::now();
+        let err = call(&mut slot, &WorkerRequest::Ping, Duration::from_millis(500), None).unwrap_err();
+        assert!(err.contains("took too long"), "{err}");
+        assert!(slot.is_none());
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn a_garbled_reply_is_an_error_not_a_panic() {
+        let mut slot = stand_in("cmd", &["/C", "echo not json"]);
+        let err = call(&mut slot, &WorkerRequest::Ping, Duration::from_secs(10), None).unwrap_err();
+        assert!(err.contains("Unreadable reply"), "{err}");
     }
 
     #[test]
