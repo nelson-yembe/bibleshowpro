@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +25,8 @@ interface CollapsibleSectionProps {
   signal?: CollapsibleSignal;
   /** Tighter spacing for sections nested inside another section. */
   dense?: boolean;
+  /** Open and scroll into view on arrival, for links that point at this section. */
+  reveal?: boolean;
   children: ReactNode;
 }
 
@@ -51,9 +53,17 @@ export function CollapsibleSection({
   id,
   signal,
   dense = false,
+  reveal = false,
   children,
 }: CollapsibleSectionProps) {
-  const [open, setOpen] = useState(() => loadPersisted(id, defaultOpen));
+  const [open, setOpen] = useState(() => reveal || loadPersisted(id, defaultOpen));
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!reveal) return;
+    setOpen(true);
+    rootRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [reveal]);
 
   // Persist whenever the state changes.
   useEffect(() => {
@@ -73,7 +83,7 @@ export function CollapsibleSection({
   }, [signal?.nonce]);
 
   return (
-    <div className="panel overflow-hidden">
+    <div ref={rootRef} className="panel scroll-mt-4 overflow-hidden">
       <button
         type="button"
         aria-expanded={open}

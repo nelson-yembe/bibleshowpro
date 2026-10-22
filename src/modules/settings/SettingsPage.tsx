@@ -9,11 +9,16 @@ import {
   Info,
   ChevronsDownUp,
   ChevronsUpDown,
+  AudioLines,
+  Captions,
 } from "lucide-react";
+import { useLocation } from "react-router-dom";
 import { TopBar } from "@/components/layout/TopBar";
 import { BibleVersionsPanel } from "@/modules/settings/BibleVersionsPanel";
 import { NdiOutputPanel } from "@/modules/settings/NdiOutputPanel";
 import { TranscriptionEnginePanel } from "@/modules/settings/TranscriptionEnginePanel";
+import { ListenAudioPanel } from "@/modules/settings/ListenAudioPanel";
+import { CaptionSettingsPanel } from "@/modules/settings/CaptionSettingsPanel";
 import { CollapsibleSection, type CollapsibleSignal } from "@/components/ui/CollapsibleSection";
 import { StatusBadge } from "@/components/ui/pill";
 import { downloadTextFile } from "@/lib/utils";
@@ -24,6 +29,8 @@ import { useNdiStore } from "@/stores/ndiStore";
 export function SettingsPage() {
   const [restoreJson, setRestoreJson] = useState("");
   const [signal, setSignal] = useState<CollapsibleSignal | undefined>(undefined);
+  // "/settings#listen-audio" opens that section: Live Listen links straight to what needs fixing.
+  const target = useLocation().hash.replace("#", "");
   const loadCatalog = useBibleVersionsStore((s) => s.loadCatalog);
   const ndiRunning = useNdiStore((s) => s.status?.running ?? false);
   const ndiSaving = useNdiStore((s) => s.saving);
@@ -102,11 +109,34 @@ export function SettingsPage() {
           <CollapsibleSection
             id="transcription-engines"
             title="Transcription Engine"
-            description="Choose the engine and supply its credentials"
+            description="Engine, language and speech model for Live Listen"
             icon={<Mic className="h-4 w-4" />}
             signal={signal}
+            reveal={target === "transcription-engines"}
           >
             <TranscriptionEnginePanel embedded />
+          </CollapsibleSection>
+
+          <CollapsibleSection
+            id="listen-audio"
+            title="Microphone & Scripture Detection"
+            description="Input device, mic test and how sure a suggestion must be"
+            icon={<AudioLines className="h-4 w-4" />}
+            signal={signal}
+            reveal={target === "listen-audio"}
+          >
+            <ListenAudioPanel />
+          </CollapsibleSection>
+
+          <CollapsibleSection
+            id="live-captions"
+            title="Live Captions"
+            description="Captions of the sermon on the output screen"
+            icon={<Captions className="h-4 w-4" />}
+            signal={signal}
+            reveal={target === "live-captions"}
+          >
+            <CaptionSettingsPanel />
           </CollapsibleSection>
 
           <CollapsibleSection

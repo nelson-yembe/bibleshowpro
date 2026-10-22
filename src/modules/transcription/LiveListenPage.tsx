@@ -7,7 +7,6 @@ import { TopBar } from "@/components/layout/TopBar";
 import { cn } from "@/lib/utils";
 import { exportScriptureList, exportTranscriptText } from "@/lib/transcription/referenceDetect";
 import { formatTranscriptProse } from "@/lib/transcription/transcriptFormat";
-import { type ConfidenceLevel } from "@/lib/transcription/types";
 import {
   suggestionMatchesProgram,
   sortSuggestionsForOperator,
@@ -16,16 +15,10 @@ import { usePresentationStore } from "@/stores/presentationStore";
 import { useTranscriptionStore } from "@/stores/transcriptionStore";
 import { TranscriptionAudioMeter } from "@/modules/transcription/TranscriptionAudioMeter";
 import { TranscriptionElapsed } from "@/modules/transcription/TranscriptionElapsed";
-import { TranscriptionEngineCard } from "@/modules/transcription/TranscriptionEngineCard";
+import { ListenSetupStrip } from "@/modules/transcription/ListenSetupStrip";
 import { canStepVerse } from "@/lib/transcription/verseSession";
 import { useLiveNavigationStore } from "@/stores/liveNavigationStore";
 import { useBibleStore } from "@/stores/bibleStore";
-import { useCaptionStore } from "@/stores/captionStore";
-import {
-  CAPTION_MAX_LINES,
-  CAPTION_MIN_LINES,
-  CAPTION_STALE_MS,
-} from "@/lib/captions";
 import {
   Mic,
   MicOff,
@@ -35,8 +28,6 @@ import {
   Search,
   Square,
   Trash2,
-  Wifi,
-  WifiOff,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -72,28 +63,12 @@ export function LiveListenPage() {
   const segments = useTranscriptionStore((s) => s.segments);
   const suggestions = useTranscriptionStore((s) => s.suggestions);
   const selectedSuggestionId = useTranscriptionStore((s) => s.selectedSuggestionId);
-  const modelId = useTranscriptionStore((s) => s.modelId);
-  const models = useTranscriptionStore((s) => s.models);
-  const audioDevices = useTranscriptionStore((s) => s.audioDevices);
-  const audioDeviceId = useTranscriptionStore((s) => s.audioDeviceId);
   const audioDeviceLabel = useTranscriptionStore((s) => s.audioDeviceLabel);
-  const audioWarning = useTranscriptionStore((s) => s.audioWarning);
-  const preflightStatus = useTranscriptionStore((s) => s.preflightStatus);
-  const preflightMessage = useTranscriptionStore((s) => s.preflightMessage);
-  const paraphraseEnabled = useTranscriptionStore((s) => s.paraphraseEnabled);
-  const captionSettings = useCaptionStore((s) => s.settings);
-  const updateCaptionSettings = useCaptionStore((s) => s.updateSettings);
-  const minConfidence = useTranscriptionStore((s) => s.minConfidence);
   const lastScanAt = useTranscriptionStore((s) => s.lastScanAt);
   const scanning = useTranscriptionStore((s) => s.scanning);
   const error = useTranscriptionStore((s) => s.error);
   const saving = useTranscriptionStore((s) => s.saving);
   const init = useTranscriptionStore((s) => s.init);
-  const refreshAudioDevices = useTranscriptionStore((s) => s.refreshAudioDevices);
-  const preflightAudio = useTranscriptionStore((s) => s.preflightAudio);
-  const setAudioDeviceId = useTranscriptionStore((s) => s.setAudioDeviceId);
-  const setParaphraseEnabled = useTranscriptionStore((s) => s.setParaphraseEnabled);
-  const setMinConfidence = useTranscriptionStore((s) => s.setMinConfidence);
   const selectAndPresentSuggestion = useTranscriptionStore((s) => s.selectAndPresentSuggestion);
   const startListening = useTranscriptionStore((s) => s.startListening);
   const pauseListening = useTranscriptionStore((s) => s.pauseListening);
@@ -113,7 +88,6 @@ export function LiveListenPage() {
     void init();
   }, [init]);
 
-  const model = models.find((m) => m.id === modelId) ?? models[0];
   const activeSuggestions = useMemo(() => {
     const visible = suggestions.filter((s) => s.status !== "ignored");
     return sortSuggestionsForOperator(visible, { program, liveFollow });
@@ -170,7 +144,6 @@ export function LiveListenPage() {
   };
 
   const activeInputLabel = audioDeviceLabel ?? "System default microphone";
-  const isPreflightChecking = preflightStatus === "checking";
 
   const handleSave = async () => {
     const id = await saveSession(saveTitle);
@@ -291,8 +264,8 @@ export function LiveListenPage() {
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 p-3 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.3fr)_minmax(0,0.95fr)] lg:p-4">
-        {/* Left: transcript + settings */}
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 p-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)_minmax(0,0.9fr)] lg:p-4">
+        {/* Left: the transcript, with setup folded into one line beneath it */}
         <div className="flex min-h-0 flex-col gap-3">
           <section className="flex min-h-[240px] flex-1 flex-col rounded-xl border border-[var(--color-border)] bg-[#0a0c12] lg:min-h-0">
             <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2">
@@ -329,150 +302,7 @@ export function LiveListenPage() {
                 <p className="text-[13px] italic text-[var(--color-muted-foreground)]">Listening…</p>
               ) : null}
             </div>
-          </section>
-
-          <TranscriptionEngineCard disabled={isListening} />
-
-          <section className="rounded-xl border border-[var(--color-border)] bg-[#0a0c12] p-3">
-            <h2 className="section-label mb-2">Detection settings</h2>
-            <div className="grid gap-2">
-              <label className="block">
-                <span className="mb-1 block text-[10px] uppercase tracking-wide text-[var(--color-subtle)]">Audio input</span>
-                <select
-                  value={audioDeviceId ?? ""}
-                  onChange={(e) => setAudioDeviceId(e.target.value || null)}
-                  disabled={isListening || isPreflightChecking}
-                  className="h-8 w-full rounded-md border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 text-[11px]"
-                >
-                  {audioDevices.length === 0 && <option value="">No microphone found</option>}
-                  {audioDevices.map((d) => (
-                    <option key={d.deviceId} value={d.deviceId}>
-                      {d.label || `Mic ${d.deviceId.slice(0, 6)}`}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <p className="mt-1 text-[10px] text-[var(--color-subtle)]">
-              Level meter and preflight use the selected input. If transcription stays silent while the meter moves,
-              set the same device as Windows default input (Settings → Sound → Input).
-            </p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <button
-                type="button"
-                disabled={isListening || isPreflightChecking}
-                onClick={() => void preflightAudio({ strict: true })}
-                className="control-btn text-[10px]"
-              >
-                {isPreflightChecking ? "Testing mic…" : "Test selected mic"}
-              </button>
-              <button
-                type="button"
-                disabled={isListening || isPreflightChecking}
-                onClick={() => void refreshAudioDevices(true)}
-                className="control-btn text-[10px]"
-              >
-                Refresh mics
-              </button>
-            </div>
-            {preflightMessage && (
-              <p
-                className={cn(
-                  "mt-2 text-[10px]",
-                  preflightStatus === "ready" ? "text-emerald-400" : preflightStatus === "failed" ? "text-amber-300" : "text-[var(--color-subtle)]",
-                )}
-              >
-                {preflightMessage}
-              </p>
-            )}
-            {audioWarning && (
-              <p className="mt-2 text-[10px] text-amber-400">{audioWarning}</p>
-            )}
-            <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-[var(--color-muted-foreground)]">
-              <label className="flex items-center gap-1.5">
-                <input type="checkbox" checked={paraphraseEnabled} onChange={(e) => setParaphraseEnabled(e.target.checked)} />
-                Extra quote matching
-              </label>
-            </div>
-            <label className="mt-2 block">
-              <span className="mb-1 block text-[10px] uppercase tracking-wide text-[var(--color-subtle)]">Min confidence</span>
-              <select
-                value={minConfidence}
-                onChange={(e) => setMinConfidence(e.target.value as ConfidenceLevel)}
-                className="h-8 w-full rounded-md border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 text-[11px]"
-              >
-                <option value="low">Low and above</option>
-                <option value="medium">Medium and above</option>
-                <option value="high">High only</option>
-              </select>
-            </label>
-            <p className="mt-2 inline-flex items-center gap-1 text-[10px] text-[var(--color-subtle)]">
-              {model?.requiresInternet ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
-              {model?.requiresInternet ? "Internet required" : "Works offline"}
-            </p>
-          </section>
-
-          <section className="rounded-xl border border-[var(--color-border)] bg-[#0a0c12] p-3">
-            <h2 className="section-label mb-2">Live captions</h2>
-            <label className="flex items-center gap-1.5 text-[11px] text-[var(--color-muted-foreground)]">
-              <input
-                type="checkbox"
-                checked={captionSettings.enabled}
-                onChange={(e) => updateCaptionSettings({ enabled: e.target.checked })}
-              />
-              Show captions on the output screen
-            </label>
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              <label className="block">
-                <span className="mb-1 block text-[10px] uppercase tracking-wide text-[var(--color-subtle)]">Position</span>
-                <select
-                  value={captionSettings.position}
-                  onChange={(e) => updateCaptionSettings({ position: e.target.value === "top" ? "top" : "bottom" })}
-                  disabled={!captionSettings.enabled}
-                  className="h-8 w-full rounded-md border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 text-[11px]"
-                >
-                  <option value="bottom">Bottom</option>
-                  <option value="top">Top</option>
-                </select>
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-[10px] uppercase tracking-wide text-[var(--color-subtle)]">Lines</span>
-                <select
-                  value={String(captionSettings.maxLines)}
-                  onChange={(e) => updateCaptionSettings({ maxLines: Number(e.target.value) })}
-                  disabled={!captionSettings.enabled}
-                  className="h-8 w-full rounded-md border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 text-[11px]"
-                >
-                  {Array.from(
-                    { length: CAPTION_MAX_LINES - CAPTION_MIN_LINES + 1 },
-                    (_, i) => CAPTION_MIN_LINES + i,
-                  ).map((n) => (
-                    <option key={n} value={n}>
-                      {n === 1 ? "1 line" : `${n} lines`}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <label className="mt-2 block">
-              <span className="mb-1 block text-[10px] uppercase tracking-wide text-[var(--color-subtle)]">Text size</span>
-              <select
-                value={String(captionSettings.fontScale)}
-                onChange={(e) => updateCaptionSettings({ fontScale: Number(e.target.value) })}
-                disabled={!captionSettings.enabled}
-                className="h-8 w-full rounded-md border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 text-[11px]"
-              >
-                <option value="0.8">Small</option>
-                <option value="1">Normal</option>
-                <option value="1.3">Large</option>
-                <option value="1.6">Extra large</option>
-              </select>
-            </label>
-            <p className="mt-2 text-[10px] text-[var(--color-subtle)]">
-              Captions draw on the output window, so they are part of the NDI feed. They clear
-              themselves after {Math.round(CAPTION_STALE_MS / 1000)}s without new speech, and stop
-              when you pause or stop listening.
-            </p>
+            <ListenSetupStrip disabled={isListening} />
           </section>
         </div>
 
