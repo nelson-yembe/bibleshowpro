@@ -10,6 +10,7 @@ pub mod bible;
 pub mod songs;
 pub mod ndi;
 pub mod transcription;
+pub mod whisper;
 
 #[derive(Serialize)]
 pub struct InitResponse {

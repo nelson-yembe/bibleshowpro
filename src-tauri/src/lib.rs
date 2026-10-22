@@ -162,11 +162,14 @@ pub fn run() {
             commands::transcription::delete_transcription_session,
             commands::transcription::get_transcription_engine_config,
             commands::transcription::save_transcription_engine_config,
-            commands::transcription::load_whisper_model,
-            commands::transcription::transcribe_audio_segment,
-            commands::transcription::list_whisper_models,
-            commands::transcription::download_whisper_model,
-            commands::transcription::cancel_whisper_download,
+            commands::whisper::get_transcription_capabilities,
+            commands::whisper::list_whisper_models,
+            commands::whisper::load_whisper_model,
+            commands::whisper::transcribe_audio_segment,
+            commands::whisper::release_whisper_model,
+            commands::whisper::download_whisper_model,
+            commands::whisper::cancel_whisper_download,
+            commands::whisper::delete_whisper_model,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

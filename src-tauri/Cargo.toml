@@ -37,6 +37,8 @@ parking_lot = "0.12.5"
 bytes = "1.11.1"
 image = "0.25.10"
 whisper-rs = "0.16.0"
+sysinfo = "0.38.4"
+sha2 = "0.11.1"
 
 # Local fork of oximedia-ndi 0.1.7 patching a bug where the mDNS SRV host name
 # was built as `format!("{ip}.local.").replace('.', "-")`, mangling the required

@@ -1,5 +1,7 @@
 pub mod models;
+pub mod system;
 pub mod whisper;
+pub mod worker;
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};

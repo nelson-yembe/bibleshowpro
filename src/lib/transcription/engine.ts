@@ -22,6 +22,8 @@ export interface TranscriptionEngineConfig {
   geminiApiKey?: string;
   geminiModel?: string;
   whisperModelPath?: string;
+  /** "en", "fr" or "auto". English-only Whisper models ignore it. */
+  whisperLanguage?: string;
   /** Empty list asks the service to auto-detect. */
   languageCodes?: string[];
 }

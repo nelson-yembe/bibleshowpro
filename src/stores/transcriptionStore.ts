@@ -59,11 +59,16 @@ import {
 } from "@/lib/transcription/engineHealth";
 import { createTranscriptionEngine } from "@/lib/transcription/engineFactory";
 import {
+  ENGINE_MIGRATION_KEY,
+  isDesktopApp,
+  migrateEngineChoice,
+} from "@/lib/transcription/engineReadiness";
+import { ENGINE_WEB_SPEECH } from "@/lib/transcription/engine";
+import {
   engineConfigError,
   loadStoredEngineConfig,
   toEngineConfig,
 } from "@/lib/transcription/engineConfig";
-import { isSpeechRecognitionSupported } from "@/lib/transcription/speechTypes";
 import {
   TRANSCRIPTION_MODELS,
   type DetectionContext,
@@ -226,6 +231,37 @@ async function startLevelMonitor(
     );
     if (message) set({ audioWarning: message });
   }, window_ms);
+}
+
+/**
+ * Whether the chosen engine can capture audio here. This used to be the Web Speech
+ * check for every engine, so a PC without that API was told transcription was
+ * unavailable even when Whisper or Gemini would have worked fine.
+ */
+function engineSupported(modelId: string): boolean {
+  return createTranscriptionEngine(modelId).isSupported();
+}
+
+function unsupportedMessage(modelId: string): string {
+  return modelId === ENGINE_WEB_SPEECH
+    ? "Browser speech recognition is not available on this PC. Switch to Whisper (offline) in Settings → Transcription Engine."
+    : "This PC is not letting the app capture audio. Check Windows Settings → Privacy & security → Microphone, and allow desktop apps.";
+}
+
+function readMigrationFlag(): boolean {
+  try {
+    return localStorage.getItem(ENGINE_MIGRATION_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeMigrationFlag(): void {
+  try {
+    localStorage.setItem(ENGINE_MIGRATION_KEY, "1");
+  } catch {
+    // Storage blocked: the migration simply runs again next launch.
+  }
 }
 
 function loadPersistedPreferences(): PersistedPreferences | null {
@@ -739,7 +775,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
   verseSession: null,
   lastVoiceAction: null,
   models: TRANSCRIPTION_MODELS,
-  modelId: TRANSCRIPTION_MODELS[0]?.id ?? "web-speech",
+  modelId: TRANSCRIPTION_MODELS[0]?.id ?? "whisper-local",
   audioDevices: [],
   audioDeviceId: null,
   audioDeviceLabel: null,
@@ -756,10 +792,9 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
   scanning: false,
   error: null,
   saving: false,
-  speechSupported: isSpeechRecognitionSupported(),
+  speechSupported: true,
 
   init: async () => {
-    const speechSupported = isSpeechRecognitionSupported();
     const existing = get();
     const preserveSession =
       existing.status === "listening" ||
@@ -777,23 +812,23 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
       await bible.loadTranslations();
     }
     const prefs = loadPersistedPreferences();
+    const engineChoice = migrateEngineChoice(prefs?.modelId, isDesktopApp(), readMigrationFlag());
+    const speechSupported = engineSupported(engineChoice.modelId);
     const resolvedDeviceId = pickValidAudioDeviceId(devices, prefs?.audioDeviceId ?? get().audioDeviceId);
     set({
       ...(preserveSession ? {} : resetWorkspaceState()),
       status: preserveSession ? existing.status : "idle",
       speechSupported,
       ...(prefs ?? {}),
+      modelId: engineChoice.modelId,
       audioDeviceId: resolvedDeviceId,
       audioDeviceLabel: audioInputLabel(devices, resolvedDeviceId),
     });
     if (!speechSupported) {
-      set({
-        error:
-          "Speech recognition is unavailable in this window. Use the installed Bible Show Pro app (not the browser preview) and ensure microphone access is allowed.",
-        status: "unavailable",
-      });
+      set({ error: unsupportedMessage(engineChoice.modelId), status: "unavailable" });
     }
-    if (prefs) persistPreferences(get());
+    if (engineChoice.migrated) writeMigrationFlag();
+    if (prefs || engineChoice.migrated) persistPreferences(get());
   },
 
   refreshAudioDevices: async (requestPermission = true) => {
@@ -877,7 +912,15 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
   },
 
   setModelId: (id) => {
-    set({ modelId: id });
+    const supported = engineSupported(id);
+    set((state) => ({
+      modelId: id,
+      speechSupported: supported,
+      // A warning about the previous engine is stale once the operator picks another.
+      ...(state.status === "unavailable"
+        ? { status: "idle" as const, error: supported ? null : unsupportedMessage(id) }
+        : {}),
+    }));
     persistPreferences(get());
   },
   setAudioDeviceId: (id) => {
@@ -1010,12 +1053,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
     }
 
     if (!engine.isSupported()) {
-      set({
-        error:
-          "Speech recognition is not supported here. Run the installed Bible Show Pro desktop app with microphone permission enabled.",
-        status: "unavailable",
-        speechSupported: false,
-      });
+      set({ error: unsupportedMessage(state.modelId), status: "unavailable", speechSupported: false });
       return;
     }
 

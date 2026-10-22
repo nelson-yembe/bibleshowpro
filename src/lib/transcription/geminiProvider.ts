@@ -1,10 +1,9 @@
-import { openAudioInputStream } from "@/lib/transcription/audioInput";
+import { startPcmCapture, type PcmCapture } from "@/lib/transcription/audioCapture";
 import type {
   TranscriptionCallbacks,
   TranscriptionEngine,
   TranscriptionEngineOptions,
 } from "@/lib/transcription/engine";
-import { PCM_WORKLET_PROCESSOR, PCM_WORKLET_URL } from "@/lib/transcription/pcm";
 import {
   buildAudioMessage,
   buildLiveUrl,
@@ -29,10 +28,7 @@ const RECONNECT_DELAY_MS = 1200;
  */
 export class GeminiTranscriptionEngine implements TranscriptionEngine {
   private socket: WebSocket | null = null;
-  private audioContext: AudioContext | null = null;
-  private worklet: AudioWorkletNode | null = null;
-  private source: MediaStreamAudioSourceNode | null = null;
-  private stream: MediaStream | null = null;
+  private capture: PcmCapture | null = null;
   private callbacks: TranscriptionCallbacks | null = null;
   private options: TranscriptionEngineOptions | null = null;
   private deviceId: string | null = null;
@@ -115,16 +111,11 @@ export class GeminiTranscriptionEngine implements TranscriptionEngine {
   }
 
   private async openAudio(): Promise<void> {
-    this.stream = await openAudioInputStream(this.deviceId);
-    // Asking for the target rate lets the browser resample the mic for us.
-    this.audioContext = new AudioContext({ sampleRate: GEMINI_SAMPLE_RATE });
-    await this.audioContext.audioWorklet.addModule(PCM_WORKLET_URL);
-    this.source = this.audioContext.createMediaStreamSource(this.stream);
-    this.worklet = new AudioWorkletNode(this.audioContext, PCM_WORKLET_PROCESSOR);
-    this.worklet.port.onmessage = (event: MessageEvent<Float32Array>) => {
-      this.enqueue(event.data);
-    };
-    this.source.connect(this.worklet);
+    this.capture = await startPcmCapture({
+      deviceId: this.deviceId,
+      targetRate: GEMINI_SAMPLE_RATE,
+      onFrames: (frames) => this.enqueue(frames),
+    });
   }
 
   private openSocket(apiKey: string): void {
@@ -236,14 +227,7 @@ export class GeminiTranscriptionEngine implements TranscriptionEngine {
   }
 
   private closeAudio(): void {
-    this.worklet?.port.close();
-    this.worklet?.disconnect();
-    this.source?.disconnect();
-    this.stream?.getTracks().forEach((track) => track.stop());
-    void this.audioContext?.close().catch(() => {});
-    this.worklet = null;
-    this.source = null;
-    this.stream = null;
-    this.audioContext = null;
+    this.capture?.stop();
+    this.capture = null;
   }
 }

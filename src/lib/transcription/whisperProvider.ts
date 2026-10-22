@@ -1,15 +1,12 @@
-import { openAudioInputStream } from "@/lib/transcription/audioInput";
+import { startPcmCapture, type PcmCapture } from "@/lib/transcription/audioCapture";
 import type {
   TranscriptionCallbacks,
   TranscriptionEngine,
   TranscriptionEngineOptions,
 } from "@/lib/transcription/engine";
+import { encodePcmBase64 } from "@/lib/transcription/pcm";
 import {
-  encodePcmBase64,
-  PCM_WORKLET_PROCESSOR,
-  PCM_WORKLET_URL,
-} from "@/lib/transcription/pcm";
-import {
+  appendBacklog,
   DEFAULT_SEGMENTER_CONFIG,
   SpeechSegmenter,
 } from "@/lib/transcription/speechSegmenter";
@@ -18,25 +15,31 @@ import { tauriInvoke } from "@/lib/tauri";
 
 const SAMPLE_RATE = DEFAULT_SEGMENTER_CONFIG.sampleRate;
 
+function messageOf(err: unknown, fallback: string): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string" && err.trim()) return err;
+  return fallback;
+}
+
 /**
- * Offline transcription through a local whisper.cpp model in the Rust backend.
+ * Offline transcription through whisper.cpp, which runs in a separate worker process so a
+ * native fault cannot take the presentation down (see transcription/worker.rs).
  *
- * Whisper transcribes a finished buffer rather than a stream, so audio is cut at pauses
- * by {@link SpeechSegmenter} and each segment is sent whole. That means no interim
- * results — every emission is a final.
+ * Whisper transcribes a finished buffer rather than a stream, so audio is cut at pauses by
+ * {@link SpeechSegmenter} and each segment is sent whole: every emission is a final.
  */
 export class WhisperTranscriptionEngine implements TranscriptionEngine {
-  private audioContext: AudioContext | null = null;
-  private worklet: AudioWorkletNode | null = null;
-  private source: MediaStreamAudioSourceNode | null = null;
-  private stream: MediaStream | null = null;
+  private capture: PcmCapture | null = null;
   private callbacks: TranscriptionCallbacks | null = null;
   private segmenter = new SpeechSegmenter();
   private modelPath = "";
+  private language = "en";
   private paused = false;
   private stopping = false;
-  /** One segment at a time: whisper is CPU-bound and queueing would fall behind. */
+  /** Whisper is CPU-bound, so one segment runs at a time. */
   private busy = false;
+  /** Speech that arrived while a segment was running — joined, never dropped. */
+  private backlog: Float32Array | null = null;
 
   isSupported(): boolean {
     return (
@@ -55,39 +58,45 @@ export class WhisperTranscriptionEngine implements TranscriptionEngine {
     this.stopping = false;
     this.paused = false;
     this.busy = false;
-    this.segmenter.reset();
+    this.backlog = null;
+    this.segmenter = new SpeechSegmenter();
 
     if (!this.isSupported()) {
       callbacks.onStatus("unavailable");
-      callbacks.onError("This build cannot capture audio for offline transcription.");
+      callbacks.onError("This PC cannot capture audio for offline transcription.");
       return;
     }
 
     const modelPath = options.config?.whisperModelPath?.trim();
     if (!modelPath) {
       callbacks.onStatus("unavailable");
-      callbacks.onError("Choose a Whisper model file in Settings to use offline transcription.");
+      callbacks.onError("Download a Whisper model in Settings → Transcription Engine to use offline transcription.");
       return;
     }
     this.modelPath = modelPath;
+    this.language = options.config?.whisperLanguage?.trim() || "en";
 
+    // Model loading can take seconds; say so rather than look frozen.
+    callbacks.onStatus("processing");
     try {
       await tauriInvoke<string>("load_whisper_model", { modelPath });
     } catch (err) {
       callbacks.onStatus("unavailable");
-      callbacks.onError(
-        err instanceof Error ? err.message : String(err ?? "Could not load the Whisper model."),
-      );
+      callbacks.onError(messageOf(err, "Could not load the Whisper model."));
       return;
     }
+    if (this.stopping) return;
 
     try {
-      await this.openAudio(deviceId ?? null);
+      this.capture = await startPcmCapture({
+        deviceId: deviceId ?? null,
+        targetRate: SAMPLE_RATE,
+        onFrames: (frames) => this.onFrames(frames),
+      });
     } catch (err) {
+      void this.releaseModel();
       callbacks.onStatus("unavailable");
-      callbacks.onError(
-        err instanceof Error ? err.message : "Could not open the selected microphone.",
-      );
+      callbacks.onError(messageOf(err, "Could not open the selected microphone."));
       return;
     }
 
@@ -102,66 +111,67 @@ export class WhisperTranscriptionEngine implements TranscriptionEngine {
 
   resume(): void {
     this.paused = false;
-    this.callbacks?.onStatus("listening");
+    this.callbacks?.onStatus(this.busy ? "processing" : "listening");
   }
 
   stop(): void {
     this.stopping = true;
-    const tail = this.segmenter.flush();
-    if (tail) void this.transcribe(tail);
-    this.closeAudio();
+    this.backlog = null;
+    this.segmenter.reset();
+    this.capture?.stop();
+    this.capture = null;
     this.callbacks?.onStatus("stopped");
     this.callbacks = null;
+    // Give the model's memory back between services; an in-flight segment simply fails.
+    if (!this.busy) void this.releaseModel();
   }
 
-  private async openAudio(deviceId: string | null): Promise<void> {
-    this.stream = await openAudioInputStream(deviceId);
-    this.audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
-    await this.audioContext.audioWorklet.addModule(PCM_WORKLET_URL);
-    this.source = this.audioContext.createMediaStreamSource(this.stream);
-    this.worklet = new AudioWorkletNode(this.audioContext, PCM_WORKLET_PROCESSOR);
-    this.worklet.port.onmessage = (event: MessageEvent<Float32Array>) => {
-      if (this.stopping || this.paused) return;
-      const segment = this.segmenter.push(event.data);
-      if (segment) void this.transcribe(segment);
-    };
-    this.source.connect(this.worklet);
+  private onFrames(frames: Float32Array): void {
+    if (this.stopping || this.paused) return;
+    const segment = this.segmenter.push(frames);
+    if (!segment) return;
+    if (this.busy) {
+      this.backlog = appendBacklog(this.backlog, segment);
+      return;
+    }
+    void this.transcribe(segment);
   }
 
   private async transcribe(segment: Float32Array): Promise<void> {
-    // Drop rather than queue: a backlog would put stale words on the projector.
-    if (this.busy) return;
     this.busy = true;
-    // The first segment can take tens of seconds once model load is included; without
-    // this the operator sees nothing at all and assumes it is broken.
     if (!this.stopping && !this.paused) this.callbacks?.onStatus("processing");
     try {
       const text = await tauriInvoke<string>("transcribe_audio_segment", {
         modelPath: this.modelPath,
         sampleRate: SAMPLE_RATE,
         pcmBase64: encodePcmBase64(segment),
+        language: this.language,
       });
       const spoken = cleanWhisperText(text ?? "");
       if (spoken && !this.stopping) this.callbacks?.onFinal(spoken);
     } catch (err) {
-      this.callbacks?.onError(
-        err instanceof Error ? err.message : String(err ?? "Whisper could not transcribe."),
-      );
+      // The worker restarts itself on the next request, so keep listening: one bad
+      // segment should not end a service's captions.
+      if (!this.stopping) this.callbacks?.onError(messageOf(err, "Whisper could not transcribe."));
     } finally {
       this.busy = false;
-      if (!this.stopping && !this.paused) this.callbacks?.onStatus("listening");
+      const next = this.backlog;
+      this.backlog = null;
+      if (this.stopping) {
+        void this.releaseModel();
+      } else if (next) {
+        void this.transcribe(next);
+      } else if (!this.paused) {
+        this.callbacks?.onStatus("listening");
+      }
     }
   }
 
-  private closeAudio(): void {
-    this.worklet?.port.close();
-    this.worklet?.disconnect();
-    this.source?.disconnect();
-    this.stream?.getTracks().forEach((track) => track.stop());
-    void this.audioContext?.close().catch(() => {});
-    this.worklet = null;
-    this.source = null;
-    this.stream = null;
-    this.audioContext = null;
+  private async releaseModel(): Promise<void> {
+    try {
+      await tauriInvoke("release_whisper_model");
+    } catch {
+      // Nothing to release, or no backend.
+    }
   }
 }

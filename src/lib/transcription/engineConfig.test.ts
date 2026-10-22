@@ -44,8 +44,8 @@ describe("engineConfigError", () => {
     expect(engineConfigError(ENGINE_GEMINI, stored({ geminiApiKey: "abc" }))).toBeNull();
   });
 
-  it("blocks Whisper without a model file", () => {
-    expect(engineConfigError(ENGINE_WHISPER, stored())).toMatch(/model file/i);
+  it("blocks Whisper until a model is downloaded", () => {
+    expect(engineConfigError(ENGINE_WHISPER, stored())).toMatch(/Download a Whisper model/);
   });
 
   it("allows Whisper once a path is present", () => {

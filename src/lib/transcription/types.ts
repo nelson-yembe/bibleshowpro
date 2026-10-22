@@ -11,7 +11,7 @@ export type DetectionType = "explicit" | "paraphrase" | "quote" | "topic" | "inf
 export type ConfidenceLevel = "high" | "medium" | "low";
 export type SuggestionStatus = "pending" | "preview" | "queued" | "ignored" | "live" | "presented";
 
-import { ENGINE_GEMINI, ENGINE_WHISPER } from "@/lib/transcription/engine";
+import { ENGINE_GEMINI, ENGINE_WEB_SPEECH, ENGINE_WHISPER } from "@/lib/transcription/engine";
 
 export interface TranscriptionModel {
   id: string;
@@ -75,44 +75,41 @@ export interface DetectionContext {
   chapter?: number;
 }
 
+/**
+ * Order is the order operators see. Whisper leads because it is the one that works on
+ * any supported PC with no account and no internet; browser speech comes last because the
+ * installed app's WebView2 runtime usually returns nothing from it.
+ */
 export const TRANSCRIPTION_MODELS: TranscriptionModel[] = [
   {
-    id: "web-speech",
-    label: "Web Speech (Browser)",
-    profile: "fast",
-    latencyMs: 400,
-    requiresInternet: true,
-    streaming: true,
-    description: "Built-in browser speech recognition. Fast setup, requires internet in most browsers.",
-  },
-  {
-    id: "web-speech-offline",
-    label: "Web Speech (Balanced)",
-    profile: "balanced",
-    latencyMs: 600,
-    requiresInternet: true,
-    streaming: true,
-    description: "Browser recognition tuned for accuracy over speed. Audio still goes to the browser's speech service, so internet is required.",
-  },
-  {
-    id: ENGINE_GEMINI,
-    label: "Gemini Transcribe Live",
-    profile: "accurate",
-    latencyMs: 300,
-    requiresInternet: true,
-    streaming: true,
-    description:
-      "Google Gemini Live transcription. The most accurate option, and the best base for scripture detection. Needs a paid-tier API key and a steady connection — audio leaves the building.",
-  },
-  {
     id: ENGINE_WHISPER,
-    label: "Whisper (offline)",
+    label: "Whisper (offline) — recommended",
     profile: "offline",
     latencyMs: 2500,
     requiresInternet: false,
     streaming: false,
     description:
-      "Runs a Whisper model on this machine. Works with no internet and keeps audio local, but transcribes at each pause rather than word by word.",
+      "Runs on this PC: no account, no internet, audio never leaves the building. Text appears at each pause rather than word by word.",
+  },
+  {
+    id: ENGINE_GEMINI,
+    label: "Gemini (online)",
+    profile: "accurate",
+    latencyMs: 300,
+    requiresInternet: true,
+    streaming: true,
+    description:
+      "Google's cloud transcription: word-by-word and very accurate, but needs a paid-tier API key and a steady internet connection. Audio leaves the building.",
+  },
+  {
+    id: ENGINE_WEB_SPEECH,
+    label: "Browser speech (experimental)",
+    profile: "fast",
+    latencyMs: 400,
+    requiresInternet: true,
+    streaming: true,
+    description:
+      "Depends on Microsoft's WebView2 runtime, which usually returns nothing in the installed app. Kept only for machines where it happens to work.",
   },
 ];
 

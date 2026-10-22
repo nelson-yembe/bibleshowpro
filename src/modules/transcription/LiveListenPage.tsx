@@ -7,7 +7,7 @@ import { TopBar } from "@/components/layout/TopBar";
 import { cn } from "@/lib/utils";
 import { exportScriptureList, exportTranscriptText } from "@/lib/transcription/referenceDetect";
 import { formatTranscriptProse } from "@/lib/transcription/transcriptFormat";
-import { TRANSCRIPTION_MODELS, type ConfidenceLevel } from "@/lib/transcription/types";
+import { type ConfidenceLevel } from "@/lib/transcription/types";
 import {
   suggestionMatchesProgram,
   sortSuggestionsForOperator,
@@ -16,6 +16,7 @@ import { usePresentationStore } from "@/stores/presentationStore";
 import { useTranscriptionStore } from "@/stores/transcriptionStore";
 import { TranscriptionAudioMeter } from "@/modules/transcription/TranscriptionAudioMeter";
 import { TranscriptionElapsed } from "@/modules/transcription/TranscriptionElapsed";
+import { TranscriptionEngineCard } from "@/modules/transcription/TranscriptionEngineCard";
 import { canStepVerse } from "@/lib/transcription/verseSession";
 import { useLiveNavigationStore } from "@/stores/liveNavigationStore";
 import { useBibleStore } from "@/stores/bibleStore";
@@ -90,7 +91,6 @@ export function LiveListenPage() {
   const init = useTranscriptionStore((s) => s.init);
   const refreshAudioDevices = useTranscriptionStore((s) => s.refreshAudioDevices);
   const preflightAudio = useTranscriptionStore((s) => s.preflightAudio);
-  const setModelId = useTranscriptionStore((s) => s.setModelId);
   const setAudioDeviceId = useTranscriptionStore((s) => s.setAudioDeviceId);
   const setParaphraseEnabled = useTranscriptionStore((s) => s.setParaphraseEnabled);
   const setMinConfidence = useTranscriptionStore((s) => s.setMinConfidence);
@@ -331,9 +331,11 @@ export function LiveListenPage() {
             </div>
           </section>
 
+          <TranscriptionEngineCard disabled={isListening} />
+
           <section className="rounded-xl border border-[var(--color-border)] bg-[#0a0c12] p-3">
             <h2 className="section-label mb-2">Detection settings</h2>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid gap-2">
               <label className="block">
                 <span className="mb-1 block text-[10px] uppercase tracking-wide text-[var(--color-subtle)]">Audio input</span>
                 <select
@@ -346,21 +348,6 @@ export function LiveListenPage() {
                   {audioDevices.map((d) => (
                     <option key={d.deviceId} value={d.deviceId}>
                       {d.label || `Mic ${d.deviceId.slice(0, 6)}`}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-[10px] uppercase tracking-wide text-[var(--color-subtle)]">Model</span>
-                <select
-                  value={modelId}
-                  onChange={(e) => setModelId(e.target.value)}
-                  disabled={isListening}
-                  className="h-8 w-full rounded-md border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 text-[11px]"
-                >
-                  {TRANSCRIPTION_MODELS.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.label}
                     </option>
                   ))}
                 </select>
@@ -421,7 +408,7 @@ export function LiveListenPage() {
             </label>
             <p className="mt-2 inline-flex items-center gap-1 text-[10px] text-[var(--color-subtle)]">
               {model?.requiresInternet ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
-              {model?.requiresInternet ? "Internet required" : "Local preferred"}
+              {model?.requiresInternet ? "Internet required" : "Works offline"}
             </p>
           </section>
 
