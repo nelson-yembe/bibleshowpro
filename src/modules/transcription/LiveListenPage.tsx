@@ -16,10 +16,13 @@ import { useTranscriptionStore } from "@/stores/transcriptionStore";
 import { TranscriptionAudioMeter } from "@/modules/transcription/TranscriptionAudioMeter";
 import { TranscriptionElapsed } from "@/modules/transcription/TranscriptionElapsed";
 import { ListenSetupStrip } from "@/modules/transcription/ListenSetupStrip";
+import { SermonNotesDialog } from "@/modules/transcription/SermonNotesDialog";
+import { isWaitingNotesReference } from "@/lib/transcription/sermonNotes";
 import { canStepVerse } from "@/lib/transcription/verseSession";
 import { useLiveNavigationStore } from "@/stores/liveNavigationStore";
 import { useBibleStore } from "@/stores/bibleStore";
 import {
+  FileText,
   Mic,
   MicOff,
   Pause,
@@ -51,6 +54,7 @@ export function LiveListenPage() {
   const [manualReference, setManualReference] = useState("");
   const [saveTitle, setSaveTitle] = useState("");
   const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [showNotesDialog, setShowNotesDialog] = useState(false);
   const transcriptScrollRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
 
@@ -82,6 +86,9 @@ export function LiveListenPage() {
   const discardSession = useTranscriptionStore((s) => s.discardSession);
   const stepActiveVerse = useTranscriptionStore((s) => s.stepActiveVerse);
   const verseSession = useTranscriptionStore((s) => s.verseSession);
+  const sermonNotes = useTranscriptionStore((s) => s.sermonNotes);
+  const loadSermonNotes = useTranscriptionStore((s) => s.loadSermonNotes);
+  const clearSermonNotes = useTranscriptionStore((s) => s.clearSermonNotes);
 
   const program = usePresentationStore((s) => s.program);
   const liveFollow = usePresentationStore((s) => s.liveFollow);
@@ -97,6 +104,8 @@ export function LiveListenPage() {
   const liveSuggestion = layout.live;
   const historySuggestions = layout.others;
   const activeSuggestions = liveSuggestion ? [liveSuggestion, ...historySuggestions] : historySuggestions;
+  const plannedCount = historySuggestions.filter(isWaitingNotesReference).length;
+  const firstPlannedId = historySuggestions.find(isWaitingNotesReference)?.id;
   // The keys printed on each card are the keys useLiveKeyboard acts on (same layout).
   const shortcutsFor = (s: ScriptureSuggestion, index: number): string[] => [
     ...(s.id === layout.next?.id ? ["↵"] : []),
@@ -170,7 +179,7 @@ export function LiveListenPage() {
   };
 
   const exportReferences = () => {
-    const text = exportScriptureList(suggestions);
+    const text = exportScriptureList(suggestions.filter((s) => !isWaitingNotesReference(s)));
     const blob = new Blob([text], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -253,6 +262,15 @@ export function LiveListenPage() {
         )}
 
         <SuggestionsMuteToggle />
+        <button
+          type="button"
+          onClick={() => setShowNotesDialog(true)}
+          className="control-btn"
+          title="Queue the references in the preacher's notes"
+        >
+          <FileText className="h-3.5 w-3.5" />
+          {sermonNotes.length > 0 ? `Notes · ${sermonNotes.length}` : "Sermon notes"}
+        </button>
         <button
           type="button"
           onClick={() => useShortcutSheetStore.getState().toggle()}
@@ -350,7 +368,9 @@ export function LiveListenPage() {
             <div className="flex items-center justify-between border-b border-[var(--color-border)] px-3 py-2">
               <h2 className="section-label">Scripture suggestions</h2>
               <span className="text-[10px] text-[var(--color-subtle)]">
-                {scanning ? "Scanning…" : `${activeSuggestions.length} found`}
+                {scanning
+                  ? "Scanning…"
+                  : `${activeSuggestions.length - plannedCount} found${plannedCount > 0 ? ` · ${plannedCount} from notes` : ""}`}
               </span>
             </div>
             <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
@@ -386,13 +406,19 @@ export function LiveListenPage() {
                         </p>
                       )}
                       {historySuggestions.map((s, index) => (
-                        <ScriptureSuggestionCard
-                          key={s.id}
-                          suggestion={s}
-                          selected={s.id === selectedSuggestionId}
-                          onSelect={() => void selectAndPresentSuggestion(s)}
-                          shortcuts={shortcutsFor(s, index)}
-                        />
+                        <div key={s.id} className="space-y-2">
+                          {s.id === firstPlannedId && (
+                            <p className="pt-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-violet-300/80">
+                              From the sermon notes
+                            </p>
+                          )}
+                          <ScriptureSuggestionCard
+                            suggestion={s}
+                            selected={s.id === selectedSuggestionId}
+                            onSelect={() => void selectAndPresentSuggestion(s)}
+                            shortcuts={shortcutsFor(s, index)}
+                          />
+                        </div>
                       ))}
                     </div>
                   )}
@@ -419,6 +445,15 @@ export function LiveListenPage() {
 
       {error && (
         <div className="border-t border-red-900/40 bg-red-950/20 px-4 py-2 text-[11px] text-red-300">{error}</div>
+      )}
+
+      {showNotesDialog && (
+        <SermonNotesDialog
+          loadedCount={sermonNotes.length}
+          onQueue={loadSermonNotes}
+          onClear={clearSermonNotes}
+          onClose={() => setShowNotesDialog(false)}
+        />
       )}
 
       {showSaveDialog && (

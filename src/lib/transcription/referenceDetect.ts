@@ -208,7 +208,7 @@ async function buildSuggestionFromMatch(
   }
 }
 
-async function buildSuggestionFromReference(
+export async function buildSuggestionFromReference(
   referenceInput: string,
   detectedPhrase: string,
   translationId: string,

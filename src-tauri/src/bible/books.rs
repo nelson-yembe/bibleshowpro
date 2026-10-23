@@ -137,6 +137,30 @@ pub fn normalize_book_key(input: &str) -> String {
     key.trim().to_string()
 }
 
+/// Exact names and typed abbreviations only ("Jn", "1 Cor", "Genèse"), never a suffix
+/// guess: free text such as sermon notes is full of words that end in an abbreviation.
+pub fn resolve_book_exact(name: &str) -> Option<(i32, &'static str)> {
+    let key = normalize_book_key(&crate::bible::spoken_book::fold_accents(name));
+    if key.is_empty() {
+        return None;
+    }
+    // "1 co" and "1co" are both written.
+    let joined = key.replacen(' ', "", 1);
+    for book in CANONICAL_BOOKS {
+        let names = std::iter::once(book.name).chain(book.aliases.iter().copied());
+        for candidate in names {
+            let candidate = normalize_book_key(candidate);
+            if candidate == key || candidate == joined {
+                return Some((book.number, book.name));
+            }
+        }
+    }
+    // Spoken and French names ("Jean", "1 Jean", "Apocalypse"), but never a spelling repair.
+    crate::bible::spoken_book::resolve_spoken_book(&key)
+        .filter(|b| !b.repaired)
+        .map(|b| (b.number, b.name))
+}
+
 pub fn max_chapters_for_book(book_number: i32) -> i32 {
     CANONICAL_BOOKS
         .iter()

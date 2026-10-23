@@ -144,8 +144,16 @@ export function ScriptureSuggestionCard({ suggestion, selected, onSelect, shortc
               </span>
             ) : (
               <p className="text-[10px] uppercase tracking-wide text-[var(--color-subtle)]">
-                {typeLabels[suggestion.detectionType]}
+                {suggestion.notes === "planned" ? "In the notes" : typeLabels[suggestion.detectionType]}
               </p>
+            )}
+            {suggestion.notes === "heard" && (
+              <span
+                title="The sermon notes hold this passage"
+                className="rounded border border-violet-400/40 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-200"
+              >
+                In notes
+              </span>
             )}
           </div>
           <h3 className="text-sm font-semibold text-[var(--color-foreground)]">{suggestion.reference}</h3>
@@ -166,9 +174,13 @@ export function ScriptureSuggestionCard({ suggestion, selected, onSelect, shortc
         </button>
       </div>
 
-      <p className="mb-1 line-clamp-2 text-[11px] italic text-[var(--color-muted-foreground)]">
-        “{suggestion.detectedPhrase.slice(0, 120)}{suggestion.detectedPhrase.length > 120 ? "…" : ""}”
-      </p>
+      {suggestion.notes === "planned" ? (
+        <p className="mb-1 line-clamp-2 text-[11px] text-violet-200/80">{suggestion.detectedPhrase}</p>
+      ) : (
+        <p className="mb-1 line-clamp-2 text-[11px] italic text-[var(--color-muted-foreground)]">
+          “{suggestion.detectedPhrase.slice(0, 120)}{suggestion.detectedPhrase.length > 120 ? "…" : ""}”
+        </p>
+      )}
       <p className="mb-3 line-clamp-3 text-[12px] leading-snug text-[var(--color-foreground)]">
         {suggestion.versePreview}
       </p>

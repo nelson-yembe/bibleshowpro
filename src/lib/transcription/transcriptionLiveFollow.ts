@@ -1,6 +1,7 @@
 import type { Scene } from "@/engine/scene";
 import type { ScriptureSuggestion } from "@/lib/transcription/types";
 import { usePresentationStore } from "@/stores/presentationStore";
+import { isWaitingNotesReference } from "@/lib/transcription/sermonNotes";
 
 /** True when transcription content is currently on program output. */
 export function isTranscriptionOnAir(): boolean {
@@ -65,6 +66,8 @@ export function sortSuggestionsForOperator(
     if (s.status === "live") return 0;
     if (s.status === "presented") return 1;
     if (s.status === "preview") return 2;
+    // Planned passages from the notes sit below everything heard.
+    if (isWaitingNotesReference(s)) return 5;
     if (s.status === "queued") return 3;
     return 4;
   };
@@ -97,10 +100,13 @@ export function operatorSuggestionLayout(
     null;
   const others = sorted.filter((s) => s.id !== live?.id);
   // Already-shown verses sort first in the list, but what the operator wants next is
-  // the newest one not yet on screen.
+  // the newest one not yet on screen; with nothing heard, the next passage in the notes.
+  const unseen = others.filter((s) => s.status !== "presented" && s.status !== "live");
   const next =
-    others
-      .filter((s) => s.status !== "presented" && s.status !== "live")
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null;
+    unseen
+      .filter((s) => !isWaitingNotesReference(s))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ??
+    unseen.find(isWaitingNotesReference) ??
+    null;
   return { live, others, next };
 }

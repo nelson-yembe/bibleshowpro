@@ -54,4 +54,20 @@ describe("operatorSuggestionLayout", () => {
     expect(layout.next).toBeNull();
     expect(layout.others.map((s) => s.id)).toEqual(["John 3:16"]);
   });
+
+  it("lists notes passages below what was heard, and offers them in written order once nothing is waiting", () => {
+    const planned = (id: string): ScriptureSuggestion => ({
+      ...suggestion(id, "queued", "2026-10-23T09:00:00Z"),
+      notes: "planned",
+    });
+    const heard = suggestion("Acts 2:38", "pending", "2026-10-23T10:00:00Z");
+    const notes = [planned("Isaiah 40:31"), planned("Hebrews 11:1")];
+
+    const layout = operatorSuggestionLayout([heard, ...notes], offAir);
+    expect(layout.others.map((s) => s.id)).toEqual(["Acts 2:38", "Isaiah 40:31", "Hebrews 11:1"]);
+    expect(layout.next?.id).toBe("Acts 2:38");
+
+    const afterHeard = operatorSuggestionLayout([{ ...heard, status: "presented" }, ...notes], offAir);
+    expect(afterHeard.next?.id).toBe("Isaiah 40:31");
+  });
 });

@@ -53,6 +53,11 @@ export interface ScriptureSuggestion {
   verses: import("@/lib/tauri").VerseResult[];
   alternatives: string[];
   createdAt: string;
+  /**
+   * "planned": queued from the sermon notes, not heard yet (detectedPhrase is the notes line).
+   * "heard": heard, and the notes hold that passage.
+   */
+  notes?: "planned" | "heard";
 }
 
 export interface ParsedReferenceMatch {

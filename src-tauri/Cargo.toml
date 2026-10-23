@@ -41,6 +41,8 @@ sysinfo = "0.38.4"
 sha2 = "0.11.1"
 keyring = { version = "3.6", features = ["windows-native"] }
 quick-xml = "0.39"
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
+pdf-extract = "0.12.1"
 
 # Local fork of oximedia-ndi 0.1.7 patching a bug where the mDNS SRV host name
 # was built as `format!("{ip}.local.").replace('.', "-")`, mangling the required

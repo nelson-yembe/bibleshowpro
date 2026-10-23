@@ -1,7 +1,8 @@
 import { create } from "zustand";
-import { api } from "@/lib/tauri";
+import { api, type NotesReference } from "@/lib/tauri";
 import {
   buildDetectionContext,
+  buildSuggestionFromReference,
   clearReferenceDedupeCache,
   detectScriptureFromText,
 } from "@/lib/transcription/referenceDetect";
@@ -28,6 +29,7 @@ import {
   pickAutoOutputSuggestion,
   rankSuggestions,
 } from "@/lib/transcription/suggestionRouting";
+import { isWaitingNotesReference, notesContext, withNotesSupport } from "@/lib/transcription/sermonNotes";
 import {
   createVoiceNavGuard,
   rearmVoiceNav,
@@ -116,6 +118,8 @@ interface TranscriptionState {
   audioWarning: string | null;
   /** Language of the latest final segment, when the engine reports one ("en", "fr"). */
   heardLanguage: string | null;
+  /** Passages from the preacher's notes: queued up front, and trusted more when heard. */
+  sermonNotes: NotesReference[];
   preflightStatus: "idle" | "checking" | "ready" | "failed";
   preflightMessage: string | null;
   paraphraseEnabled: boolean;
@@ -159,6 +163,9 @@ interface TranscriptionState {
   /** Operator picked a different reference for the same ASR phrase — learn and preview. */
   correctSuggestionReference: (id: string, reference: string) => Promise<void>;
   markSuggestionStatus: (id: string, status: ScriptureSuggestion["status"]) => void;
+  /** Queue the notes passages (replacing earlier ones still waiting); returns how many were found in the Bible. */
+  loadSermonNotes: (passages: NotesReference[]) => Promise<number>;
+  clearSermonNotes: () => void;
   tickElapsed: () => void;
   resetListeningWorkspace: () => void;
 }
@@ -307,7 +314,7 @@ function persistPreferences(state: Pick<
   localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
 }
 
-function resetWorkspaceState(): Pick<
+function resetWorkspaceState(kept: ScriptureSuggestion[] = []): Pick<
   TranscriptionState,
   | "sessionId"
   | "startedAt"
@@ -328,7 +335,7 @@ function resetWorkspaceState(): Pick<
     elapsedMs: 0,
     partialText: "",
     segments: [],
-    suggestions: [],
+    suggestions: kept,
     selectedSuggestionId: null,
     verseSession: null,
     lastVoiceAction: null,
@@ -367,8 +374,9 @@ function passesConfidenceFilter(level: ConfidenceLevel, min: ConfidenceLevel): b
   return order.indexOf(level) >= order.indexOf(min);
 }
 
+/** What was heard or picked; planned notes passages wait until the operator takes one. */
 function activeSuggestions(state: TranscriptionState): ScriptureSuggestion[] {
-  return state.suggestions.filter((s) => s.status !== "ignored");
+  return state.suggestions.filter((s) => s.status !== "ignored" && !isWaitingNotesReference(s));
 }
 
 /**
@@ -453,21 +461,20 @@ async function mergeDetections(
 
   const allowAutoLive = options?.allowAutoLive ?? false;
   const state = get();
-  const filtered = detected.filter((d) => passesConfidenceFilter(d.confidenceLevel, state.minConfidence));
+  const filtered = detected
+    .map((d) => withNotesSupport(d, state.sermonNotes))
+    .filter((d) => passesConfidenceFilter(d.confidenceLevel, state.minConfidence));
   if (filtered.length === 0) return;
 
-  const repeat = options?.allowRepeatReference
-    ? filtered.find((d) =>
-        state.suggestions.some(
-          (s) => s.status !== "ignored" && s.reference.toLowerCase() === d.reference.toLowerCase(),
-        ),
-      )
-    : undefined;
+  // A passage queued from the notes is taken up when heard, never listed twice.
+  const refreshable = (s: ScriptureSuggestion, d: { reference: string }) =>
+    s.status !== "ignored" &&
+    (options?.allowRepeatReference || isWaitingNotesReference(s)) &&
+    s.reference.toLowerCase() === d.reference.toLowerCase();
+  const repeat = filtered.find((d) => state.suggestions.some((s) => refreshable(s, d)));
 
   if (repeat) {
-    const existing = state.suggestions.find(
-      (s) => s.status !== "ignored" && s.reference.toLowerCase() === repeat.reference.toLowerCase(),
-    );
+    const existing = state.suggestions.find((s) => refreshable(s, repeat));
     if (existing) {
       const refreshed: ScriptureSuggestion = {
         ...existing,
@@ -478,6 +485,7 @@ async function mergeDetections(
         detectionType: repeat.detectionType,
         confidence: repeat.confidence,
         confidenceLevel: repeat.confidenceLevel,
+        notes: repeat.notes ?? existing.notes,
       };
       set((s) => ({
         suggestions: s.suggestions.map((item) => (item.id === existing.id ? refreshed : item)),
@@ -539,10 +547,7 @@ function resolveDetectionContext(state: TranscriptionState): DetectionContext | 
           (s) => s.id === state.selectedSuggestionId && s.status !== "ignored" && s.verses.length > 0,
         )
       : undefined;
-  const recent =
-    live ??
-    selected ??
-    state.suggestions.find((s) => s.status !== "ignored" && s.verses.length > 0);
+  const recent = live ?? selected ?? activeSuggestions(state).find((s) => s.verses.length > 0);
   const verse = recent?.verses[0];
   if (verse) {
     return { bookNumber: verse.book_number, bookName: verse.book_name, chapter: verse.chapter };
@@ -695,9 +700,7 @@ async function runSegmentScan(
     return;
   }
 
-  const existingReferences = get()
-    .suggestions.filter((s) => s.status !== "ignored")
-    .map((s) => s.reference);
+  const existingReferences = activeSuggestions(get()).map((s) => s.reference);
 
   const detected = await detectScriptureFromText(cleaned, translationId, {
     paraphraseEnabled: get().paraphraseEnabled,
@@ -737,9 +740,7 @@ async function runContextScan(
 
   set({ scanning: true, lastScanAt: new Date().toLocaleTimeString() });
   try {
-    const existingReferences = get()
-      .suggestions.filter((s) => s.status !== "ignored")
-      .map((s) => s.reference);
+    const existingReferences = activeSuggestions(get()).map((s) => s.reference);
 
     const detected = await detectScriptureFromText(context, translationId, {
       paraphraseEnabled: get().paraphraseEnabled,
@@ -785,6 +786,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
   audioLevel: 0,
   audioWarning: null,
   heardLanguage: null,
+  sermonNotes: [],
   preflightStatus: "idle",
   preflightMessage: null,
   paraphraseEnabled: false,
@@ -820,7 +822,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
     const speechSupported = engineSupported(engineChoice.modelId);
     const resolvedDeviceId = pickValidAudioDeviceId(devices, prefs?.audioDeviceId ?? get().audioDeviceId);
     set({
-      ...(preserveSession ? {} : resetWorkspaceState()),
+      ...(preserveSession ? {} : resetWorkspaceState(get().suggestions.filter(isWaitingNotesReference))),
       status: preserveSession ? existing.status : "idle",
       speechSupported,
       ...(prefs ?? {}),
@@ -1098,7 +1100,11 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
 
     const freshSession = state.status !== "paused" && state.status !== "stopped";
     if (freshSession) {
-      set({ ...resetWorkspaceState(), status: "idle", speechSupported: true });
+      set({
+        ...resetWorkspaceState(get().suggestions.filter(isWaitingNotesReference)),
+        status: "idle",
+        speechSupported: true,
+      });
     }
 
     const sessionId = freshSession ? crypto.randomUUID() : (get().sessionId ?? crypto.randomUUID());
@@ -1236,7 +1242,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
     try {
       const detected = await detectScriptureFromText(trimmed, translationId, {
         paraphraseEnabled: false,
-        existingReferences: get().suggestions.map((s) => s.reference),
+        existingReferences: activeSuggestions(get()).map((s) => s.reference),
       });
       if (detected.length === 0) {
         const lookup = await api.lookupReference(trimmed, translationId);
@@ -1291,7 +1297,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
           isFinal: s.isFinal,
           offsetMs: s.offsetMs,
         })),
-        detections: state.suggestions.map((s) => ({
+        detections: activeSuggestions(state).map((s) => ({
           id: s.id,
           transcriptSegmentId: s.segmentId,
           detectedPhrase: s.detectedPhrase,
@@ -1331,7 +1337,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
 
   ignoreSuggestion: (id) => {
     const prev = get().suggestions.find((item) => item.id === id);
-    if (prev) {
+    if (prev && prev.notes !== "planned") {
       recordCorrectionIgnore(prev.detectedPhrase, prev.reference);
     }
     set((s) => ({
@@ -1394,7 +1400,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
 
   markSuggestionStatus: (id, status) => {
     const prev = get().suggestions.find((item) => item.id === id);
-    if (status === "live" && prev) {
+    if (status === "live" && prev && prev.notes !== "planned") {
       recordCorrectionAccept(prev.detectedPhrase, prev.reference);
     }
     set((s) => ({
@@ -1415,6 +1421,33 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
     set({ elapsedMs: Date.now() - startedAt });
   },
 
+  loadSermonNotes: async (passages) => {
+    const translationId = resolveTranslationId();
+    if (!translationId) {
+      set({ error: "No Bible translation loaded — install a Bible version in Settings." });
+      return 0;
+    }
+    const built = await Promise.all(
+      passages.map((p) => buildSuggestionFromReference(p.reference, notesContext(p), translationId, "explicit", 1)),
+    );
+    // One timestamp keeps them in the order they were written.
+    const createdAt = new Date().toISOString();
+    const planned: ScriptureSuggestion[] = built.flatMap((b) =>
+      b ? [{ ...b, id: newSuggestionId(), status: "queued" as const, createdAt, notes: "planned" as const }] : [],
+    );
+    set((s) => ({
+      sermonNotes: passages,
+      suggestions: [...s.suggestions.filter((item) => !isWaitingNotesReference(item)), ...planned],
+    }));
+    return planned.length;
+  },
+
+  clearSermonNotes: () =>
+    set((s) => ({
+      sermonNotes: [],
+      suggestions: s.suggestions.filter((item) => !isWaitingNotesReference(item)),
+    })),
+
   resetListeningWorkspace: () => {
     window.clearTimeout(partialScanTimer);
     clearReferenceDedupeCache();
@@ -1422,6 +1455,6 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
     if (presentation.previewSource === "transcription") {
       presentation.clearPreview();
     }
-    set(resetWorkspaceState());
+    set(resetWorkspaceState(get().suggestions.filter(isWaitingNotesReference)));
   },
 }));

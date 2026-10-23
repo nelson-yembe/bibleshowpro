@@ -47,6 +47,17 @@ export interface OpenBiblePreview {
   warnings: string[];
 }
 
+/** A scripture reference written in the preacher's notes. */
+export interface NotesReference {
+  reference: string;
+  bookNumber: number;
+  chapter: number;
+  verseStart: number | null;
+  verseEnd: number | null;
+  /** The line it was written on. */
+  context: string;
+}
+
 export interface OpenBibleMeta {
   name: string;
   abbreviation: string;
@@ -201,6 +212,8 @@ export const api = {
     tauriInvoke<OpenBiblePreview>("preview_bible_files", { files, fileName }),
   importBibleFiles: (files: string[], meta: OpenBibleMeta, setDefault?: boolean) =>
     tauriInvoke<BibleImportResult>("import_bible_files", { files, meta, setDefault }),
+  readSermonNotes: (path: string) => tauriInvoke<NotesReference[]>("read_sermon_notes", { path }),
+  findSermonReferences: (text: string) => tauriInvoke<NotesReference[]>("find_sermon_references", { text }),
   deleteBibleTranslation: (translationId: string) =>
     tauriInvoke<void>("delete_bible_translation", { translationId }),
   setDefaultBibleTranslation: (translationId: string) =>

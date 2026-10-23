@@ -280,3 +280,21 @@ pub fn import_bible_files(
         message: format!("Imported {} ({} verses)", stats.abbreviation, stats.verse_count),
     })
 }
+
+/// Scripture references written in a sermon notes file (.docx, .pdf, .txt, .md).
+#[tauri::command]
+pub async fn read_sermon_notes(path: String) -> Result<Vec<crate::bible::notes::NotesReference>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let bytes = std::fs::read(&path).map_err(|e| format!("Could not open {path}: {e}"))?;
+        let text = crate::bible::notes::document_text(&path, &bytes)?;
+        Ok(crate::bible::notes::find_references(&text))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Scripture references in notes pasted as text.
+#[tauri::command]
+pub fn find_sermon_references(text: String) -> Vec<crate::bible::notes::NotesReference> {
+    crate::bible::notes::find_references(&text)
+}
