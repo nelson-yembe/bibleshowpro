@@ -27,6 +27,7 @@
   .idle { color: var(--muted); font: 16px/1.5 system-ui, sans-serif; text-align: center; margin-top: 30vh; }
   .caption { position: fixed; left: 0; right: 0; bottom: 0; padding: 14px 20px calc(14px + env(safe-area-inset-bottom)); background: var(--panel); font: 17px/1.45 system-ui, sans-serif; }
   .caption[hidden] { display: none; }
+  .caption .translated { display: block; color: var(--accent); margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -67,7 +68,7 @@
     showCaptions = !showCaptions;
     store.set("bsp-captions", showCaptions ? "on" : "off");
     captionsButton.setAttribute("aria-pressed", String(showCaptions));
-    if (last) renderCaption(last.caption);
+    if (last) renderCaption(last.caption, last.translation);
   };
 
   const el = (tag, className, text) => {
@@ -110,10 +111,12 @@
     window.scrollTo({ top: 0 });
   }
 
-  function renderCaption(text) {
+  function renderCaption(text, translation) {
     const caption = document.getElementById("caption");
-    caption.hidden = !(showCaptions && text);
-    caption.textContent = text || "";
+    caption.hidden = !(showCaptions && (text || translation));
+    caption.replaceChildren();
+    if (text) caption.append(document.createTextNode(text));
+    if (translation) caption.append(el("span", "translated", translation));
   }
 
   const bar = document.getElementById("bar");
@@ -126,7 +129,7 @@
     const viewChanged = !last || JSON.stringify(last.view) !== JSON.stringify(live.view);
     last = live;
     if (viewChanged) render(live.view);
-    renderCaption(live.caption);
+    renderCaption(live.caption, live.translation);
   };
 </script>
 </body>

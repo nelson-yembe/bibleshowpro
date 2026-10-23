@@ -5,8 +5,10 @@ import {
   DEFAULT_CAPTION_SETTINGS,
   normalizeCaptionText,
   sanitizeCaptionSettings,
+  translationTarget,
   type CaptionSettings,
 } from "@/lib/captions";
+import { api } from "@/lib/tauri";
 
 const EVENT = "caption-update";
 const STORAGE_KEY = "bsp-caption-settings";
@@ -17,13 +19,18 @@ export interface CaptionSnapshot {
   settings: CaptionSettings;
   finalLines: string[];
   partial: string;
+  /** Finished lines in the translation language, newest last. */
+  translatedLines: string[];
   /** Bumped on every push so the overlay can distinguish a repeat from silence. */
   revision: number;
 }
 
 interface CaptionState extends CaptionSnapshot {
+  /** Why the last translation failed; shown in Settings, never on screen. */
+  translationError: string | null;
   pushPartial: (text: string) => void;
-  pushFinal: (text: string) => void;
+  /** A finished line, in the language it was heard in when the engine knows it. */
+  pushFinal: (text: string, language?: string | null) => void;
   clear: () => void;
   updateSettings: (patch: Partial<CaptionSettings>) => void;
   applyRemote: (snapshot: CaptionSnapshot) => void;
@@ -52,6 +59,7 @@ function snapshotOf(state: CaptionSnapshot): CaptionSnapshot {
     settings: state.settings,
     finalLines: state.finalLines,
     partial: state.partial,
+    translatedLines: state.translatedLines,
     revision: state.revision,
   };
 }
@@ -90,6 +98,8 @@ export const useCaptionStore = create<CaptionState>((set, get) => ({
   settings: loadSettings(),
   finalLines: [],
   partial: "",
+  translatedLines: [],
+  translationError: null,
   revision: 0,
 
   pushPartial: (text) => {
@@ -102,7 +112,7 @@ export const useCaptionStore = create<CaptionState>((set, get) => ({
     void broadcast(next);
   },
 
-  pushFinal: (text) => {
+  pushFinal: (text, language) => {
     const state = get();
     if (!state.settings.enabled) return;
     const finalLines = appendFinalLine(state.finalLines, text, state.settings.maxLines);
@@ -115,6 +125,25 @@ export const useCaptionStore = create<CaptionState>((set, get) => ({
     };
     set(next);
     void broadcast(next, true);
+
+    const line = normalizeCaptionText(text);
+    const target = translationTarget(state.settings.translateTo, language);
+    if (!line || !target) return;
+    api.translateCaption(line, language ?? null, target).then(
+      (translated) => {
+        const now = get();
+        // Turned off while the request was out: drop it.
+        if (!now.settings.enabled || now.settings.translateTo === "off") return;
+        const after = {
+          ...snapshotOf(now),
+          translatedLines: appendFinalLine(now.translatedLines, translated, now.settings.maxLines),
+          revision: now.revision + 1,
+        };
+        set({ ...after, translationError: null });
+        void broadcast(after, true);
+      },
+      (err) => set({ translationError: err instanceof Error ? err.message : String(err) }),
+    );
   },
 
   clear: () => {
@@ -123,6 +152,7 @@ export const useCaptionStore = create<CaptionState>((set, get) => ({
       ...snapshotOf(state),
       finalLines: [],
       partial: "",
+      translatedLines: [],
       revision: state.revision + 1,
     };
     set(next);
@@ -139,6 +169,7 @@ export const useCaptionStore = create<CaptionState>((set, get) => ({
       settings,
       finalLines: cleared ? [] : state.finalLines.slice(-settings.maxLines),
       partial: cleared ? "" : state.partial,
+      translatedLines: cleared || settings.translateTo === "off" ? [] : state.translatedLines.slice(-settings.maxLines),
       revision: state.revision + 1,
     };
     set(next);
@@ -150,6 +181,7 @@ export const useCaptionStore = create<CaptionState>((set, get) => ({
       settings: sanitizeCaptionSettings(snapshot.settings ?? {}),
       finalLines: snapshot.finalLines ?? [],
       partial: snapshot.partial ?? "",
+      translatedLines: snapshot.translatedLines ?? [],
       revision: snapshot.revision ?? 0,
     });
   },

@@ -131,6 +131,21 @@ pub fn caption_text(snapshot: &Value) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
+/// The newest translated caption line, while captions and translation are on.
+pub fn caption_translation(snapshot: &Value) -> Option<String> {
+    if !snapshot.pointer("/settings/enabled").and_then(Value::as_bool).unwrap_or(false) {
+        return None;
+    }
+    snapshot
+        .get("translatedLines")
+        .and_then(Value::as_array)
+        .and_then(|lines| lines.last())
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,5 +200,12 @@ mod tests {
         assert_eq!(caption_text(&on).as_deref(), Some("two three four"));
         let off = json!({ "settings": { "enabled": false }, "finalLines": ["one"], "partial": "" });
         assert_eq!(caption_text(&off), None);
+    }
+
+    #[test]
+    fn phones_get_the_newest_translated_line() {
+        let on = json!({ "settings": { "enabled": true }, "translatedLines": ["Dieu est amour.", "Car Dieu a tant aimé le monde"] });
+        assert_eq!(caption_translation(&on).as_deref(), Some("Car Dieu a tant aimé le monde"));
+        assert_eq!(caption_translation(&json!({ "settings": { "enabled": true } })), None);
     }
 }

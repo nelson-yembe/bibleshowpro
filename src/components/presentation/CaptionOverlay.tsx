@@ -26,6 +26,7 @@ export function CaptionOverlay({ className }: CaptionOverlayProps) {
   const settings = useCaptionStore((s) => s.settings);
   const finalLines = useCaptionStore((s) => s.finalLines);
   const partial = useCaptionStore((s) => s.partial);
+  const translatedLines = useCaptionStore((s) => s.translatedLines);
   const revision = useCaptionStore((s) => s.revision);
   const tickerSettings = useTickerStore((s) => s.settings);
 
@@ -43,7 +44,13 @@ export function CaptionOverlay({ className }: CaptionOverlayProps) {
 
   if (!settings.enabled || stale) return null;
 
-  const lines = composeCaptionLines(finalLines, partial, settings.maxLines);
+  const translating = settings.translateTo !== "off";
+  const original = !translating || settings.showOriginal ? composeCaptionLines(finalLines, partial, settings.maxLines) : [];
+  const translated = translating ? translatedLines.slice(-settings.maxLines) : [];
+  const lines = [
+    ...original.map((text) => ({ text, translated: false })),
+    ...translated.map((text) => ({ text, translated: true })),
+  ];
   if (lines.length === 0) return null;
 
   // Step clear of the ticker bar when it occupies the same edge.
@@ -63,13 +70,17 @@ export function CaptionOverlay({ className }: CaptionOverlayProps) {
       {lines.map((line, index) => (
         <span
           key={`${revision}-${index}`}
-          className="max-w-full rounded-[0.3vw] bg-black/70 px-[1.2vw] py-[0.4vw] text-center font-medium leading-tight text-white"
+          className={cn(
+            "max-w-full rounded-[0.3vw] bg-black/70 px-[1.2vw] py-[0.4vw] text-center font-medium leading-tight",
+            // The translation in warm yellow, so two languages never read as one sentence.
+            line.translated && original.length > 0 ? "text-amber-200" : "text-white",
+          )}
           style={{
             fontSize: `${BASE_FONT_VW * settings.fontScale}vw`,
             textShadow: "0 0.15vw 0.3vw rgba(0,0,0,0.85)",
           }}
         >
-          {line}
+          {line.text}
         </span>
       ))}
     </div>

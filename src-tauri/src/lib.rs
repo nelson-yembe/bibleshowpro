@@ -13,6 +13,7 @@ pub mod service;
 pub mod songs;
 pub mod stage;
 pub mod transcription;
+pub mod translate;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -153,6 +154,7 @@ pub fn run() {
             commands::list_audio_inputs,
             commands::start_audio_capture,
             commands::stop_audio_capture,
+            commands::translate_caption,
             commands::start_remote_server,
             commands::stop_remote_server,
             commands::get_remote_status,

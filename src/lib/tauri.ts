@@ -358,6 +358,8 @@ export const api = {
   stopRemoteServer: () => tauriInvoke<RemoteStatus>("stop_remote_server"),
   getRemoteStatus: () => tauriInvoke<RemoteStatus>("get_remote_status"),
   writePhoneQrSlide: () => tauriInvoke<string>("write_phone_qr_slide"),
+  translateCaption: (text: string, source: string | null, target: string) =>
+    tauriInvoke<string>("translate_caption", { text, source, target }),
   closeOutputWindow: () => tauriInvoke<void>("close_output_window"),
   refreshOutputWindow: () => tauriInvoke<void>("refresh_output_window"),
   listDisplays: () => tauriInvoke<DisplayInfo[]>("list_displays"),

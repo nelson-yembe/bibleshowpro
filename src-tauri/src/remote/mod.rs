@@ -38,12 +38,14 @@ const CLOSED: &str = "\u{0}closed";
 struct Live {
     view: view::PhoneView,
     caption: Option<String>,
+    translation: Option<String>,
 }
 
 static LIVE: Lazy<Mutex<Live>> = Lazy::new(|| {
     Mutex::new(Live {
         view: view::phone_view(None),
         caption: None,
+        translation: None,
     })
 });
 static UPDATES: Lazy<broadcast::Sender<String>> = Lazy::new(|| broadcast::channel(32).0);
@@ -83,7 +85,11 @@ pub fn listen_for_captions(app: &AppHandle) {
     app.listen("caption-update", |event| {
         if let Ok(snapshot) = serde_json::from_str::<Value>(event.payload()) {
             let caption = view::caption_text(&snapshot);
-            update(|live| live.caption = caption);
+            let translation = view::caption_translation(&snapshot);
+            update(|live| {
+                live.caption = caption;
+                live.translation = translation;
+            });
         }
     });
 }

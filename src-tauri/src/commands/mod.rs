@@ -581,6 +581,17 @@ pub fn stop_audio_capture(id: u32) {
     crate::audio::stop(id);
 }
 
+/// Translate a finished caption line with the church's Gemini key.
+#[tauri::command]
+pub async fn translate_caption(text: String, source: Option<String>, target: String) -> Result<String, String> {
+    use crate::secrets::SecretStore;
+    let key = crate::secrets::OsSecretStore
+        .get(crate::secrets::GEMINI_API_KEY)?
+        .filter(|k| !k.trim().is_empty())
+        .ok_or("Caption translation needs a Gemini API key. Add it in Settings > Transcription Engine.")?;
+    crate::translate::translate(key.trim(), crate::translate::DEFAULT_MODEL, &text, source.as_deref(), &target).await
+}
+
 /// Serve the phone view and remote control on the church network.
 #[tauri::command]
 pub async fn start_remote_server(app: AppHandle, port: Option<u16>) -> Result<crate::remote::RemoteStatus, String> {

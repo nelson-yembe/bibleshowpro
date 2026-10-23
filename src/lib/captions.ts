@@ -10,12 +10,19 @@ export const CAPTION_MAX_SCALE = 2;
 
 export type CaptionPosition = "top" | "bottom";
 
+/** Translate each finished line: off, into the other of English and French, or into one language. */
+export type CaptionTranslation = "off" | "other" | "en" | "fr" | "es" | "pt";
+const TRANSLATIONS: CaptionTranslation[] = ["off", "other", "en", "fr", "es", "pt"];
+
 export interface CaptionSettings {
   enabled: boolean;
   position: CaptionPosition;
   /** Multiplier on the viewport-relative base size, so captions scale with the projector. */
   fontScale: number;
   maxLines: number;
+  translateTo: CaptionTranslation;
+  /** With translation on, keep the preacher's own words above the translation. */
+  showOriginal: boolean;
 }
 
 export const DEFAULT_CAPTION_SETTINGS: CaptionSettings = {
@@ -23,7 +30,16 @@ export const DEFAULT_CAPTION_SETTINGS: CaptionSettings = {
   position: "bottom",
   fontScale: 1,
   maxLines: 2,
+  translateTo: "off",
+  showOriginal: true,
 };
+
+/** The language to translate a line heard in `heard` into, or null when none is needed. */
+export function translationTarget(setting: CaptionTranslation, heard: string | null | undefined): string | null {
+  if (setting === "off") return null;
+  const target = setting === "other" ? (heard === "fr" ? "en" : "fr") : setting;
+  return target === heard ? null : target;
+}
 
 export function normalizeCaptionText(text: string): string {
   return text.replace(/\s+/g, " ").trim();
@@ -73,5 +89,9 @@ export function sanitizeCaptionSettings(patch: Partial<CaptionSettings>): Captio
     position: patch.position === "top" ? "top" : "bottom",
     fontScale: clampFontScale(patch.fontScale ?? DEFAULT_CAPTION_SETTINGS.fontScale),
     maxLines: clampMaxLines(patch.maxLines ?? DEFAULT_CAPTION_SETTINGS.maxLines),
+    translateTo: TRANSLATIONS.includes(patch.translateTo as CaptionTranslation)
+      ? (patch.translateTo as CaptionTranslation)
+      : DEFAULT_CAPTION_SETTINGS.translateTo,
+    showOriginal: patch.showOriginal ?? DEFAULT_CAPTION_SETTINGS.showOriginal,
   };
 }

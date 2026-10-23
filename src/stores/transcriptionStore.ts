@@ -1149,7 +1149,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
           schedulePartialScan(get, set);
         },
         onFinal: async (text, info) => {
-          useCaptionStore.getState().pushFinal(text);
+          useCaptionStore.getState().pushFinal(text, info?.language ?? get().heardLanguage);
           const startedAt = get().startedAt ?? Date.now();
           const offsetMs = Date.now() - startedAt;
           const segment: TranscriptSegment = {

@@ -8,6 +8,7 @@ import {
   isCaptionStale,
   normalizeCaptionText,
   sanitizeCaptionSettings,
+  translationTarget,
 } from "@/lib/captions";
 
 describe("caption text normalisation", () => {
@@ -105,6 +106,26 @@ describe("caption settings clamping", () => {
       position: "bottom",
       fontScale: 1,
       maxLines: 2,
+      translateTo: "off",
+      showOriginal: true,
     });
+  });
+});
+
+describe("translationTarget", () => {
+  it("translates into the other of English and French", () => {
+    expect(translationTarget("other", "en")).toBe("fr");
+    expect(translationTarget("other", "fr")).toBe("en");
+    expect(translationTarget("other", null)).toBe("fr");
+  });
+
+  it("skips lines already in the chosen language, and everything when off", () => {
+    expect(translationTarget("fr", "fr")).toBeNull();
+    expect(translationTarget("es", "en")).toBe("es");
+    expect(translationTarget("off", "en")).toBeNull();
+  });
+
+  it("drops an unknown translation setting", () => {
+    expect(sanitizeCaptionSettings({ translateTo: "klingon" as never }).translateTo).toBe("off");
   });
 });

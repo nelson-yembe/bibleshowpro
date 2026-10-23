@@ -1,4 +1,4 @@
-import { CAPTION_MAX_LINES, CAPTION_MIN_LINES, CAPTION_STALE_MS } from "@/lib/captions";
+import { CAPTION_MAX_LINES, CAPTION_MIN_LINES, CAPTION_STALE_MS, type CaptionTranslation } from "@/lib/captions";
 import { useCaptionStore } from "@/stores/captionStore";
 
 const selectClass =
@@ -9,6 +9,7 @@ const labelClass = "mb-1 block text-[10px] uppercase tracking-wide text-[var(--c
 export function CaptionSettingsPanel() {
   const settings = useCaptionStore((s) => s.settings);
   const update = useCaptionStore((s) => s.updateSettings);
+  const translationError = useCaptionStore((s) => s.translationError);
 
   return (
     <div className="space-y-3">
@@ -58,6 +59,41 @@ export function CaptionSettingsPanel() {
           </select>
         </label>
       </div>
+      <div className="grid grid-cols-[1fr_auto] items-end gap-2">
+        <label className="block">
+          <span className={labelClass}>Translate captions</span>
+          <select
+            value={settings.translateTo}
+            onChange={(e) => update({ translateTo: e.target.value as CaptionTranslation })}
+            className={selectClass}
+          >
+            <option value="off">Off</option>
+            <option value="other">Into the other language (English ⇄ French)</option>
+            <option value="en">Into English</option>
+            <option value="fr">Into French</option>
+            <option value="es">Into Spanish</option>
+            <option value="pt">Into Portuguese</option>
+          </select>
+        </label>
+        <label className="flex items-center gap-1.5 pb-2 text-[11px] text-[var(--color-muted-foreground)]">
+          <input
+            type="checkbox"
+            checked={settings.showOriginal}
+            disabled={settings.translateTo === "off"}
+            onChange={(e) => update({ showOriginal: e.target.checked })}
+          />
+          Keep the original above
+        </label>
+      </div>
+      {settings.translateTo !== "off" && (
+        <p className="text-[10px] leading-snug text-[var(--color-subtle)]">
+          Each finished caption line, as text, goes to Google Gemini with the key in Transcription Engine; audio
+          never leaves this PC. Translations appear about a second after the line, and on phones in Phone View.
+        </p>
+      )}
+      {translationError && settings.translateTo !== "off" && (
+        <p className="text-[10px] text-amber-400">{translationError}</p>
+      )}
       <p className="text-[10px] leading-snug text-[var(--color-subtle)]">
         Captions draw on the output window, so they are part of the NDI feed. They clear themselves after{" "}
         {Math.round(CAPTION_STALE_MS / 1000)}s without new speech, and stop when you pause or stop listening.
