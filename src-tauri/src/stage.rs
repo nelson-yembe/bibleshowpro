@@ -56,16 +56,7 @@ pub fn set_message(app: &AppHandle, message: String) {
 /// the operator can drag to whichever screen faces the platform.
 pub fn open(app: &AppHandle, display_id: Option<String>) -> Result<(), String> {
     let monitor = match display_id {
-        Some(id) => {
-            let primary = app.primary_monitor().map_err(|e| e.to_string())?;
-            let monitors = app.available_monitors().map_err(|e| e.to_string())?;
-            let found = monitors
-                .into_iter()
-                .enumerate()
-                .find(|(index, m)| display::display_info_from_monitor(*index, m, &primary).id == id)
-                .map(|(_, m)| m);
-            Some(found.ok_or_else(|| "That display is no longer connected. Choose another.".to_string())?)
-        }
+        Some(id) => Some(display::monitor_by_id(app, &id)?),
         None => None,
     };
 

@@ -11,6 +11,7 @@ import {
   ChevronsUpDown,
   AudioLines,
   Captions,
+  MonitorSpeaker,
 } from "lucide-react";
 import { useLocation } from "react-router-dom";
 import { TopBar } from "@/components/layout/TopBar";
@@ -19,6 +20,7 @@ import { NdiOutputPanel } from "@/modules/settings/NdiOutputPanel";
 import { TranscriptionEnginePanel } from "@/modules/settings/TranscriptionEnginePanel";
 import { ListenAudioPanel } from "@/modules/settings/ListenAudioPanel";
 import { CaptionSettingsPanel } from "@/modules/settings/CaptionSettingsPanel";
+import { ScreensPanel } from "@/modules/settings/ScreensPanel";
 import { CollapsibleSection, type CollapsibleSignal } from "@/components/ui/CollapsibleSection";
 import { StatusBadge } from "@/components/ui/pill";
 import { downloadTextFile } from "@/lib/utils";
@@ -69,6 +71,17 @@ export function SettingsPage() {
               Collapse all
             </button>
           </div>
+
+          <CollapsibleSection
+            id="screens"
+            title="Screens"
+            description="Main projector, copies of it, and the stage display"
+            icon={<MonitorSpeaker className="h-4 w-4" />}
+            signal={signal}
+            reveal={target === "screens"}
+          >
+            <ScreensPanel />
+          </CollapsibleSection>
 
           <CollapsibleSection
             id="ndi"

@@ -537,6 +537,29 @@ pub fn close_stage_display(app: AppHandle) {
     crate::stage::close(&app);
 }
 
+/// Pin the main projector to a display; `None` goes back to the largest external screen.
+#[tauri::command]
+pub async fn set_projector_display(app: AppHandle, display_id: Option<String>) -> Result<(), String> {
+    crate::screens::set_projector_display(display_id);
+    crate::output::refresh_output_window(app).await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn open_side_screen(app: AppHandle, display_id: String) -> Result<(), String> {
+    crate::screens::open_side_screen(&app, &display_id)
+}
+
+#[tauri::command]
+pub fn close_side_screen(app: AppHandle, display_id: String) {
+    crate::screens::close_side_screen(&app, &display_id);
+}
+
+#[tauri::command]
+pub fn list_side_screens(app: AppHandle) -> Vec<String> {
+    crate::screens::open_side_screens(&app)
+}
+
 #[tauri::command]
 pub fn set_stage_message(app: AppHandle, message: String) {
     crate::stage::set_message(&app, message);

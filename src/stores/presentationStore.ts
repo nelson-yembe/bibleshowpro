@@ -13,6 +13,7 @@ import {
   type PresentationSnapshot,
 } from "@/engine/previewProgram";
 import { broadcastProgram, broadcastProgramReliable } from "@/engine/broadcast";
+import { useScreensStore } from "@/stores/screensStore";
 import {
   isPlaceholderScene,
   refreshPreviewBeforeGoLive,
@@ -169,6 +170,7 @@ function applyCountdownScene(scene: Scene, source: PreviewSource) {
 
 async function ensureOutputOpen() {
   await api.openOutputWindow();
+  void useScreensStore.getState().openSideScreens();
   await usePresentationStore.getState().syncOutputStatus();
   usePresentationStore.setState({ outputError: null });
 }
@@ -470,6 +472,7 @@ export const usePresentationStore = create<PresentationState>((set, get) => ({
   openOutput: async () => {
     try {
       await api.openOutputWindow();
+      void useScreensStore.getState().openSideScreens();
       await get().syncOutputStatus();
       set({ outputError: null });
       await syncOutputReliable(get());
@@ -482,6 +485,7 @@ export const usePresentationStore = create<PresentationState>((set, get) => ({
 
   closeOutput: async () => {
     await api.closeOutputWindow();
+    void useScreensStore.getState().closeSideScreens();
     set({ outputOpen: false, activeDisplay: null });
   },
 

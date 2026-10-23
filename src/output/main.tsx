@@ -65,10 +65,14 @@ function prefersReducedMotion() {
   );
 }
 
+const params = new URLSearchParams(window.location.search);
+const isPreviewFeed = params.get("ndi") === "preview";
+/** Only the main projector waits for native to show it; side screens and the NDI feed draw at once. */
+const revealsOnCue = !isPreviewFeed && params.get("role") !== "side";
+
 function OutputApp() {
-  const isPreviewFeed = new URLSearchParams(window.location.search).get("ndi") === "preview";
   const [scene, setScene] = useState<Scene | null>(() => logoScene());
-  const [revealed, setRevealed] = useState(isPreviewFeed);
+  const [revealed, setRevealed] = useState(!revealsOnCue);
   useOutputWakeLock();
   useTransparentOutput(scene);
 
@@ -119,7 +123,7 @@ function OutputApp() {
         // Browser/dev without Tauri
       }
 
-      if (isPreviewFeed) {
+      if (!revealsOnCue) {
         setRevealed(true);
         return;
       }
@@ -151,7 +155,7 @@ function OutputApp() {
       window.removeEventListener("bsp-program-update", onUpdate);
       if (fallbackTimer !== undefined) window.clearTimeout(fallbackTimer);
     };
-  }, [isPreviewFeed]);
+  }, []);
 
   return (
     <div
@@ -161,8 +165,8 @@ function OutputApp() {
       <div
         className={cn(
           "h-full w-full",
-          !isPreviewFeed && "bsp-output-reveal",
-          !isPreviewFeed && revealed && "bsp-output-reveal-visible",
+          revealsOnCue && "bsp-output-reveal",
+          revealsOnCue && revealed && "bsp-output-reveal-visible",
         )}
       >
         <SceneRenderer scene={scene} className="h-full w-full" label="" />

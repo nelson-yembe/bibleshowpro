@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { usePresentationStore } from "@/stores/presentationStore";
 import { useStageStore } from "@/stores/stageStore";
+import { useScreensStore } from "@/stores/screensStore";
 
 const fieldClass =
   "h-7 w-full rounded-md border border-[var(--color-border-light)] bg-[var(--color-panel)] px-2 text-[11px]";
@@ -15,7 +16,7 @@ export function StageDisplayControls() {
   const init = useStageStore((s) => s.init);
   const openStage = useStageStore((s) => s.openStage);
   const closeStage = useStageStore((s) => s.closeStage);
-  const setDisplayId = useStageStore((s) => s.setDisplayId);
+  const setRole = useScreensStore((s) => s.setRole);
   const sendMessage = useStageStore((s) => s.sendMessage);
   const [draft, setDraft] = useState("");
 
@@ -42,7 +43,11 @@ export function StageDisplayControls() {
       </div>
       <label className="block">
         <span className="mb-1 block text-[9px] uppercase tracking-wide text-[var(--color-subtle)]">Screen</span>
-        <select value={displayId} onChange={(e) => setDisplayId(e.target.value)} className={fieldClass}>
+        <select
+          value={displayId}
+          onChange={(e) => void (e.target.value ? setRole(e.target.value, "stage") : displayId && setRole(displayId, null))}
+          className={fieldClass}
+        >
           <option value="">A window I place myself</option>
           {displays.map((d) => (
             <option key={d.id} value={d.id}>

@@ -19,6 +19,7 @@ import { useMediaStore } from "@/stores/mediaStore";
 import { useThemeStore } from "@/stores/themeStore";
 import { useOutputDisplayManager } from "@/hooks/useOutputDisplayManager";
 import { useNdiStore } from "@/stores/ndiStore";
+import { useScreensStore } from "@/stores/screensStore";
 import { startVideoPlaybackBridge } from "@/stores/videoPlaybackStore";
 
 function AppBootstrap({ children }: { children: React.ReactNode }) {
@@ -28,6 +29,7 @@ function AppBootstrap({ children }: { children: React.ReactNode }) {
   const loadThemes = useThemeStore((s) => s.loadThemes);
   useOutputDisplayManager();
   const loadNdi = useNdiStore((s) => s.loadConfig);
+  const initScreens = useScreensStore((s) => s.init);
 
   useEffect(() => {
     void api.initApp();
@@ -36,7 +38,9 @@ function AppBootstrap({ children }: { children: React.ReactNode }) {
     void initService();
     void loadMedia();
     void loadNdi();
-  }, [hydrate, initService, loadMedia, loadThemes, loadNdi]);
+    // Tells the backend which screen the projector fills before anything opens it.
+    void initScreens();
+  }, [hydrate, initService, loadMedia, loadThemes, loadNdi, initScreens]);
 
   useEffect(() => startVideoPlaybackBridge({ applyRemote: false }), []);
 

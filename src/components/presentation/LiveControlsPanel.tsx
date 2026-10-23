@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { Link } from "react-router-dom";
 import { Zap } from "lucide-react";
 import { SceneRenderer } from "@/components/presentation/SceneRenderer";
 import { ServiceQueueStrip } from "@/components/presentation/ServiceQueueStrip";
@@ -14,6 +15,7 @@ import { usePresentationStore } from "@/stores/presentationStore";
 import { useSongStore } from "@/stores/songStore";
 import { useTickerStore } from "@/stores/tickerStore";
 import { useTranscriptionStore } from "@/stores/transcriptionStore";
+import { useScreensStore } from "@/stores/screensStore";
 
 type ControlAction = "clear" | "undo" | "blackout" | "logo" | "freeze";
 
@@ -72,6 +74,7 @@ export function LiveControlsPanel({ displayOptions }: LiveControlsPanelProps) {
   const activeDisplay = usePresentationStore((s) => s.activeDisplay);
   const openOutput = usePresentationStore((s) => s.openOutput);
   const closeOutput = usePresentationStore((s) => s.closeOutput);
+  const sideScreensShowing = useScreensStore((s) => s.openSide.length);
   const refreshOutput = usePresentationStore((s) => s.refreshOutput);
 
   const handlers = useLiveNavigationStore((s) => s.handlers);
@@ -353,9 +356,20 @@ export function LiveControlsPanel({ displayOptions }: LiveControlsPanelProps) {
                 ? `${externalDisplays.length} external display(s) detected`
                 : "Opens when you go live"}
           </p>
+          {sideScreensShowing > 0 && (
+            <p className="mt-0.5 text-[10px] text-[var(--color-subtle)]">
+              + {sideScreensShowing === 1 ? "1 copy" : `${sideScreensShowing} copies`} on other screens
+            </p>
+          )}
           {outputError && (
             <p className="mt-2 text-[10px] leading-snug text-red-400">{outputError}</p>
           )}
+          <Link
+            to="/settings#screens"
+            className="mt-1.5 inline-block text-[10px] text-[var(--color-subtle)] underline-offset-2 hover:text-[var(--color-foreground)] hover:underline"
+          >
+            Choose screens…
+          </Link>
         </div>
       </div>
     </aside>

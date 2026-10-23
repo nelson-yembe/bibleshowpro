@@ -197,6 +197,7 @@ pub fn shutdown_all(app: &AppHandle) {
         }
     }
 
+    crate::screens::close_side_screens(app);
     crate::keep_awake::set_output_active(false);
     crate::keep_awake::set_presentation_active(false);
 
@@ -234,6 +235,7 @@ pub fn start_display_watcher(app: AppHandle) {
                         eprintln!("[display-watcher] refresh output failed: {error}");
                     }
                 }
+                crate::screens::follow_displays(&app);
             }
         }
     });

@@ -5,6 +5,7 @@ pub mod display;
 pub mod keep_awake;
 pub mod ndi;
 pub mod output;
+pub mod screens;
 pub mod secrets;
 pub mod service;
 pub mod songs;
@@ -142,6 +143,10 @@ pub fn run() {
             commands::list_displays,
             commands::open_stage_display,
             commands::close_stage_display,
+            commands::set_projector_display,
+            commands::open_side_screen,
+            commands::close_side_screen,
+            commands::list_side_screens,
             commands::set_stage_message,
             commands::get_stage_state,
             commands::get_output_status,

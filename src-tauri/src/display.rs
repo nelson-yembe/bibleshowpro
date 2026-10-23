@@ -31,7 +31,26 @@ pub fn list_displays(app: &AppHandle) -> Result<Vec<DisplayInfo>, String> {
         .collect())
 }
 
+/// The connected display with this id (see [`display_info_from_monitor`]).
+pub fn monitor_by_id(app: &AppHandle, id: &str) -> Result<Monitor, String> {
+    let primary = app.primary_monitor().map_err(|e| e.to_string())?;
+    app.available_monitors()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .enumerate()
+        .find(|(index, monitor)| display_info_from_monitor(*index, monitor, &primary).id == id)
+        .map(|(_, monitor)| monitor)
+        .ok_or_else(|| "That display is no longer connected. Choose another.".to_string())
+}
+
 pub fn pick_output_monitor(app: &AppHandle) -> Result<Monitor, String> {
+    // The screen the operator chose for the projector, while it is connected.
+    if let Some(id) = crate::screens::projector_display() {
+        if let Ok(monitor) = monitor_by_id(app, &id) {
+            return Ok(monitor);
+        }
+    }
+
     let monitors = app.available_monitors().map_err(|e| e.to_string())?;
     if monitors.is_empty() {
         return Err("No displays detected".into());
