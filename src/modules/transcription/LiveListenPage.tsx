@@ -6,6 +6,7 @@ import {
 import { TopBar } from "@/components/layout/TopBar";
 import { cn } from "@/lib/utils";
 import { exportScriptureList, exportTranscriptText } from "@/lib/transcription/referenceDetect";
+import { buildCorpusCase } from "@/lib/transcription/corpusExport";
 import type { ScriptureSuggestion } from "@/lib/transcription/types";
 import { formatTranscriptProse } from "@/lib/transcription/transcriptFormat";
 import {
@@ -174,6 +175,17 @@ export function LiveListenPage() {
     const a = document.createElement("a");
     a.href = url;
     a.download = `sermon-transcript-${Date.now()}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // A labelled copy of this service for the detection corpus (src-tauri/corpus).
+  const exportForCorpus = () => {
+    const blob = new Blob([buildCorpusCase(segments, suggestions, new Date())], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `service-corpus-${Date.now()}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -434,6 +446,14 @@ export function LiveListenPage() {
               </button>
               <button type="button" onClick={exportReferences} className="control-btn text-[11px]">
                 Export scriptures
+              </button>
+              <button
+                type="button"
+                onClick={exportForCorpus}
+                className="control-btn text-[11px]"
+                title="The transcript labelled with the verses shown, for measuring detection accuracy"
+              >
+                Export for accuracy check
               </button>
               <button type="button" disabled={scanning} onClick={() => void rescanTranscript()} className="control-btn text-[11px]">
                 Rescan all

@@ -1,6 +1,7 @@
 pub mod books;
 pub mod catalog;
 pub mod convert;
+pub mod corpus;
 pub mod detection;
 pub mod import;
 pub mod install;

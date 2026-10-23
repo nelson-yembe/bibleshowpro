@@ -1,0 +1,16 @@
+{
+  "id": "en-sermon-flow",
+  "language": "en",
+  "source": "Written for the corpus: a passage announced once, then verses called by number.",
+  "segments": [
+    { "text": "Our text this morning is from Joshua chapter 14.", "expect": ["Joshua 14"] },
+    { "text": "Verse 12 says, give me this mountain.", "expect": ["Joshua 14:12"] },
+    { "text": "Now go back with me to verse 6.", "expect": ["Joshua 14:6"] },
+    { "text": "Caleb was forty years old, he says.", "expect": [] },
+    { "text": "Let's move over to Galatians 5:22.", "expect": ["Galatians 5:22"] },
+    { "text": "Verse 23, gentleness and self-control.", "expect": ["Galatians 5:23"] },
+    { "text": "Thank you, you may be seated.", "expect": [] },
+    { "text": "Matthew chapter 5 verse 14, you are the light of the world.", "expect": ["Matthew 5:14"] },
+    { "text": "And verse 16, let your light so shine before men.", "expect": ["Matthew 5:16"] }
+  ]
+}

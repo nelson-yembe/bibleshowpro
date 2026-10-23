@@ -1,0 +1,20 @@
+{
+  "id": "en-everyday-words",
+  "language": "en",
+  "source": "Written for the corpus: everyday speech that looks like a reference, next to real ones.",
+  "segments": [
+    { "text": "Mark my words, this is the day the Lord has made.", "expect": [] },
+    { "text": "I had a job interview on Monday at 9.", "expect": [] },
+    { "text": "John and 3 of his friends came to church.", "expect": [] },
+    { "text": "We have 2 services, at 8 and at 10.", "expect": [] },
+    { "text": "Acts of kindness matter.", "expect": [] },
+    { "text": "Turn to page 5 in your hymnal.", "expect": [] },
+    { "text": "There were 5000 men, besides women and children.", "expect": [] },
+    { "text": "We had some 23 visitors last week.", "expect": [] },
+    { "text": "Numbers 6:24 says the Lord bless you and keep you.", "expect": ["Numbers 6:24"] },
+    { "text": "Mark chapter 4 verse 39, peace be still.", "expect": ["Mark 4:39"] },
+    { "text": "Job 19:25, I know that my redeemer lives.", "expect": ["Job 19:25"] },
+    { "text": "Read Acts 2:38 with me.", "expect": ["Acts 2:38"] },
+    { "text": "Ruth chapter 1 verse 16, where you go I will go.", "expect": ["Ruth 1:16"] }
+  ]
+}

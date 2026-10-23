@@ -1,0 +1,21 @@
+{
+  "id": "fr-annonces",
+  "language": "fr",
+  "source": "Écrit pour le corpus : références annoncées en français, et phrases ordinaires qui leur ressemblent.",
+  "segments": [
+    { "text": "Ouvrons nos Bibles dans l'évangile selon Jean, chapitre trois, verset seize.", "expect": ["John 3:16"] },
+    { "text": "Lisons Romains chapitre huit, versets vingt-huit à trente.", "expect": ["Romans 8:28-30"] },
+    { "text": "La première épître de Jean, chapitre quatre, verset huit. Dieu est amour.", "expect": ["1 John 4:8"] },
+    { "text": "Psaume vingt-trois. L'Éternel est mon berger.", "expect": ["Psalms 23"] },
+    { "text": "Matthieu chapitre cinq, verset quatorze. Vous êtes la lumière du monde.", "expect": ["Matthew 5:14"] },
+    { "text": "Et le verset seize nous dit que notre lumière doit luire.", "expect": ["Matthew 5:16"] },
+    { "text": "Ésaïe 53 verset 5.", "expect": ["Isaiah 53:5"] },
+    { "text": "Jean et ses trois amis sont venus ce matin.", "expect": [] },
+    { "text": "Nous avons deux cultes ce dimanche, à 8 heures et à 10 heures.", "expect": [] },
+    { "text": "Actes 2:38.", "expect": ["Acts 2:38"] },
+    { "text": "Hébreux onze, verset un.", "expect": ["Hebrews 11:1"] },
+    { "text": "Genèse chapitre un, verset un. Au commencement Dieu créa les cieux et la terre.", "expect": ["Genesis 1:1"] },
+    { "text": "Alléluia.", "expect": [] },
+    { "text": "Amen.", "expect": [] }
+  ]
+}

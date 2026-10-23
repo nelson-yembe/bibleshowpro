@@ -1,0 +1,21 @@
+{
+  "id": "en-announced",
+  "language": "en",
+  "source": "Written for the corpus: references announced the way preachers usually say them.",
+  "segments": [
+    { "text": "Good morning church, please be seated.", "expect": [] },
+    { "text": "This morning we are going to be in the book of Romans chapter 8.", "expect": ["Romans 8"] },
+    { "text": "Turn with me to John chapter 3, verse 16.", "expect": ["John 3:16"] },
+    { "text": "Let's go to Ephesians 2:8-9.", "expect": ["Ephesians 2:8-9"] },
+    { "text": "First Corinthians thirteen, verse four.", "expect": ["1 Corinthians 13:4"] },
+    { "text": "Second Timothy chapter three, verses sixteen and seventeen.", "expect": ["2 Timothy 3:16-17"] },
+    { "text": "Psalm one hundred and nineteen, verse one hundred and five.", "expect": ["Psalms 119:105"] },
+    { "text": "Philippians four thirteen.", "expect": ["Philippians 4:13"] },
+    { "text": "Isaiah 40 verse 31, they that wait upon the Lord.", "expect": ["Isaiah 40:31"] },
+    { "text": "Turn in your Bibles to the book of Jonah.", "expect": [] },
+    { "text": "Hebrews chapter 11 verse 1, now faith is the substance of things hoped for.", "expect": ["Hebrews 11:1"] },
+    { "text": "Lamentations chapter three, verse twenty two.", "expect": ["Lamentations 3:22"] },
+    { "text": "Our reading is from Proverbs 3 verses 5 and 6.", "expect": ["Proverbs 3:5-6"] },
+    { "text": "Revelation 21:4, he will wipe away every tear.", "expect": ["Revelation 21:4"] }
+  ]
+}

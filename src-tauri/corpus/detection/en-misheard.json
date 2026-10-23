@@ -1,0 +1,19 @@
+{
+  "id": "en-misheard",
+  "language": "en",
+  "source": "Lines like those a live test produced on a laptop microphone: other languages, noise, and references the engine misheard. Labelled with what was actually said.",
+  "segments": [
+    { "text": "The.", "expect": [] },
+    { "text": "Yeah.", "expect": [] },
+    { "text": "पानी.", "expect": [] },
+    { "text": "예, 좀 이란.", "expect": [] },
+    { "text": "John chapter 5 verse 14.", "expect": ["John 5:14"] },
+    { "text": "MasterChef 5 is eating.", "expect": ["Matthew 5:14"] },
+    { "text": "Matthew chapter 5 verse 14.", "expect": ["Matthew 5:14"] },
+    { "text": "फाइल्स में. Lamentations 3:22.", "expect": ["Lamentations 3:22"] },
+    { "text": "Efficient chapter 2 verse 8.", "expect": ["Ephesians 2:8"] },
+    { "text": "Turn to some 23, the Lord is my shepherd.", "expect": ["Psalms 23"] },
+    { "text": "Filipinos 4 13.", "expect": ["Philippians 4:13"] },
+    { "text": "First gens chapter 1 verse 9.", "expect": ["1 John 1:9"] }
+  ]
+}
