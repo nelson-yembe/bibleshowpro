@@ -560,6 +560,27 @@ pub fn list_side_screens(app: AppHandle) -> Vec<String> {
     crate::screens::open_side_screens(&app)
 }
 
+#[tauri::command]
+pub fn list_audio_inputs() -> Result<Vec<crate::audio::InputDevice>, String> {
+    crate::audio::list_inputs()
+}
+
+/// Stream the microphone to `frames` as mono f32 at `sample_rate`; stop with the returned id.
+#[tauri::command]
+pub fn start_audio_capture(
+    app: AppHandle,
+    device: Option<String>,
+    sample_rate: u32,
+    frames: tauri::ipc::Channel,
+) -> Result<crate::audio::CaptureInfo, String> {
+    crate::audio::start(app, device, sample_rate, frames)
+}
+
+#[tauri::command]
+pub fn stop_audio_capture(id: u32) {
+    crate::audio::stop(id);
+}
+
 /// Serve the phone view and remote control on the church network.
 #[tauri::command]
 pub async fn start_remote_server(app: AppHandle, port: Option<u16>) -> Result<crate::remote::RemoteStatus, String> {

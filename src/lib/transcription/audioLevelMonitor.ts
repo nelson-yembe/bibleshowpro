@@ -3,6 +3,7 @@ import {
   getAudioInputConstraints,
   mapGetUserMediaError,
 } from "@/lib/transcription/audioInput";
+import { captureSource, levelOf, startNativeCapture, type NativeCapture } from "@/lib/transcription/nativeAudio";
 
 export class AudioLevelMonitor {
   private stream: MediaStream | null = null;
@@ -13,6 +14,7 @@ export class AudioLevelMonitor {
   private onWarning: ((warning: string | null) => void) | null = null;
   private scratch: Uint8Array | null = null;
   private lastWarning: string | null = null;
+  private native: NativeCapture | null = null;
 
   async start(
     deviceId: string | null,
@@ -23,6 +25,19 @@ export class AudioLevelMonitor {
     this.onLevel = onLevel;
     this.onWarning = onWarning ?? null;
     this.lastWarning = null;
+
+    if (captureSource() === "windows") {
+      try {
+        this.native = await startNativeCapture({
+          deviceName: deviceId,
+          targetRate: 16_000,
+          onFrames: (frames) => this.report(levelOf(frames)),
+        });
+        return;
+      } catch {
+        // Fall back to the web view's meter.
+      }
+    }
 
     let lastError: unknown;
     for (const constraints of getAudioInputConstraints(deviceId)) {
@@ -56,21 +71,24 @@ export class AudioLevelMonitor {
         const sample = (this.scratch[i] - 128) / 128;
         sum += sample * sample;
       }
-      const level = Math.min(1, Math.sqrt(sum / this.scratch.length) * 4);
-      this.onLevel?.(level);
-
-      const nextWarning = audioWarningForLevel(level, this.lastWarning);
-      if (nextWarning !== this.lastWarning) {
-        this.lastWarning = nextWarning;
-        this.onWarning?.(nextWarning);
-      }
-
+      this.report(Math.min(1, Math.sqrt(sum / this.scratch.length) * 4));
       this.raf = requestAnimationFrame(tick);
     };
     tick();
   }
 
+  private report(level: number) {
+    this.onLevel?.(level);
+    const nextWarning = audioWarningForLevel(level, this.lastWarning);
+    if (nextWarning !== this.lastWarning) {
+      this.lastWarning = nextWarning;
+      this.onWarning?.(nextWarning);
+    }
+  }
+
   async stop() {
+    this.native?.stop();
+    this.native = null;
     cancelAnimationFrame(this.raf);
     this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = null;

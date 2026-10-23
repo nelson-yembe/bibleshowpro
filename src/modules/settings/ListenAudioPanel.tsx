@@ -1,5 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+import { isDesktopApp } from "@/lib/transcription/engineReadiness";
+import { captureSource, setCaptureSource, type CaptureSource } from "@/lib/transcription/nativeAudio";
 import { type ConfidenceLevel } from "@/lib/transcription/types";
 import { useTranscriptionStore } from "@/stores/transcriptionStore";
 
@@ -25,6 +27,14 @@ export function ListenAudioPanel() {
 
   const isListening = status === "listening" || status === "processing" || status === "reconnecting";
   const isChecking = preflightStatus === "checking";
+  const [source, setSource] = useState<CaptureSource>(captureSource);
+
+  const changeSource = (next: CaptureSource) => {
+    setCaptureSource(next);
+    setSource(next);
+    // The two list devices differently, so the choice of microphone starts over.
+    void refreshAudioDevices(true);
+  };
 
   // Settings can be opened before Live Listen ever loaded the device list. Refreshing
   // clears warnings, so leave a running session's alone.
@@ -75,6 +85,24 @@ export function ListenAudioPanel() {
         </div>
         {isListening && (
           <p className="mt-1 text-[10px] text-[var(--color-subtle)]">Stop listening to change the microphone.</p>
+        )}
+        {isDesktopApp() && (
+          <label className="mt-3 block">
+            <span className={labelClass}>Read the microphone through</span>
+            <select
+              value={source}
+              onChange={(e) => changeSource(e.target.value as CaptureSource)}
+              disabled={isListening || isChecking}
+              className={selectClass}
+            >
+              <option value="windows">Windows audio (recommended)</option>
+              <option value="webview">The app's web view (older)</option>
+            </select>
+            <span className="mt-1 block text-[10px] leading-snug text-[var(--color-subtle)]">
+              Windows audio opens the device directly, with no permission prompt or paused audio engine. If it
+              fails, the web view is used automatically.
+            </span>
+          </label>
         )}
         {preflightMessage && (
           <p

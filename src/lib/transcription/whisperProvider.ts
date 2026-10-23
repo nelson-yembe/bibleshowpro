@@ -92,6 +92,7 @@ export class WhisperTranscriptionEngine implements TranscriptionEngine {
         deviceId: deviceId ?? null,
         targetRate: SAMPLE_RATE,
         onFrames: (frames) => this.onFrames(frames),
+        onError: (message) => callbacks.onError(message),
       });
     } catch (err) {
       void this.releaseModel();

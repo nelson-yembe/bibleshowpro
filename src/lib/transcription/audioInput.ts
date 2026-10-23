@@ -1,3 +1,8 @@
+import { captureSource, levelOf, listNativeInputs, startNativeCapture } from "@/lib/transcription/nativeAudio";
+
+/** An input as the device picker shows it. With Windows capture the id is the device name. */
+export type AudioInputDevice = Pick<MediaDeviceInfo, "deviceId" | "label">;
+
 export type AudioInputErrorCode =
   | "unsupported"
   | "permission_denied"
@@ -21,7 +26,7 @@ const SIGNAL_THRESHOLD = 0.018;
 const CLIP_THRESHOLD = 0.94;
 
 export function audioInputLabel(
-  devices: MediaDeviceInfo[],
+  devices: AudioInputDevice[],
   deviceId: string | null | undefined,
 ): string {
   if (!deviceId) return "System default microphone";
@@ -99,20 +104,32 @@ export async function openAudioInputStream(
   throw mapGetUserMediaError(lastError);
 }
 
-/** Prompt for mic permission so device labels/IDs are available. */
+/** Prompt for mic permission so device labels/IDs are available. Windows capture needs none. */
 export async function ensureMicrophoneAccess(deviceId?: string | null): Promise<void> {
+  if (captureSource() === "windows") return;
   const stream = await openAudioInputStream(deviceId);
   stream.getTracks().forEach((track) => track.stop());
 }
 
-export async function listAudioInputDevices(): Promise<MediaDeviceInfo[]> {
+export async function listAudioInputDevices(): Promise<AudioInputDevice[]> {
+  if (captureSource() === "windows") {
+    try {
+      // Default first, so a fresh install starts on the input Windows already uses.
+      const inputs = await listNativeInputs();
+      return [...inputs]
+        .sort((a, b) => Number(b.isDefault) - Number(a.isDefault))
+        .map((input) => ({ deviceId: input.name, label: input.name }));
+    } catch {
+      // Fall through to the web view's list.
+    }
+  }
   if (!navigator.mediaDevices?.enumerateDevices) return [];
   const devices = await navigator.mediaDevices.enumerateDevices();
   return devices.filter((d) => d.kind === "audioinput" && d.deviceId.length > 0);
 }
 
 export function pickValidAudioDeviceId(
-  devices: MediaDeviceInfo[],
+  devices: AudioInputDevice[],
   preferredId: string | null | undefined,
 ): string | null {
   if (preferredId && devices.some((d) => d.deviceId === preferredId)) {
@@ -143,7 +160,7 @@ export interface AudioPreflightResult {
 
 export async function preflightAudioInput(
   deviceId: string | null | undefined,
-  devices: MediaDeviceInfo[],
+  devices: AudioInputDevice[],
   options?: { sampleMs?: number },
 ): Promise<AudioPreflightResult> {
   const sampleMs = options?.sampleMs ?? 1400;
@@ -163,6 +180,23 @@ export async function preflightAudioInput(
         "No microphone detected — plug in a mic or enable an input in Windows Sound settings, then click Refresh mics.",
       ),
     };
+  }
+
+  if (captureSource() === "windows") {
+    try {
+      const peakLevel = await nativePeakLevel(resolvedId, sampleMs);
+      return levelResult(resolvedId, deviceLabel, peakLevel);
+    } catch (err) {
+      return {
+        ok: false,
+        deviceId: resolvedId,
+        deviceLabel,
+        peakLevel: 0,
+        hasSignal: false,
+        clipping: false,
+        error: new AudioInputError("device_unavailable", err instanceof Error ? err.message : String(err)),
+      };
+    }
   }
 
   let stream: MediaStream | null = null;
@@ -190,23 +224,7 @@ export async function preflightAudioInput(
       await new Promise<void>((resolve) => window.setTimeout(resolve, 80));
     }
 
-    const hasSignal = peakLevel >= SIGNAL_THRESHOLD;
-    const clipping = peakLevel >= CLIP_THRESHOLD;
-
-    return {
-      ok: true,
-      deviceId: resolvedId,
-      deviceLabel,
-      peakLevel,
-      hasSignal,
-      clipping,
-      error: hasSignal
-        ? null
-        : new AudioInputError(
-            "no_signal",
-            `No audio detected on “${deviceLabel}” — check Windows input level, cable, or choose another device. Speak or play audio into the mic during the test.`,
-          ),
-    };
+    return levelResult(resolvedId, deviceLabel, peakLevel);
   } catch (err) {
     return {
       ok: false,
@@ -223,6 +241,42 @@ export async function preflightAudioInput(
       await context.close().catch(() => undefined);
     }
   }
+}
+
+function levelResult(deviceId: string | null, deviceLabel: string, peakLevel: number): AudioPreflightResult {
+  const hasSignal = peakLevel >= SIGNAL_THRESHOLD;
+  return {
+    ok: true,
+    deviceId,
+    deviceLabel,
+    peakLevel,
+    hasSignal,
+    clipping: peakLevel >= CLIP_THRESHOLD,
+    error: hasSignal
+      ? null
+      : new AudioInputError(
+          "no_signal",
+          `No audio detected on “${deviceLabel}” — check Windows input level, cable, or choose another device. Speak or play audio into the mic during the test.`,
+        ),
+  };
+}
+
+/** Loudest moment over `sampleMs`, read through Windows audio. */
+async function nativePeakLevel(deviceName: string | null, sampleMs: number): Promise<number> {
+  let peak = 0;
+  const capture = await startNativeCapture({
+    deviceName,
+    targetRate: 16_000,
+    onFrames: (frames) => {
+      peak = Math.max(peak, levelOf(frames));
+    },
+  });
+  try {
+    await new Promise<void>((resolve) => window.setTimeout(resolve, sampleMs));
+  } finally {
+    capture.stop();
+  }
+  return peak;
 }
 
 export function audioWarningForLevel(level: number, previous?: string | null): string | null {

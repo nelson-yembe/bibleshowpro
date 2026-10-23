@@ -118,6 +118,7 @@ export class GeminiTranscriptionEngine implements TranscriptionEngine {
       deviceId: this.deviceId,
       targetRate: GEMINI_SAMPLE_RATE,
       onFrames: (frames) => this.enqueue(frames),
+      onError: (message) => this.callbacks?.onError(message),
     });
   }
 

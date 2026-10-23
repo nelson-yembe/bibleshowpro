@@ -1,3 +1,4 @@
+pub mod audio;
 pub mod bible;
 pub mod commands;
 pub mod db;
@@ -149,6 +150,9 @@ pub fn run() {
             commands::open_side_screen,
             commands::close_side_screen,
             commands::list_side_screens,
+            commands::list_audio_inputs,
+            commands::start_audio_capture,
+            commands::stop_audio_capture,
             commands::start_remote_server,
             commands::stop_remote_server,
             commands::get_remote_status,

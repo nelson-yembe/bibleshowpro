@@ -1,8 +1,9 @@
 import { openAudioInputStream } from "@/lib/transcription/audioInput";
+import { captureSource, startNativeCapture } from "@/lib/transcription/nativeAudio";
 import { PCM_WORKLET_PROCESSOR, PCM_WORKLET_URL } from "@/lib/transcription/pcm";
 import { StreamingResampler } from "@/lib/transcription/resampler";
 
-export type CaptureMethod = "worklet" | "script-processor";
+export type CaptureMethod = "windows" | "worklet" | "script-processor";
 
 export interface PcmCapture {
   readonly method: CaptureMethod;
@@ -14,6 +15,8 @@ export interface PcmCapture {
 /**
  * Microphone → mono float frames at `targetRate`, on as many machines as possible.
  *
+ * - Windows audio first (see `src-tauri/src/audio.rs`); the web view's capture below is
+ *   the fallback when that fails, and the only path outside the desktop app.
  * - The context runs at the device's native rate and audio is resampled here. Asking the
  *   browser for 16 kHz directly fails on some drivers and Bluetooth headsets.
  * - AudioWorklet first; ScriptProcessorNode if the worklet cannot load. The fallback is
@@ -23,6 +26,29 @@ export interface PcmCapture {
  *   leave the level meter moving while the engine receives nothing.
  */
 export async function startPcmCapture(options: {
+  deviceId: string | null;
+  targetRate: number;
+  onFrames: (frames: Float32Array) => void;
+  /** The microphone failed after starting (unplugged, disabled). */
+  onError?: (message: string) => void;
+}): Promise<PcmCapture> {
+  if (captureSource() === "windows") {
+    try {
+      const native = await startNativeCapture({
+        deviceName: options.deviceId,
+        targetRate: options.targetRate,
+        onFrames: options.onFrames,
+        onError: options.onError,
+      });
+      return { method: "windows", deviceRate: native.deviceRate, stop: () => native.stop() };
+    } catch (err) {
+      console.warn("[audio] Windows capture failed; using the web view's capture.", err);
+    }
+  }
+  return startWebCapture(options);
+}
+
+async function startWebCapture(options: {
   deviceId: string | null;
   targetRate: number;
   onFrames: (frames: Float32Array) => void;

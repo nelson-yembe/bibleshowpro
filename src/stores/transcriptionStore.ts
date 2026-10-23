@@ -51,6 +51,7 @@ import { AudioLevelMonitor } from "@/lib/transcription/audioLevelMonitor";
 import {
   ensureMicrophoneAccess,
   listAudioInputDevices,
+  type AudioInputDevice,
   pickValidAudioDeviceId,
 } from "@/lib/transcription/audioInput";
 import type { TranscriptionEngine } from "@/lib/transcription/engine";
@@ -111,7 +112,7 @@ interface TranscriptionState {
   lastVoiceAction: string | null;
   models: TranscriptionModel[];
   modelId: string;
-  audioDevices: MediaDeviceInfo[];
+  audioDevices: AudioInputDevice[];
   audioDeviceId: string | null;
   audioDeviceLabel: string | null;
   audioLevel: number;

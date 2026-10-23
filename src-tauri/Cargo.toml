@@ -47,6 +47,7 @@ axum = "0.8"
 futures-util = "0.3"
 qrcode = { version = "0.14", default-features = false }
 if-addrs = "0.15"
+cpal = "0.16"
 
 # Local fork of oximedia-ndi 0.1.7 patching a bug where the mDNS SRV host name
 # was built as `format!("{ip}.local.").replace('.', "-")`, mangling the required

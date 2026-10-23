@@ -200,6 +200,7 @@ pub fn shutdown_all(app: &AppHandle) {
 
     crate::screens::close_side_screens(app);
     crate::remote::stop();
+    crate::audio::stop_all();
     crate::keep_awake::set_output_active(false);
     crate::keep_awake::set_presentation_active(false);
 
