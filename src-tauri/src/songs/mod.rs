@@ -1,3 +1,5 @@
+pub mod heard;
+
 use once_cell::sync::Lazy;
 use regex::Regex;
 use rusqlite::{params, Connection, OptionalExtension};

@@ -175,6 +175,7 @@ pub fn run() {
             commands::ndi::push_preview_update,
             commands::songs::list_songs,
             commands::songs::get_song,
+            commands::songs::match_heard_song,
             commands::songs::create_song,
             commands::songs::update_song,
             commands::songs::delete_song,

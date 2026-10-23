@@ -84,6 +84,7 @@ import {
 } from "@/lib/transcription/types";
 import { useBibleStore } from "@/stores/bibleStore";
 import { useCaptionStore } from "@/stores/captionStore";
+import { useSongFollowStore } from "@/stores/songFollowStore";
 import { usePresentationStore } from "@/stores/presentationStore";
 
 const SESSION_STORAGE_KEY = "bsp-transcription-session";
@@ -1146,10 +1147,12 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
         onPartial: (text) => {
           set({ partialText: text, audioWarning: null });
           useCaptionStore.getState().pushPartial(text);
+          useSongFollowStore.getState().feed(text, false);
           schedulePartialScan(get, set);
         },
         onFinal: async (text, info) => {
           useCaptionStore.getState().pushFinal(text, info?.language ?? get().heardLanguage);
+          useSongFollowStore.getState().feed(text, true);
           const startedAt = get().startedAt ?? Date.now();
           const offsetMs = Date.now() - startedAt;
           const segment: TranscriptSegment = {

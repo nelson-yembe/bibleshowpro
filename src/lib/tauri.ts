@@ -58,6 +58,16 @@ export interface NotesReference {
   context: string;
 }
 
+/** A song the transcript sounds like (see `songs/heard.rs`). */
+export interface HeardSong {
+  songId: string;
+  title: string;
+  sectionId: string | null;
+  sectionLabel: string | null;
+  line: string;
+  score: number;
+}
+
 /** The church-network server for phones. */
 export interface RemoteStatus {
   running: boolean;
@@ -358,6 +368,7 @@ export const api = {
   stopRemoteServer: () => tauriInvoke<RemoteStatus>("stop_remote_server"),
   getRemoteStatus: () => tauriInvoke<RemoteStatus>("get_remote_status"),
   writePhoneQrSlide: () => tauriInvoke<string>("write_phone_qr_slide"),
+  matchHeardSong: (heard: string) => tauriInvoke<HeardSong[]>("match_heard_song", { heard }),
   translateCaption: (text: string, source: string | null, target: string) =>
     tauriInvoke<string>("translate_caption", { text, source, target }),
   closeOutputWindow: () => tauriInvoke<void>("close_output_window"),

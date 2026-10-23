@@ -21,6 +21,13 @@ pub fn list_songs(
     })
 }
 
+/// Songs whose lyrics or title match what was just heard, most likely first.
+#[tauri::command]
+pub fn match_heard_song(state: State<AppState>, heard: String) -> Result<Vec<crate::songs::heard::HeardSong>, String> {
+    let db = lock_db(state.db.lock().map_err(|e| e.to_string())?);
+    db.with_conn(|conn| crate::songs::heard::match_heard(conn, &heard))
+}
+
 #[tauri::command]
 pub fn get_song(state: State<AppState>, id: String) -> Result<SongDetail, String> {
     let db = lock_db(state.db.lock().map_err(|e| e.to_string())?);

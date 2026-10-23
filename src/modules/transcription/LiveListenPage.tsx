@@ -18,6 +18,8 @@ import { TranscriptionAudioMeter } from "@/modules/transcription/TranscriptionAu
 import { TranscriptionElapsed } from "@/modules/transcription/TranscriptionElapsed";
 import { ListenSetupStrip } from "@/modules/transcription/ListenSetupStrip";
 import { SermonNotesDialog } from "@/modules/transcription/SermonNotesDialog";
+import { SongSuggestionCard } from "@/modules/transcription/SongSuggestionCard";
+import { useSongFollowStore } from "@/stores/songFollowStore";
 import { isWaitingNotesReference } from "@/lib/transcription/sermonNotes";
 import { canStepVerse } from "@/lib/transcription/verseSession";
 import { useLiveNavigationStore } from "@/stores/liveNavigationStore";
@@ -25,6 +27,7 @@ import { useBibleStore } from "@/stores/bibleStore";
 import {
   FileText,
   Mic,
+  Music,
   MicOff,
   Pause,
   Play,
@@ -90,6 +93,8 @@ export function LiveListenPage() {
   const sermonNotes = useTranscriptionStore((s) => s.sermonNotes);
   const loadSermonNotes = useTranscriptionStore((s) => s.loadSermonNotes);
   const clearSermonNotes = useTranscriptionStore((s) => s.clearSermonNotes);
+  const followingSongs = useSongFollowStore((s) => s.following);
+  const setFollowingSongs = useSongFollowStore((s) => s.setFollowing);
 
   const program = usePresentationStore((s) => s.program);
   const liveFollow = usePresentationStore((s) => s.liveFollow);
@@ -276,6 +281,16 @@ export function LiveListenPage() {
         <SuggestionsMuteToggle />
         <button
           type="button"
+          aria-pressed={followingSongs}
+          onClick={() => setFollowingSongs(!followingSongs)}
+          className={cn("control-btn", followingSongs && "border-violet-400/50 text-violet-200")}
+          title="Move song slides on as the lines are sung"
+        >
+          <Music className="h-3.5 w-3.5" />
+          {followingSongs ? "Following singing" : "Follow singing"}
+        </button>
+        <button
+          type="button"
           onClick={() => setShowNotesDialog(true)}
           className="control-btn"
           title="Queue the references in the preacher's notes"
@@ -386,6 +401,7 @@ export function LiveListenPage() {
               </span>
             </div>
             <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+              <SongSuggestionCard />
               {activeSuggestions.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-10 text-center text-[var(--color-subtle)]">
                   <MicOff className="mb-2 h-8 w-8 opacity-40" />
