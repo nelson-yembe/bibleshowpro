@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { BIBLE_BOOKS, chapterOptions, verseOptions } from "@/lib/bibleBooks";
+import { useBibleStore } from "@/stores/bibleStore";
 
 export interface PassagePickerProps {
   loading: boolean;
@@ -21,6 +22,18 @@ export const PassagePicker = memo(function PassagePicker({
   const [book, setBook] = useState("John");
   const [chapter, setChapter] = useState("3");
   const [verse, setVerse] = useState("16");
+
+  // Follow the active verse, wherever it was chosen (this page, Live Listen, the phone remote).
+  const activeBook = useBibleStore((s) => s.chapterVerses[s.activeVerseIndex]?.book_number);
+  const activeChapter = useBibleStore((s) => s.chapterVerses[s.activeVerseIndex]?.chapter);
+  const activeVerse = useBibleStore((s) => s.chapterVerses[s.activeVerseIndex]?.verse);
+  useEffect(() => {
+    const name = BIBLE_BOOKS.find((b) => b.number === activeBook)?.name;
+    if (!name || activeChapter == null || activeVerse == null) return;
+    setBook(name);
+    setChapter(String(activeChapter));
+    setVerse(String(activeVerse));
+  }, [activeBook, activeChapter, activeVerse]);
 
   const chapters = useMemo(() => chapterOptions(book), [book]);
   const verses = useMemo(() => verseOptions(book, chapter), [book, chapter]);

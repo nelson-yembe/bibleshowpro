@@ -8,7 +8,6 @@ import {
 import { SlideThumbnail } from "@/components/presentation/SlideThumbnail";
 import {
   buildDisplayOptions,
-  defaultLocalDisplayOverrides,
   type LocalDisplayOverrides,
 } from "@/components/presentation/displayOptions";
 import type { DisplayOptions } from "@/components/presentation/displayOptions";
@@ -31,11 +30,20 @@ import { usePresentationStore } from "@/stores/presentationStore";
 import { useServiceStore } from "@/stores/serviceStore";
 import { useThemeStore } from "@/stores/themeStore";
 import { useLowerThirdStore } from "@/stores/lowerThirdStore";
+import { useBibleViewStore, type BibleViewMode } from "@/stores/bibleViewStore";
 import type { VerseResult } from "@/lib/tauri";
-import { lookupVerseInTranslation, lookupVersePairInTranslations } from "@/lib/bibleCompare";
-import type { VerseLayout } from "@/engine/scene";
+import {
+  goToBibleSlide,
+  prepareBibleGoLive,
+  presentBibleVerse,
+  runBibleSearch,
+  selectBibleSearchResult,
+  selectBibleVerse,
+  setBibleViewMode,
+  stepBibleVerse,
+} from "@/lib/bibleSession";
 
-const viewTabs = [
+const viewTabs: { value: BibleViewMode; label: string }[] = [
   { value: "fullscreen", label: "Fullscreen" },
   { value: "lower_third", label: "Lower Third" },
   { value: "compare", label: "Compare" },
@@ -49,28 +57,24 @@ export function BibleSearchPage() {
   const selectedTranslationId = useBibleStore((s) => s.selectedTranslationId);
   const selectedTranslationIds = useBibleStore((s) => s.selectedTranslationIds);
   const translations = useBibleStore((s) => s.translations);
-  const setActiveVerseIndex = useBibleStore((s) => s.setActiveVerseIndex);
-  const loadChapterForVerse = useBibleStore((s) => s.loadChapterForVerse);
   const setQuery = useBibleStore((s) => s.setQuery);
-  const search = useBibleStore((s) => s.search);
 
   const liveOnAir = usePresentationStore(
     (s) => s.liveFollow && !!s.program && s.program.type !== "blackout",
   );
-  const preparePreviewForGoLive = usePresentationStore((s) => s.preparePreviewForGoLive);
 
-  const stageVerses = useBibleStagingStore((s) => s.stageVerses);
-  const stageVerseComparison = useBibleStagingStore((s) => s.stageVerseComparison);
   const stagedScene = useBibleStagingStore((s) => s.stagedScene);
   const { activePlan, addItem, ensureActivePlan } = useServiceStore();
   const activeTheme = useThemeStore((s) => s.activeTheme);
   const themeRevision = useThemeStore((s) => s.themeRevision);
 
-  const [viewMode, setViewMode] = useState("fullscreen");
-  const [selectedGroup, setSelectedGroup] = useState<VerseResult[] | null>(null);
-  const [selectedVerseId, setSelectedVerseId] = useState<number | null>(null);
-  const [localDisplay, setLocalDisplay] = useState<LocalDisplayOverrides>(defaultLocalDisplayOverrides);
-  const [activeSlideIndex, setActiveSlideIndex] = useState(0);
+  // Selection lives in a store so the phone remote and this page show one selection.
+  const viewMode = useBibleViewStore((s) => s.viewMode);
+  const selectedGroup = useBibleViewStore((s) => s.selectedGroup);
+  const selectedVerseId = useBibleViewStore((s) => s.selectedVerseId);
+  const localDisplay = useBibleViewStore((s) => s.localDisplay);
+  const setLocalDisplay = useBibleViewStore((s) => s.setLocalDisplay);
+  const activeSlideIndex = useBibleViewStore((s) => s.activeSlideIndex);
   const previewRef = useRef<HTMLDivElement>(null);
   const [highlightMenu, setHighlightMenu] = useState<HighlightMenuState | null>(null);
   const [lowerThirdSettingsOpen, setLowerThirdSettingsOpen] = useState(false);
@@ -120,7 +124,7 @@ export function BibleSearchPage() {
     if (Object.keys(localPatch).length > 0) {
       setLocalDisplay((prev) => ({ ...prev, ...localPatch }));
     }
-  }, []);
+  }, [setLocalDisplay]);
 
   const verseLayout = viewMode === "lower_third" ? "lower_third" : "fullscreen";
 
@@ -129,43 +133,10 @@ export function BibleSearchPage() {
     return selectedTranslationId ? [selectedTranslationId] : [];
   }, [selectedTranslationIds, selectedTranslationId]);
 
-  const presentActiveVerse = useCallback(
-    async (verse: VerseResult, layoutOverride?: VerseLayout) => {
-      const layout = layoutOverride ?? verseLayout;
-      const ids =
-        useBibleStore.getState().selectedTranslationIds.length > 0
-          ? useBibleStore.getState().selectedTranslationIds
-          : useBibleStore.getState().selectedTranslationId
-            ? [useBibleStore.getState().selectedTranslationId!]
-            : [];
-
-      if (ids.length >= 2) {
-        const { primary, secondary } = await lookupVersePairInTranslations(verse, ids[0], ids[1]);
-        if (primary && secondary) {
-          stageVerseComparison(primary, secondary, effectiveTheme, layout, presentationOverlaysRef.current);
-          return;
-        }
-        if (primary) {
-          stageVerses([primary], effectiveTheme, layout, presentationOverlaysRef.current);
-          return;
-        }
-      }
-
-      const primaryId = ids[0];
-      const resolved = primaryId ? await lookupVerseInTranslation(verse, primaryId) : verse;
-      stageVerses([resolved ?? verse], effectiveTheme, layout, presentationOverlaysRef.current);
-    },
-    [stageVerses, stageVerseComparison, effectiveTheme, verseLayout],
-  );
-
-  const presentActiveVerseRef = useRef(presentActiveVerse);
-  presentActiveVerseRef.current = presentActiveVerse;
-
   useEffect(() => {
     if (!isLowerThirdMode) return;
     const active = useBibleStore.getState().getActiveVerse();
-    if (active) void presentActiveVerseRef.current(active);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- presentActiveVerse read via ref
+    if (active) void presentBibleVerse(active);
   }, [activeTheme.lowerThird, themeRevision, isLowerThirdMode]);
 
   // Re-stage locally when view mode / layout / theme changes (no presentationStore reads).
@@ -173,7 +144,7 @@ export function BibleSearchPage() {
     const layout = verseLayout;
     const active = useBibleStore.getState().getActiveVerse();
     if (active) {
-      void presentActiveVerseRef.current(active, layout);
+      void presentBibleVerse(active, layout);
       return;
     }
     const staged = useBibleStagingStore.getState().stagedScene;
@@ -200,88 +171,18 @@ export function BibleSearchPage() {
         await store.reloadActiveChapterForPrimary();
       }
       const active = useBibleStore.getState().getActiveVerse();
-      if (active) await presentActiveVerseRef.current(active);
+      if (active) await presentBibleVerse(active);
     };
     void refreshForTranslations();
   }, [resolvedTranslationIds.join(",")]);
 
-  const applyVerseSelection = useCallback((verse: VerseResult, index?: number) => {
-    setSelectedGroup([verse]);
-    setSelectedVerseId(verse.id);
-    if (index !== undefined) setActiveSlideIndex(index);
-    setLocalDisplay((o) => ({
-      ...o,
-      verseStart: String(verse.verse),
-      verseEnd: String(verse.verse),
-    }));
-    void presentActiveVerseRef.current(verse);
-  }, []);
-
-  const sendToPreview = useCallback(
-    async (verse: VerseResult) => {
-      await loadChapterForVerse(verse);
-      const index = useBibleStore.getState().activeVerseIndex;
-      const active = useBibleStore.getState().chapterVerses[index] ?? verse;
-      applyVerseSelection(active, index);
-    },
-    [loadChapterForVerse, applyVerseSelection],
-  );
-
-  const goToVerseIndex = useCallback(
-    (index: number) => {
-      const verses = useBibleStore.getState().chapterVerses;
-      if (index < 0 || index >= verses.length) return;
-      setActiveVerseIndex(index);
-      const active = verses[index];
-      applyVerseSelection(active, index);
-    },
-    [setActiveVerseIndex, applyVerseSelection],
-  );
-
-  const sidebarHandlersRef = useRef({
-    applyVerseSelection,
-    sendToPreview,
-    goToVerseIndex,
-    addToService: async (_reference: string, _verses?: VerseResult[]) => {},
-  });
-  sidebarHandlersRef.current.applyVerseSelection = applyVerseSelection;
-  sidebarHandlersRef.current.sendToPreview = sendToPreview;
-  sidebarHandlersRef.current.goToVerseIndex = goToVerseIndex;
-
-  const handleVerseFound = useCallback((verse: VerseResult) => {
-    sidebarHandlersRef.current.applyVerseSelection(
-      verse,
-      useBibleStore.getState().activeVerseIndex,
-    );
-  }, []);
-
   const handleSelectVerseIndex = useCallback((index: number) => {
-    sidebarHandlersRef.current.goToVerseIndex(index);
+    selectBibleVerse(index);
   }, []);
 
   const handleSelectSearchResult = useCallback((verse: VerseResult) => {
-    void sidebarHandlersRef.current.sendToPreview(verse);
+    void selectBibleSearchResult(verse);
   }, []);
-
-  const goToAdjacentVerse = useCallback(
-    (delta: number) => {
-      const { chapterVerses, activeVerseIndex, groups } = useBibleStore.getState();
-      if (chapterVerses.length > 0) {
-        goToVerseIndex(activeVerseIndex + delta);
-        return;
-      }
-
-      const groupsList =
-        groups.length > 0 ? groups : selectedGroup ? [selectedGroup] : [];
-      const nextIndex = activeSlideIndex + delta;
-      if (nextIndex < 0 || nextIndex >= groupsList.length) return;
-      const group = groupsList[nextIndex];
-      if (!group?.[0]) return;
-      void sendToPreview(group[0]);
-      setActiveSlideIndex(nextIndex);
-    },
-    [goToVerseIndex, sendToPreview, selectedGroup, activeSlideIndex],
-  );
 
   const selectedAbbr =
     translations.find((t) => t.id === selectedTranslationId)?.abbreviation ?? "ESV";
@@ -320,34 +221,18 @@ export function BibleSearchPage() {
 
   useEffect(() => {
     useLiveNavigationStore.getState().register({
-      onPrev: () => goToAdjacentVerse(-1),
-      onNext: () => goToAdjacentVerse(1),
+      onPrev: () => stepBibleVerse(-1),
+      onNext: () => stepBibleVerse(1),
       canPrev: navigableLength > 0 && navigableIndex > 0,
       canNext: navigableLength > 0 && navigableIndex < navigableLength - 1,
       label: "Bible slides",
-      beforeGoLive: async () => {
-        useBibleStagingStore.getState().applyOverlays(presentationOverlaysRef.current);
-        const scene = useBibleStagingStore.getState().stagedScene;
-        if (scene) {
-          preparePreviewForGoLive(scene, "bible");
-          return;
-        }
-        const active = useBibleStore.getState().getActiveVerse();
-        if (active) await presentActiveVerseRef.current(active);
-      },
+      beforeGoLive: prepareBibleGoLive,
     });
     return () => useLiveNavigationStore.getState().unregister();
-  }, [goToAdjacentVerse, navigableLength, navigableIndex, preparePreviewForGoLive]);
+  }, [navigableLength, navigableIndex]);
 
   const goToSlide = (index: number) => {
-    if (inChapterMode) {
-      goToVerseIndex(index);
-      return;
-    }
-    const group = slideGroups[index];
-    if (!group?.[0]) return;
-    void sendToPreview(group[0]);
-    setActiveSlideIndex(index);
+    void goToBibleSlide(index);
   };
 
   const handleSplit = async () => {
@@ -355,9 +240,7 @@ export function BibleSearchPage() {
     const ref = selectedGroup[0];
     const q = `${ref.book_name} ${ref.chapter}:${displayOptions.verseStart}-${displayOptions.verseEnd}`;
     setQuery(q);
-    const ok = await search(q);
-    const verse = useBibleStore.getState().getActiveVerse();
-    if (ok && verse) handleVerseFound(verse);
+    await runBibleSearch(q);
   };
 
   const expandVerseRange = () => {
@@ -378,10 +261,12 @@ export function BibleSearchPage() {
     [addItem, ensureActivePlan],
   );
 
-  sidebarHandlersRef.current.addToService = addToService;
+  // The sidebar is memoised; hand it a stable callback that reaches the current plan.
+  const addToServiceRef = useRef(addToService);
+  addToServiceRef.current = addToService;
 
   const handleAddToService = useCallback((reference: string, verses?: VerseResult[]) => {
-    void sidebarHandlersRef.current.addToService(reference, verses);
+    void addToServiceRef.current(reference, verses);
   }, []);
 
   const handlePreviewContextMenu = (event: MouseEvent) => {
@@ -405,7 +290,6 @@ export function BibleSearchPage() {
       <div className="flex min-h-0 flex-1">
         <BibleSearchSidebar
           selectedVerseId={selectedVerseId}
-          onVerseFound={handleVerseFound}
           onSelectVerseIndex={handleSelectVerseIndex}
           onSelectSearchResult={handleSelectSearchResult}
           onAddToService={handleAddToService}
@@ -419,23 +303,7 @@ export function BibleSearchPage() {
                 <button
                   key={tab.value}
                   type="button"
-                  onClick={() => {
-                    const layout = tab.value === "lower_third" ? "lower_third" : "fullscreen";
-                    setViewMode(tab.value);
-                    const active = useBibleStore.getState().getActiveVerse();
-                    if (active) {
-                      void presentActiveVerse(active, layout);
-                      return;
-                    }
-                    if (tab.value === "compare" || tab.value === "reader") return;
-                    const stored = useBibleStagingStore.getState().stagedScene;
-                    const verses = stored?.content.verses;
-                    if (!verses?.length) return;
-                    const theme = layout === "lower_third" ? buildLowerThirdTheme(activeTheme) : activeTheme;
-                    useBibleStagingStore
-                      .getState()
-                      .stageVerses(verses, theme, layout, presentationOverlaysRef.current);
-                  }}
+                  onClick={() => setBibleViewMode(tab.value)}
                   className={cn(
                     "rounded-md px-3 py-1.5 text-[11px] font-medium transition-colors",
                     viewMode === tab.value

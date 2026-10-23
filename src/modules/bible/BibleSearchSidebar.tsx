@@ -4,6 +4,7 @@ import { Pill } from "@/components/ui/pill";
 import { ChapterResultsPanel } from "@/modules/bible/ChapterResultsPanel";
 import { PassagePicker } from "@/modules/bible/PassagePicker";
 import { cn } from "@/lib/utils";
+import { goToBiblePassage, runBibleSearch } from "@/lib/bibleSession";
 import type { CatalogEntryView, VerseResult } from "@/lib/tauri";
 import { useBibleStore } from "@/stores/bibleStore";
 import { useBibleVersionsStore } from "@/stores/bibleVersionsStore";
@@ -12,7 +13,6 @@ const MIN_INSTALLED_VERSES = 1000;
 
 export interface BibleSearchSidebarProps {
   selectedVerseId: number | null;
-  onVerseFound: (verse: VerseResult) => void;
   onSelectVerseIndex: (index: number) => void;
   onSelectSearchResult: (verse: VerseResult) => void;
   onAddToService: (reference: string, verses?: VerseResult[]) => void;
@@ -24,7 +24,6 @@ export interface BibleSearchSidebarProps {
  */
 export const BibleSearchSidebar = memo(function BibleSearchSidebar({
   selectedVerseId,
-  onVerseFound,
   onSelectVerseIndex,
   onSelectSearchResult,
   onAddToService,
@@ -40,7 +39,6 @@ export const BibleSearchSidebar = memo(function BibleSearchSidebar({
   const chapterLabel = useBibleStore((s) => s.chapterLabel);
   const activeVerseIndex = useBibleStore((s) => s.activeVerseIndex);
   const setQuery = useBibleStore((s) => s.setQuery);
-  const search = useBibleStore((s) => s.search);
   const toggleTranslationSelection = useBibleStore((s) => s.toggleTranslationSelection);
 
   const catalog = useBibleVersionsStore((s) => s.catalog);
@@ -115,15 +113,8 @@ export const BibleSearchSidebar = memo(function BibleSearchSidebar({
   const inChapterMode = chapterVerses.length > 0;
   const resultCount = inChapterMode ? chapterVerses.length : resultVerses.length;
 
-  const runSearch = useCallback(
-    async (q?: string) => {
-      const ok = await search(q, searchOptions);
-      const verse = useBibleStore.getState().getActiveVerse();
-      if (verse) onVerseFound(verse);
-      return ok;
-    },
-    [search, searchOptions, onVerseFound],
-  );
+  // The shared session selects and stages what it finds, here and on the phone remote.
+  const runSearch = useCallback((q?: string) => runBibleSearch(q, searchOptions), [searchOptions]);
 
   const handleSearch = useCallback(() => {
     void runSearch();
@@ -131,11 +122,9 @@ export const BibleSearchSidebar = memo(function BibleSearchSidebar({
 
   const handleGoToPassage = useCallback(
     (book: string, chapter: string, verse: string) => {
-      const q = `${book} ${chapter}:${verse}`;
-      setQuery(q);
-      void runSearch(q);
+      void goToBiblePassage(book, chapter, verse, searchOptions);
     },
-    [setQuery, runSearch],
+    [searchOptions],
   );
 
   useEffect(() => {
