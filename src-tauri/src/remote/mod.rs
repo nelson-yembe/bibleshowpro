@@ -4,6 +4,7 @@
 //! It is off until the operator turns it on. It serves two built-in pages and the live
 //! words on screen; it never serves files from the PC.
 
+mod scripture;
 mod view;
 
 use axum::extract::State;
@@ -18,9 +19,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::convert::Infallible;
 use std::net::{IpAddr, Ipv4Addr};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Listener};
+use crate::bible::search::VerseResult;
+use rusqlite::Connection;
+use tauri::{AppHandle, Emitter, Listener, Manager};
 use tokio::sync::{broadcast, oneshot};
 
 pub const DEFAULT_PORT: u16 = 4316;
@@ -271,9 +275,22 @@ pub async fn start(app: AppHandle, port: u16) -> Result<RemoteStatus, String> {
         .await
         .map_err(|e| format!("Port {port} is not available ({e}). Another program may be using it; choose another port."))?;
     let pin = new_pin();
+    let bible = {
+        let state = app.state::<crate::AppState>();
+        let path = state.db.lock().map_err(|e| e.to_string())?.path.clone();
+        path
+    };
+    let command_app = app.clone();
     let router = router(
         pin.clone(),
-        Arc::new(move |action: &str| app.emit_to("main", "remote-command", action).is_ok()),
+        Services {
+            run: Arc::new(move |action: &str| command_app.emit_to("main", "remote-command", action).is_ok()),
+            bible,
+            show: Arc::new(move |verses: &[VerseResult], live: bool| {
+                app.emit_to("main", "remote-scripture", serde_json::json!({ "verses": verses, "live": live }))
+                    .is_ok()
+            }),
+        },
     );
 
     let (stop, stopped) = oneshot::channel::<()>();
@@ -299,10 +316,46 @@ pub fn stop() {
 
 /// Hands a remote command to the operator's window; false when it is not there.
 type CommandSink = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+/// Puts verses chosen on the remote into the operator's preview, or straight on air.
+type ShowSink = Arc<dyn Fn(&[VerseResult], bool) -> bool + Send + Sync>;
+
+/// What the remote can reach in the app.
+struct Services {
+    run: CommandSink,
+    /// The app database, opened read-only for each scripture request.
+    bible: PathBuf,
+    show: ShowSink,
+}
 
 struct ServerState {
     pin: PinGuard,
-    run: CommandSink,
+    services: Services,
+}
+
+impl ServerState {
+    fn authorize(&self, pin: &str) -> Result<(), StatusCode> {
+        match self.pin.check(pin) {
+            Err(()) => Err(StatusCode::TOO_MANY_REQUESTS),
+            Ok(false) => Err(StatusCode::UNAUTHORIZED),
+            Ok(true) => Ok(()),
+        }
+    }
+
+    /// Run a scripture query off the async threads; a database error comes back as text.
+    async fn read<T: Send + 'static>(
+        self: &Arc<Self>,
+        query: impl FnOnce(&Connection) -> Result<T, String> + Send + 'static,
+    ) -> Result<T, (StatusCode, String)> {
+        let path = self.services.bible.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .map_err(|e| e.to_string())?;
+            query(&conn)
+        })
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|message| (StatusCode::NOT_FOUND, message))
+    }
 }
 
 /// The remote's PIN, and how many wrong ones have been tried against it.
@@ -337,13 +390,81 @@ impl PinGuard {
     }
 }
 
-fn router(pin: String, run: CommandSink) -> Router {
+fn router(pin: String, services: Services) -> Router {
     Router::new()
         .route("/", get(|| async { Html(PHONE_PAGE) }))
         .route("/remote", get(|| async { Html(REMOTE_PAGE) }))
         .route("/events", get(events))
         .route("/api/command", post(command))
-        .with_state(Arc::new(ServerState { pin: PinGuard::new(pin), run }))
+        .route("/api/translations", post(list_translations))
+        .route("/api/scripture", post(find_scripture))
+        .route("/api/show", post(show_scripture))
+        .with_state(Arc::new(ServerState { pin: PinGuard::new(pin), services }))
+}
+
+#[derive(Deserialize)]
+struct Signed {
+    pin: String,
+}
+
+async fn list_translations(
+    State(state): State<Arc<ServerState>>,
+    Json(request): Json<Signed>,
+) -> Result<Json<Vec<scripture::TranslationView>>, (StatusCode, String)> {
+    state.authorize(&request.pin).map_err(|code| (code, String::new()))?;
+    state.read(scripture::translations).await.map(Json)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ScriptureRequest {
+    pin: String,
+    translation: String,
+    #[serde(default)]
+    query: Option<String>,
+    #[serde(default)]
+    book_number: Option<i32>,
+    #[serde(default)]
+    chapter: Option<i32>,
+}
+
+/// A reference or words typed on the phone, or a chapter to step into.
+async fn find_scripture(
+    State(state): State<Arc<ServerState>>,
+    Json(request): Json<ScriptureRequest>,
+) -> Result<Json<scripture::Lookup>, (StatusCode, String)> {
+    state.authorize(&request.pin).map_err(|code| (code, String::new()))?;
+    let ScriptureRequest { translation, query, book_number, chapter, .. } = request;
+    state
+        .read(move |conn| match (book_number, chapter, query) {
+            (Some(book), Some(chapter), _) => scripture::chapter(conn, &translation, book, chapter),
+            (_, _, Some(query)) if !query.trim().is_empty() => scripture::lookup(conn, &query, &translation),
+            _ => Err("Type a reference like John 3:16, or words from a verse.".into()),
+        })
+        .await
+        .map(Json)
+}
+
+#[derive(Deserialize)]
+struct ShowRequest {
+    pin: String,
+    live: bool,
+    #[serde(flatten)]
+    passage: scripture::Passage,
+}
+
+async fn show_scripture(
+    State(state): State<Arc<ServerState>>,
+    Json(request): Json<ShowRequest>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    state.authorize(&request.pin).map_err(|code| (code, String::new()))?;
+    let passage = request.passage;
+    let verses = state.read(move |conn| scripture::passage(conn, &passage)).await?;
+    if (state.services.show)(&verses, request.live) {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err((StatusCode::SERVICE_UNAVAILABLE, "The app did not respond.".into()))
+    }
 }
 
 async fn events() -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
@@ -367,10 +488,8 @@ struct Command {
 }
 
 async fn command(State(state): State<Arc<ServerState>>, Json(command): Json<Command>) -> StatusCode {
-    match state.pin.check(&command.pin) {
-        Err(()) => return StatusCode::TOO_MANY_REQUESTS,
-        Ok(false) => return StatusCode::UNAUTHORIZED,
-        Ok(true) => {}
+    if let Err(code) = state.authorize(&command.pin) {
+        return code;
     }
     // "check" only signs the remote in.
     if command.action == "check" {
@@ -379,7 +498,7 @@ async fn command(State(state): State<Arc<ServerState>>, Json(command): Json<Comm
     if !COMMANDS.contains(&command.action.as_str()) {
         return StatusCode::BAD_REQUEST;
     }
-    if (state.run)(&command.action) {
+    if (state.services.run)(&command.action) {
         StatusCode::NO_CONTENT
     } else {
         StatusCode::SERVICE_UNAVAILABLE
@@ -421,12 +540,21 @@ mod tests {
     async fn serves_phones_and_the_remote() {
         let ran = Arc::new(Mutex::new(Vec::<String>::new()));
         let log = ran.clone();
+        let shown = Arc::new(Mutex::new(Vec::<(Vec<String>, bool)>::new()));
+        let show_log = shown.clone();
         let app = router(
             "424242".into(),
-            Arc::new(move |action: &str| {
-                log.lock().unwrap().push(action.to_string());
-                true
-            }),
+            Services {
+                run: Arc::new(move |action: &str| {
+                    log.lock().unwrap().push(action.to_string());
+                    true
+                }),
+                bible: scripture::test_bible(),
+                show: Arc::new(move |verses: &[VerseResult], live: bool| {
+                    show_log.lock().unwrap().push((verses.iter().map(|v| v.reference.clone()).collect(), live));
+                    true
+                }),
+            },
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
@@ -464,6 +592,35 @@ mod tests {
         assert_eq!(send("424242", "shutdown-pc").await.unwrap().status(), 400);
         assert_eq!(send("111111", "blackout").await.unwrap().status(), 401);
         assert_eq!(*ran.lock().unwrap(), vec!["next"]);
+
+        // Scripture: translations, a reference, then the chosen verses on air.
+        let post = |path: &str, body: serde_json::Value| client.post(format!("{base}{path}")).json(&body).send();
+        let translations: serde_json::Value =
+            post("/api/translations", serde_json::json!({ "pin": "424242" })).await.unwrap().json().await.unwrap();
+        assert_eq!(translations[0]["abbreviation"], "KJV");
+        let found: serde_json::Value = post(
+            "/api/scripture",
+            serde_json::json!({ "pin": "424242", "translation": "kjv", "query": "John 3:16" }),
+        )
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        assert_eq!(found["title"], "John 3");
+        assert_eq!(found["selected"], serde_json::json!([16, 16]));
+        let show = post(
+            "/api/show",
+            serde_json::json!({ "pin": "424242", "live": true, "translation": "kjv", "bookNumber": 43, "chapter": 3, "start": 16, "end": 17 }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(show.status(), 204);
+        assert_eq!(*shown.lock().unwrap(), vec![(vec!["John 3:16".to_string(), "John 3:17".to_string()], true)]);
+        let refused = post("/api/scripture", serde_json::json!({ "pin": "000000", "translation": "kjv", "query": "John 3:16" }))
+            .await
+            .unwrap();
+        assert_eq!(refused.status(), 401);
     }
 
     #[test]

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { remoteAction, runLiveAction } from "@/lib/liveActions";
+import { remoteAction, runLiveAction, showRemoteScripture } from "@/lib/liveActions";
+import type { VerseResult } from "@/lib/tauri";
 import { keyTargetOf, resolveLiveShortcut } from "@/lib/liveShortcuts";
 
 /** Global live shortcuts; the key map lives in `lib/liveShortcuts`. */
@@ -30,22 +31,28 @@ export function useLiveKeyboard(pathname: string) {
 /** Commands from the phone remote run exactly like the operator's keys. */
 export function useRemoteCommands() {
   useEffect(() => {
-    let stop: (() => void) | undefined;
+    const stops: (() => void)[] = [];
     let cancelled = false;
-    void listen<string>("remote-command", (event) => {
+    const keep = (unlisten: () => void) => {
+      if (cancelled) unlisten();
+      else stops.push(unlisten);
+    };
+    listen<string>("remote-command", (event) => {
       const action = remoteAction(event.payload);
       if (action) runLiveAction(action);
     })
-      .then((unlisten) => {
-        if (cancelled) unlisten();
-        else stop = unlisten;
-      })
+      .then(keep)
       .catch(() => {
         // Browser dev server: no remote.
       });
+    listen<{ verses: VerseResult[]; live: boolean }>("remote-scripture", (event) => {
+      void showRemoteScripture(event.payload.verses, event.payload.live);
+    })
+      .then(keep)
+      .catch(() => {});
     return () => {
       cancelled = true;
-      stop?.();
+      stops.forEach((stop) => stop());
     };
   }, []);
 }
