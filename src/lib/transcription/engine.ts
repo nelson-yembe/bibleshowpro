@@ -59,8 +59,7 @@ export interface TranscriptionEngine {
   stop(): void;
 }
 
-export const ENGINE_WEB_SPEECH = "web-speech";
-/** Kept under the old id so persisted operator preferences survive the rename. */
-export const ENGINE_WEB_SPEECH_BALANCED = "web-speech-offline";
+/** Removed browser-speech engines; persisted choices of these migrate to Whisper. */
+export const LEGACY_ENGINE_IDS = ["web-speech", "web-speech-offline"];
 export const ENGINE_GEMINI = "gemini-transcribe-live";
 export const ENGINE_WHISPER = "whisper-local";

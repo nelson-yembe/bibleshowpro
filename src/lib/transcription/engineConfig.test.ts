@@ -5,7 +5,7 @@ import {
   toEngineConfig,
   type StoredEngineConfig,
 } from "@/lib/transcription/engineConfig";
-import { ENGINE_GEMINI, ENGINE_WEB_SPEECH, ENGINE_WHISPER } from "@/lib/transcription/engine";
+import { ENGINE_GEMINI, ENGINE_WHISPER } from "@/lib/transcription/engine";
 
 function stored(overrides: Partial<StoredEngineConfig> = {}): StoredEngineConfig {
   return { ...EMPTY_ENGINE_CONFIG, ...overrides };
@@ -54,7 +54,7 @@ describe("engineConfigError", () => {
     expect(engineConfigError(ENGINE_WHISPER, stored({ whisperModelPath: "m.bin" }))).toBeNull();
   });
 
-  it("never blocks the browser engine, which needs no credentials", () => {
-    expect(engineConfigError(ENGINE_WEB_SPEECH, stored())).toBeNull();
+  it("has nothing to say about an engine it does not configure", () => {
+    expect(engineConfigError("some-engine", stored())).toBeNull();
   });
 });

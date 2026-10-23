@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ENGINE_GEMINI, ENGINE_WEB_SPEECH, ENGINE_WHISPER } from "@/lib/transcription/engine";
+import { ENGINE_GEMINI, ENGINE_WHISPER } from "@/lib/transcription/engine";
 import { EMPTY_ENGINE_CONFIG, type StoredEngineConfig } from "@/lib/transcription/engineConfig";
 import { engineReadiness, migrateEngineChoice } from "@/lib/transcription/engineReadiness";
 import type { TranscriptionCapabilities, WhisperModelListing } from "@/lib/transcription/whisperModels";
@@ -47,7 +47,7 @@ function config(overrides: Partial<StoredEngineConfig> = {}): StoredEngineConfig
 }
 
 const ready = (engineId: string, cfg: StoredEngineConfig, models = MODELS, c = caps(true)) =>
-  engineReadiness({ engineId, desktop: true, config: cfg, models, capabilities: c });
+  engineReadiness({ engineId, config: cfg, models, capabilities: c });
 
 describe("engineReadiness — Whisper", () => {
   it("asks for the model recommended for this PC when none is chosen", () => {
@@ -99,7 +99,6 @@ describe("engineReadiness — Whisper", () => {
   it("falls back to a sensible recommendation without PC facts", () => {
     const result = engineReadiness({
       engineId: ENGINE_WHISPER,
-      desktop: false,
       config: config(),
       models: MODELS,
       capabilities: null,
@@ -114,39 +113,19 @@ describe("engineReadiness — other engines", () => {
     expect(ready(ENGINE_GEMINI, config({ geminiApiKey: "k" })).kind).toBe("ready");
   });
 
-  it("warns that browser speech is unreliable in the installed app", () => {
-    expect(ready(ENGINE_WEB_SPEECH, config()).kind).toBe("unreliable");
-  });
-
-  it("lets browser speech be ready in an actual browser", () => {
-    const result = engineReadiness({
-      engineId: ENGINE_WEB_SPEECH,
-      desktop: false,
-      config: config(),
-      models: MODELS,
-      capabilities: null,
-    });
-    expect(result.kind).toBe("ready");
+  it("calls an engine id it does not know unsupported rather than guessing", () => {
+    expect(ready("web-speech", config()).kind).toBe("unsupported");
   });
 });
 
 describe("migrateEngineChoice", () => {
-  it("moves desktop users off browser speech once", () => {
-    expect(migrateEngineChoice("web-speech", true, false)).toEqual({
-      modelId: ENGINE_WHISPER,
-      migrated: true,
-    });
-  });
-
-  it("treats the removed duplicate browser engine the same way", () => {
-    expect(migrateEngineChoice("web-speech-offline", true, false).modelId).toBe(ENGINE_WHISPER);
-  });
-
-  it("respects someone who switched back after the migration", () => {
-    expect(migrateEngineChoice("web-speech", true, true)).toEqual({
-      modelId: ENGINE_WEB_SPEECH,
-      migrated: false,
-    });
+  it("moves anyone still on the removed browser engines to Whisper", () => {
+    for (const legacy of ["web-speech", "web-speech-offline"]) {
+      expect(migrateEngineChoice(legacy, true, false)).toEqual({ modelId: ENGINE_WHISPER, migrated: true });
+      // Even someone who switched back after the first migration: the engine is gone.
+      expect(migrateEngineChoice(legacy, true, true).modelId).toBe(ENGINE_WHISPER);
+      expect(migrateEngineChoice(legacy, false, true).modelId).toBe(ENGINE_WHISPER);
+    }
   });
 
   it("gives new desktop installs Whisper", () => {
@@ -162,6 +141,6 @@ describe("migrateEngineChoice", () => {
 
   it("recovers from an engine id that no longer exists", () => {
     expect(migrateEngineChoice("something-old", true, true).modelId).toBe(ENGINE_WHISPER);
-    expect(migrateEngineChoice("something-old", false, true).modelId).toBe(ENGINE_WEB_SPEECH);
+    expect(migrateEngineChoice("something-old", false, true).modelId).toBe(ENGINE_WHISPER);
   });
 });

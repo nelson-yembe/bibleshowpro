@@ -50,7 +50,7 @@ import {
   ensureMicrophoneAccess,
   listAudioInputDevices,
   pickValidAudioDeviceId,
-} from "@/lib/transcription/webSpeechProvider";
+} from "@/lib/transcription/audioInput";
 import type { TranscriptionEngine } from "@/lib/transcription/engine";
 import {
   diagnoseListening,
@@ -63,7 +63,6 @@ import {
   isDesktopApp,
   migrateEngineChoice,
 } from "@/lib/transcription/engineReadiness";
-import { ENGINE_WEB_SPEECH } from "@/lib/transcription/engine";
 import {
   engineConfigError,
   loadStoredEngineConfig,
@@ -246,10 +245,8 @@ function engineSupported(modelId: string): boolean {
   return createTranscriptionEngine(modelId).isSupported();
 }
 
-function unsupportedMessage(modelId: string): string {
-  return modelId === ENGINE_WEB_SPEECH
-    ? "Browser speech recognition is not available on this PC. Switch to Whisper (offline) in Settings → Transcription Engine."
-    : "This PC is not letting the app capture audio. Check Windows Settings → Privacy & security → Microphone, and allow desktop apps.";
+function unsupportedMessage(): string {
+  return "This PC is not letting the app capture audio. Check Windows Settings → Privacy & security → Microphone, and allow desktop apps.";
 }
 
 function readMigrationFlag(): boolean {
@@ -832,7 +829,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
       audioDeviceLabel: audioInputLabel(devices, resolvedDeviceId),
     });
     if (!speechSupported) {
-      set({ error: unsupportedMessage(engineChoice.modelId), status: "unavailable" });
+      set({ error: unsupportedMessage(), status: "unavailable" });
     }
     if (engineChoice.migrated) writeMigrationFlag();
     if (prefs || engineChoice.migrated) persistPreferences(get());
@@ -892,11 +889,6 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
       if (result.clipping) {
         hints.push("Input level is very hot — lower gain to avoid clipping.");
       }
-      if (result.webSpeechUsesOsDefault) {
-        hints.push(
-          "If transcription stays silent while this meter moves, set the same device as Windows default input (Settings → Sound → Input).",
-        );
-      }
 
       set({
         preflightStatus: "ready",
@@ -925,7 +917,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
       speechSupported: supported,
       // A warning about the previous engine is stale once the operator picks another.
       ...(state.status === "unavailable"
-        ? { status: "idle" as const, error: supported ? null : unsupportedMessage(id) }
+        ? { status: "idle" as const, error: supported ? null : unsupportedMessage() }
         : {}),
     }));
     persistPreferences(get());
@@ -1060,7 +1052,7 @@ export const useTranscriptionStore = create<TranscriptionState>((set, get) => ({
     }
 
     if (!engine.isSupported()) {
-      set({ error: unsupportedMessage(state.modelId), status: "unavailable", speechSupported: false });
+      set({ error: unsupportedMessage(), status: "unavailable", speechSupported: false });
       return;
     }
 

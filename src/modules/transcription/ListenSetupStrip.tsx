@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { ChevronDown, Settings2, Wifi, WifiOff } from "lucide-react";
 import { ENGINE_WHISPER } from "@/lib/transcription/engine";
 import { normalizeLanguage } from "@/lib/transcription/engineConfig";
-import { engineReadiness, isDesktopApp } from "@/lib/transcription/engineReadiness";
+import { engineReadiness } from "@/lib/transcription/engineReadiness";
 import { TRANSCRIPTION_MODELS } from "@/lib/transcription/types";
 import {
   downloadPercent,
@@ -84,7 +84,7 @@ export function ListenSetupStrip({ disabled }: { disabled: boolean }) {
     });
   };
 
-  const readiness = engineReadiness({ engineId: modelId, desktop: isDesktopApp(), config, models, capabilities });
+  const readiness = engineReadiness({ engineId: modelId, config, models, capabilities });
   const engine = TRANSCRIPTION_MODELS.find((m) => m.id === modelId);
   const isWhisper = modelId === ENGINE_WHISPER;
   const downloaded = modelsForLanguage(models, config.whisperLanguage).filter((m) => m.downloaded);

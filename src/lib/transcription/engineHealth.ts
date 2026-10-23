@@ -48,7 +48,7 @@ function silentEngineRemedy(engineId: string): string {
   if (engineId === ENGINE_GEMINI) {
     return "Check the API key and that this machine can reach the internet.";
   }
-  return "Browser speech recognition is often unavailable inside the installed app — switch to Whisper (offline) or Gemini in Settings → Transcription Engine.";
+  return "Check the input level and the engine in Settings → Transcription Engine.";
 }
 
 export function faultMessage(

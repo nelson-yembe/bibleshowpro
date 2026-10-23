@@ -7,7 +7,7 @@ import {
   silenceWindowMs,
   STREAMING_SILENCE_MS,
 } from "@/lib/transcription/engineHealth";
-import { ENGINE_GEMINI, ENGINE_WEB_SPEECH, ENGINE_WHISPER } from "@/lib/transcription/engine";
+import { ENGINE_GEMINI, ENGINE_WHISPER } from "@/lib/transcription/engine";
 
 describe("diagnoseListening", () => {
   it("reports nothing once any transcript has arrived", () => {
@@ -48,17 +48,9 @@ describe("silenceWindowMs", () => {
 describe("faultMessage", () => {
   const whisper = { id: ENGINE_WHISPER, label: "Whisper (offline)" };
   const gemini = { id: ENGINE_GEMINI, label: "Gemini Transcribe Live" };
-  const webSpeech = { id: ENGINE_WEB_SPEECH, label: "Web Speech (Browser)" };
 
   it("points at Windows input for a dead microphone", () => {
-    expect(faultMessage("no-audio", webSpeech)).toMatch(/Windows Sound/);
-  });
-
-  it("offers the working alternatives when browser recognition goes quiet", () => {
-    const message = faultMessage("engine-silent", webSpeech) ?? "";
-    expect(message).toContain("Web Speech (Browser)");
-    expect(message).toMatch(/Whisper/);
-    expect(message).toMatch(/Gemini/);
+    expect(faultMessage("no-audio", whisper)).toMatch(/Windows Sound/);
   });
 
   it("never tells a Whisper operator to switch to Whisper", () => {
@@ -75,6 +67,6 @@ describe("faultMessage", () => {
   });
 
   it("says nothing when there is no fault", () => {
-    expect(faultMessage(null, webSpeech)).toBeNull();
+    expect(faultMessage(null, whisper)).toBeNull();
   });
 });

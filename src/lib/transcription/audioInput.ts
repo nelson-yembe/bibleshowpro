@@ -139,8 +139,6 @@ export interface AudioPreflightResult {
   hasSignal: boolean;
   clipping: boolean;
   error: AudioInputError | null;
-  /** Web Speech may still follow the OS default input on some systems. */
-  webSpeechUsesOsDefault: boolean;
 }
 
 export async function preflightAudioInput(
@@ -164,7 +162,6 @@ export async function preflightAudioInput(
         "no_device",
         "No microphone detected — plug in a mic or enable an input in Windows Sound settings, then click Refresh mics.",
       ),
-      webSpeechUsesOsDefault: true,
     };
   }
 
@@ -209,7 +206,6 @@ export async function preflightAudioInput(
             "no_signal",
             `No audio detected on “${deviceLabel}” — check Windows input level, cable, or choose another device. Speak or play audio into the mic during the test.`,
           ),
-      webSpeechUsesOsDefault: true,
     };
   } catch (err) {
     return {
@@ -220,41 +216,12 @@ export async function preflightAudioInput(
       hasSignal: false,
       clipping: false,
       error: mapGetUserMediaError(err),
-      webSpeechUsesOsDefault: true,
     };
   } finally {
     stream?.getTracks().forEach((track) => track.stop());
     if (context) {
       await context.close().catch(() => undefined);
     }
-  }
-}
-
-export function mapSpeechRecognitionError(error: string, message?: string): AudioInputError {
-  switch (error) {
-    case "not-allowed":
-    case "service-not-allowed":
-      return new AudioInputError(
-        "permission_denied",
-        "Speech recognition blocked — allow microphone access for Bible Show Pro in Windows privacy settings.",
-      );
-    case "audio-capture":
-      return new AudioInputError(
-        "device_unavailable",
-        "Speech engine cannot capture audio — confirm the selected mic works in the preflight test and is set as Windows default input.",
-      );
-    case "network":
-      return new AudioInputError(
-        "unknown",
-        "Network error — the Web Speech model requires internet on this PC.",
-      );
-    case "no-speech":
-      return new AudioInputError(
-        "no_signal",
-        "No speech detected — speak closer to the mic or raise input gain in Windows Sound settings.",
-      );
-    default:
-      return new AudioInputError("unknown", message || error || "Speech recognition error.");
   }
 }
 

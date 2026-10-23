@@ -5,7 +5,7 @@
  * answers the question before they press Start, in one sentence with one action.
  */
 
-import { ENGINE_GEMINI, ENGINE_WEB_SPEECH, ENGINE_WHISPER } from "@/lib/transcription/engine";
+import { ENGINE_GEMINI, ENGINE_WHISPER, LEGACY_ENGINE_IDS } from "@/lib/transcription/engine";
 import type { StoredEngineConfig, WhisperLanguage } from "@/lib/transcription/engineConfig";
 import {
   formatBytes,
@@ -36,27 +36,16 @@ export function isDesktopApp(): boolean {
 
 export function engineReadiness(args: {
   engineId: string;
-  desktop: boolean;
   config: StoredEngineConfig;
   models: WhisperModelListing[];
   capabilities: TranscriptionCapabilities | null;
 }): Readiness {
-  const { engineId, desktop, config, models, capabilities } = args;
+  const { engineId, config, models, capabilities } = args;
 
   if (engineId === ENGINE_GEMINI) {
     return config.geminiApiKey.trim()
       ? { kind: "ready", message: "Ready — Gemini (online)." }
       : { kind: "needs-key", message: "Add a Gemini API key in Settings to use online transcription." };
-  }
-
-  if (engineId === ENGINE_WEB_SPEECH) {
-    return desktop
-      ? {
-          kind: "unreliable",
-          message:
-            "Browser speech recognition depends on Microsoft's WebView2 runtime and usually returns nothing in the installed app. Use Whisper (offline) instead.",
-        }
-      : { kind: "ready", message: "Ready — browser speech recognition." };
   }
 
   if (engineId !== ENGINE_WHISPER) {
@@ -115,10 +104,10 @@ export function engineReadiness(args: {
 /** Bumped when the default changes, so each change migrates people exactly once. */
 export const ENGINE_MIGRATION_KEY = "bsp-engine-default-v2";
 
-const KNOWN_ENGINES = new Set([ENGINE_WHISPER, ENGINE_GEMINI, ENGINE_WEB_SPEECH]);
+const KNOWN_ENGINES = new Set([ENGINE_WHISPER, ENGINE_GEMINI]);
 
-export function defaultEngine(desktop: boolean): string {
-  return desktop ? ENGINE_WHISPER : ENGINE_WEB_SPEECH;
+export function defaultEngine(): string {
+  return ENGINE_WHISPER;
 }
 
 /**
@@ -134,13 +123,15 @@ export function migrateEngineChoice(
   desktop: boolean,
   alreadyMigrated: boolean,
 ): { modelId: string; migrated: boolean } {
-  // "web-speech-offline" was a duplicate of browser speech and no longer exists.
-  const normalized = persisted === "web-speech-offline" ? ENGINE_WEB_SPEECH : persisted;
-  if (desktop && !alreadyMigrated && (!normalized || normalized === ENGINE_WEB_SPEECH)) {
+  // Browser speech has been removed: anyone still on it moves to Whisper, every time.
+  if (persisted && LEGACY_ENGINE_IDS.includes(persisted)) {
     return { modelId: ENGINE_WHISPER, migrated: true };
   }
-  if (!normalized || !KNOWN_ENGINES.has(normalized)) {
-    return { modelId: defaultEngine(desktop), migrated: false };
+  if (desktop && !alreadyMigrated && !persisted) {
+    return { modelId: ENGINE_WHISPER, migrated: true };
   }
-  return { modelId: normalized, migrated: false };
+  if (!persisted || !KNOWN_ENGINES.has(persisted)) {
+    return { modelId: defaultEngine(), migrated: false };
+  }
+  return { modelId: persisted, migrated: false };
 }

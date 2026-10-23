@@ -1,6 +1,6 @@
 /** Downloadable whisper.cpp models and the PC facts used to choose between them. */
 
-import { ENGINE_GEMINI, ENGINE_WHISPER } from "@/lib/transcription/engine";
+import { ENGINE_WHISPER } from "@/lib/transcription/engine";
 import type { WhisperLanguage } from "@/lib/transcription/engineConfig";
 
 export interface WhisperModelInfo {
@@ -71,8 +71,7 @@ export function languageHint(language: WhisperLanguage, engineId: string): strin
     if (engineId === ENGINE_WHISPER) {
       return "Each sentence is heard as English or French. Needs a multilingual model (one without “English” in its name).";
     }
-    if (engineId === ENGINE_GEMINI) return "Gemini listens for English and French.";
-    return "Browser speech listens for one language only and will use English — choose Whisper or Gemini for bilingual services.";
+    return "Gemini listens for English and French.";
   }
   if (language === "fr") {
     return engineId === ENGINE_WHISPER

@@ -53,8 +53,7 @@ export function ListenAudioPanel() {
           </select>
         </label>
         <p className="mt-1 text-[10px] leading-snug text-[var(--color-subtle)]">
-          The level meter and mic test use this input. If transcription stays silent while the meter moves, make
-          the same device the Windows default input (Settings → Sound → Input).
+          Transcription, the level meter and the mic test all use this input.
         </p>
         <div className="mt-2 flex flex-wrap gap-2">
           <button

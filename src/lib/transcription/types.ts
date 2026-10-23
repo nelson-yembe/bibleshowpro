@@ -11,7 +11,7 @@ export type DetectionType = "explicit" | "paraphrase" | "quote" | "topic" | "inf
 export type ConfidenceLevel = "high" | "medium" | "low";
 export type SuggestionStatus = "pending" | "preview" | "queued" | "ignored" | "live" | "presented";
 
-import { ENGINE_GEMINI, ENGINE_WEB_SPEECH, ENGINE_WHISPER } from "@/lib/transcription/engine";
+import { ENGINE_GEMINI, ENGINE_WHISPER } from "@/lib/transcription/engine";
 
 export interface TranscriptionModel {
   id: string;
@@ -102,16 +102,6 @@ export const TRANSCRIPTION_MODELS: TranscriptionModel[] = [
     streaming: true,
     description:
       "Google's cloud transcription: word-by-word and very accurate, but needs a paid-tier API key and a steady internet connection. Audio leaves the building.",
-  },
-  {
-    id: ENGINE_WEB_SPEECH,
-    label: "Browser speech (experimental)",
-    profile: "fast",
-    latencyMs: 400,
-    requiresInternet: true,
-    streaming: true,
-    description:
-      "Depends on Microsoft's WebView2 runtime, which usually returns nothing in the installed app. Kept only for machines where it happens to work.",
   },
 ];
 

@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { ENGINE_GEMINI, ENGINE_WHISPER } from "@/lib/transcription/engine";
-import { engineReadiness, isDesktopApp, type Readiness } from "@/lib/transcription/engineReadiness";
+import { engineReadiness, type Readiness } from "@/lib/transcription/engineReadiness";
 import { DEFAULT_GEMINI_MODEL } from "@/lib/transcription/geminiProtocol";
 import { TRANSCRIPTION_MODELS } from "@/lib/transcription/types";
 import {
@@ -66,7 +66,6 @@ export function TranscriptionEnginePanel({ embedded }: TranscriptionEnginePanelP
   const language = config.whisperLanguage;
   const readiness = engineReadiness({
     engineId: modelId,
-    desktop: isDesktopApp(),
     config,
     models,
     capabilities,
