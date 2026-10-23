@@ -37,9 +37,11 @@ interface ScriptureSuggestionCardProps {
   suggestion: ScriptureSuggestion;
   selected?: boolean;
   onSelect?: () => void;
+  /** Keys that accept this card ("↵", "2"), shown so the operator never has to guess. */
+  shortcuts?: string[];
 }
 
-export function ScriptureSuggestionCard({ suggestion, selected, onSelect }: ScriptureSuggestionCardProps) {
+export function ScriptureSuggestionCard({ suggestion, selected, onSelect, shortcuts }: ScriptureSuggestionCardProps) {
   const navigate = useNavigate();
   const previewSuggestion = useTranscriptionStore((s) => s.previewSuggestion);
   const goLiveSelectedSuggestion = useTranscriptionStore((s) => s.goLiveSelectedSuggestion);
@@ -125,6 +127,15 @@ export function ScriptureSuggestionCard({ suggestion, selected, onSelect }: Scri
       <div className="mb-2 flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <div className="mb-1 flex flex-wrap items-center gap-1.5">
+            {shortcuts?.map((key) => (
+              <kbd
+                key={key}
+                title={key === "↵" ? "Press Enter to accept" : `Press ${key} to accept`}
+                className="inline-block min-w-[1.25rem] rounded border border-[var(--color-border-light)] bg-[var(--color-panel)] px-1 text-center font-mono text-[10px] leading-4 text-[var(--color-muted-foreground)]"
+              >
+                {key}
+              </kbd>
+            ))}
             {isLive ? (
               <StatusBadge variant="live">On air</StatusBadge>
             ) : wasPresented ? (

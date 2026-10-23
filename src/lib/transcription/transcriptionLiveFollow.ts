@@ -75,3 +75,32 @@ export function sortSuggestionsForOperator(
     return b.createdAt.localeCompare(a.createdAt);
   });
 }
+
+/**
+ * The suggestion list as Live Listen shows it: the one on air, then the rest in order.
+ * The keyboard reads the same layout, so the number on a card is the key that takes it.
+ */
+export function operatorSuggestionLayout(
+  suggestions: ScriptureSuggestion[],
+  options?: { program?: Scene | null; liveFollow?: boolean },
+): { live: ScriptureSuggestion | null; others: ScriptureSuggestion[]; next: ScriptureSuggestion | null } {
+  const store = usePresentationStore.getState();
+  const program = options?.program ?? store.program;
+  const liveFollow = options?.liveFollow ?? store.liveFollow;
+  const sorted = sortSuggestionsForOperator(
+    suggestions.filter((s) => s.status !== "ignored"),
+    { program, liveFollow },
+  );
+  const live =
+    sorted.find((s) => liveFollow && suggestionMatchesProgram(s, program)) ??
+    sorted.find((s) => s.status === "live") ??
+    null;
+  const others = sorted.filter((s) => s.id !== live?.id);
+  // Already-shown verses sort first in the list, but what the operator wants next is
+  // the newest one not yet on screen.
+  const next =
+    others
+      .filter((s) => s.status !== "presented" && s.status !== "live")
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null;
+  return { live, others, next };
+}

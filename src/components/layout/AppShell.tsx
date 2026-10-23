@@ -3,6 +3,7 @@ import { IconRail } from "@/components/layout/IconRail";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { AppToast } from "@/components/ui/AppToast";
 import { LiveControlsPanel } from "@/components/presentation/LiveControlsPanel";
+import { ShortcutSheet } from "@/components/layout/ShortcutSheet";
 import { useLiveKeyboard } from "@/hooks/useLiveKeyboard";
 import { useLiveDisplayStore } from "@/stores/liveDisplayStore";
 
@@ -15,7 +16,7 @@ export function AppShell() {
   );
   const displayOptions = useLiveDisplayStore((s) => s.displayOptions);
 
-  useLiveKeyboard();
+  useLiveKeyboard(pathname);
 
   return (
     <div className="flex h-screen overflow-hidden bg-[var(--color-background)]">
@@ -30,6 +31,7 @@ export function AppShell() {
         <StatusBar />
       </div>
       <AppToast />
+      <ShortcutSheet />
     </div>
   );
 }

@@ -6,10 +6,10 @@ import {
 import { TopBar } from "@/components/layout/TopBar";
 import { cn } from "@/lib/utils";
 import { exportScriptureList, exportTranscriptText } from "@/lib/transcription/referenceDetect";
+import type { ScriptureSuggestion } from "@/lib/transcription/types";
 import { formatTranscriptProse } from "@/lib/transcription/transcriptFormat";
 import {
-  suggestionMatchesProgram,
-  sortSuggestionsForOperator,
+  operatorSuggestionLayout,
 } from "@/lib/transcription/transcriptionLiveFollow";
 import { usePresentationStore } from "@/stores/presentationStore";
 import { useTranscriptionStore } from "@/stores/transcriptionStore";
@@ -26,9 +26,11 @@ import {
   Play,
   Save,
   Search,
+  Keyboard,
   Square,
   Trash2,
 } from "lucide-react";
+import { useShortcutSheetStore } from "@/components/layout/ShortcutSheet";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 const statusLabels = {
@@ -88,15 +90,18 @@ export function LiveListenPage() {
     void init();
   }, [init]);
 
-  const activeSuggestions = useMemo(() => {
-    const visible = suggestions.filter((s) => s.status !== "ignored");
-    return sortSuggestionsForOperator(visible, { program, liveFollow });
-  }, [suggestions, program, liveFollow]);
-
-  const liveSuggestion =
-    activeSuggestions.find((s) => liveFollow && suggestionMatchesProgram(s, program)) ??
-    activeSuggestions.find((s) => s.status === "live");
-  const historySuggestions = activeSuggestions.filter((s) => s.id !== liveSuggestion?.id);
+  const layout = useMemo(
+    () => operatorSuggestionLayout(suggestions, { program, liveFollow }),
+    [suggestions, program, liveFollow],
+  );
+  const liveSuggestion = layout.live;
+  const historySuggestions = layout.others;
+  const activeSuggestions = liveSuggestion ? [liveSuggestion, ...historySuggestions] : historySuggestions;
+  // The keys printed on each card are the keys useLiveKeyboard acts on (same layout).
+  const shortcutsFor = (s: ScriptureSuggestion, index: number): string[] => [
+    ...(s.id === layout.next?.id ? ["↵"] : []),
+    ...(index < 9 ? [String(index + 1)] : []),
+  ];
 
   useEffect(() => {
     useLiveNavigationStore.getState().register({
@@ -248,6 +253,15 @@ export function LiveListenPage() {
         )}
 
         <SuggestionsMuteToggle />
+        <button
+          type="button"
+          onClick={() => useShortcutSheetStore.getState().toggle()}
+          className="control-btn"
+          title="Keyboard shortcuts (?)"
+        >
+          <Keyboard className="h-3.5 w-3.5" />
+          Shortcuts
+        </button>
         <div className="ml-auto flex items-center gap-2">
           <div className="hidden min-w-0 sm:block">
             <p className="truncate text-[10px] text-[var(--color-subtle)]" title={activeInputLabel}>
@@ -371,12 +385,13 @@ export function LiveListenPage() {
                           Previous scriptures
                         </p>
                       )}
-                      {historySuggestions.map((s) => (
+                      {historySuggestions.map((s, index) => (
                         <ScriptureSuggestionCard
                           key={s.id}
                           suggestion={s}
                           selected={s.id === selectedSuggestionId}
                           onSelect={() => void selectAndPresentSuggestion(s)}
+                          shortcuts={shortcutsFor(s, index)}
                         />
                       ))}
                     </div>
