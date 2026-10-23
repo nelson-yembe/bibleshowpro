@@ -4,8 +4,6 @@ import { operatorSuggestionLayout } from "@/lib/transcription/transcriptionLiveF
 import { useLiveNavigationStore } from "@/stores/liveNavigationStore";
 import { usePresentationStore } from "@/stores/presentationStore";
 import { useTranscriptionStore } from "@/stores/transcriptionStore";
-import { useThemeStore } from "@/stores/themeStore";
-import type { VerseResult } from "@/lib/tauri";
 
 /**
  * Carry out a live action from the keyboard or the phone remote. Returns false when there
@@ -50,14 +48,6 @@ export function runLiveAction(action: LiveShortcut): boolean {
       useShortcutSheetStore.getState().toggle();
       return true;
   }
-}
-
-/** Verses chosen on the phone remote: into preview, and on air when it asked for live. */
-export async function showRemoteScripture(verses: VerseResult[], live: boolean): Promise<void> {
-  if (verses.length === 0) return;
-  const presentation = usePresentationStore.getState();
-  presentation.previewVerses(verses, useThemeStore.getState().activeTheme, "fullscreen");
-  if (live) await usePresentationStore.getState().goLive();
 }
 
 const REMOTE_ACTIONS: Record<string, LiveShortcut> = {

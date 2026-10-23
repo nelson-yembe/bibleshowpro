@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { remoteAction, runLiveAction, showRemoteScripture } from "@/lib/liveActions";
-import type { VerseResult } from "@/lib/tauri";
+import { remoteAction, runLiveAction } from "@/lib/liveActions";
+import { startRemoteBibleSync } from "@/lib/remoteBible";
 import { keyTargetOf, resolveLiveShortcut } from "@/lib/liveShortcuts";
 
 /** Global live shortcuts; the key map lives in `lib/liveShortcuts`. */
@@ -45,11 +45,8 @@ export function useRemoteCommands() {
       .catch(() => {
         // Browser dev server: no remote.
       });
-    listen<{ verses: VerseResult[]; live: boolean }>("remote-scripture", (event) => {
-      void showRemoteScripture(event.payload.verses, event.payload.live);
-    })
-      .then(keep)
-      .catch(() => {});
+    // Scripture on the remote is the Bible page itself, kept in step both ways.
+    stops.push(startRemoteBibleSync());
     return () => {
       cancelled = true;
       stops.forEach((stop) => stop());

@@ -609,6 +609,17 @@ pub fn get_remote_status() -> crate::remote::RemoteStatus {
     crate::remote::status()
 }
 
+/// The Bible page, for the phone remote to mirror.
+#[tauri::command]
+pub fn publish_remote_bible(state: serde_json::Value) {
+    crate::remote::publish_bible(&state);
+}
+
+#[tauri::command]
+pub fn publish_remote_bible_books(books: serde_json::Value) {
+    crate::remote::publish_bible_books(&books);
+}
+
 /// Whether Windows Firewall lets phones reach the server; slow (PowerShell), so asked apart.
 #[tauri::command]
 pub async fn check_remote_firewall() -> Option<crate::remote::FirewallStatus> {

@@ -4,13 +4,13 @@
 //! It is off until the operator turns it on. It serves two built-in pages and the live
 //! words on screen; it never serves files from the PC.
 
-mod scripture;
+mod pwa;
 mod view;
 
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::response::Html;
+use axum::response::{Html, IntoResponse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures_util::stream::{self, Stream, StreamExt};
@@ -19,12 +19,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::convert::Infallible;
 use std::net::{IpAddr, Ipv4Addr};
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use crate::bible::search::VerseResult;
-use rusqlite::Connection;
-use tauri::{AppHandle, Emitter, Listener, Manager};
+use tauri::{AppHandle, Emitter, Listener};
 use tokio::sync::{broadcast, oneshot};
 
 pub const DEFAULT_PORT: u16 = 4316;
@@ -35,6 +32,8 @@ const MAX_FAILED_PINS: u32 = 5;
 const LOCKOUT: Duration = Duration::from_secs(60);
 /// What the remote may do: the same actions as the operator's keyboard.
 const COMMANDS: &[&str] = &["prev", "next", "go-live", "accept-next", "blackout", "clear"];
+/// What the remote may do on the Bible page (see `src/lib/remoteBible.ts`).
+const BIBLE_ACTIONS: &[&str] = &["search", "open", "verse", "result", "step", "translation", "live"];
 /// Ends every open phone connection when the server stops.
 const CLOSED: &str = "\u{0}closed";
 
@@ -43,6 +42,9 @@ struct Live {
     view: view::PhoneView,
     caption: Option<String>,
     translation: Option<String>,
+    /// Bumped when the Bible page changes; the remote then fetches it with its PIN, so
+    /// congregation phones on the same stream never receive it.
+    bible: u64,
 }
 
 static LIVE: Lazy<Mutex<Live>> = Lazy::new(|| {
@@ -50,8 +52,31 @@ static LIVE: Lazy<Mutex<Live>> = Lazy::new(|| {
         view: view::phone_view(None),
         caption: None,
         translation: None,
+        bible: 0,
     })
 });
+
+/// The Bible page as the app last published it, and the book list for its picker.
+static BIBLE_STATE: Mutex<String> = Mutex::new(String::new());
+static BIBLE_BOOKS: Mutex<String> = Mutex::new(String::new());
+
+/// The app's Bible page changed: keep it for the remote and tell the remote to fetch it.
+pub fn publish_bible(state: &Value) {
+    let json = serde_json::to_string(state).unwrap_or_default();
+    let Ok(mut stored) = BIBLE_STATE.lock() else { return };
+    if *stored == json {
+        return;
+    }
+    *stored = json;
+    drop(stored);
+    update(|live| live.bible += 1);
+}
+
+pub fn publish_bible_books(books: &Value) {
+    if let Ok(mut stored) = BIBLE_BOOKS.lock() {
+        *stored = serde_json::to_string(books).unwrap_or_default();
+    }
+}
 static UPDATES: Lazy<broadcast::Sender<String>> = Lazy::new(|| broadcast::channel(32).0);
 
 struct Running {
@@ -275,21 +300,12 @@ pub async fn start(app: AppHandle, port: u16) -> Result<RemoteStatus, String> {
         .await
         .map_err(|e| format!("Port {port} is not available ({e}). Another program may be using it; choose another port."))?;
     let pin = new_pin();
-    let bible = {
-        let state = app.state::<crate::AppState>();
-        let path = state.db.lock().map_err(|e| e.to_string())?.path.clone();
-        path
-    };
     let command_app = app.clone();
     let router = router(
         pin.clone(),
         Services {
             run: Arc::new(move |action: &str| command_app.emit_to("main", "remote-command", action).is_ok()),
-            bible,
-            show: Arc::new(move |verses: &[VerseResult], live: bool| {
-                app.emit_to("main", "remote-scripture", serde_json::json!({ "verses": verses, "live": live }))
-                    .is_ok()
-            }),
+            bible: Arc::new(move |request: &Value| app.emit_to("main", "remote-bible", request).is_ok()),
         },
     );
 
@@ -316,15 +332,13 @@ pub fn stop() {
 
 /// Hands a remote command to the operator's window; false when it is not there.
 type CommandSink = Arc<dyn Fn(&str) -> bool + Send + Sync>;
-/// Puts verses chosen on the remote into the operator's preview, or straight on air.
-type ShowSink = Arc<dyn Fn(&[VerseResult], bool) -> bool + Send + Sync>;
+/// Hands a Bible page action to the app, which runs it as if picked on the page.
+type BibleSink = Arc<dyn Fn(&Value) -> bool + Send + Sync>;
 
 /// What the remote can reach in the app.
 struct Services {
     run: CommandSink,
-    /// The app database, opened read-only for each scripture request.
-    bible: PathBuf,
-    show: ShowSink,
+    bible: BibleSink,
 }
 
 struct ServerState {
@@ -339,22 +353,6 @@ impl ServerState {
             Ok(false) => Err(StatusCode::UNAUTHORIZED),
             Ok(true) => Ok(()),
         }
-    }
-
-    /// Run a scripture query off the async threads; a database error comes back as text.
-    async fn read<T: Send + 'static>(
-        self: &Arc<Self>,
-        query: impl FnOnce(&Connection) -> Result<T, String> + Send + 'static,
-    ) -> Result<T, (StatusCode, String)> {
-        let path = self.services.bible.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-                .map_err(|e| e.to_string())?;
-            query(&conn)
-        })
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .map_err(|message| (StatusCode::NOT_FOUND, message))
     }
 }
 
@@ -394,11 +392,14 @@ fn router(pin: String, services: Services) -> Router {
     Router::new()
         .route("/", get(|| async { Html(PHONE_PAGE) }))
         .route("/remote", get(|| async { Html(REMOTE_PAGE) }))
+        .route("/manifest.webmanifest", get(|| async { pwa::manifest() }))
+        .route("/sw.js", get(|| async { pwa::service_worker() }))
+        .route("/icons/{name}", get(|axum::extract::Path(name): axum::extract::Path<String>| async move { pwa::icon_file(&name) }))
         .route("/events", get(events))
         .route("/api/command", post(command))
-        .route("/api/translations", post(list_translations))
-        .route("/api/scripture", post(find_scripture))
-        .route("/api/show", post(show_scripture))
+        .route("/api/bible", post(bible_action))
+        .route("/api/bible/state", post(bible_state))
+        .route("/api/bible/books", post(bible_books))
         .with_state(Arc::new(ServerState { pin: PinGuard::new(pin), services }))
 }
 
@@ -407,63 +408,44 @@ struct Signed {
     pin: String,
 }
 
-async fn list_translations(
-    State(state): State<Arc<ServerState>>,
-    Json(request): Json<Signed>,
-) -> Result<Json<Vec<scripture::TranslationView>>, (StatusCode, String)> {
-    state.authorize(&request.pin).map_err(|code| (code, String::new()))?;
-    state.read(scripture::translations).await.map(Json)
+fn json_reply(body: String) -> axum::response::Response {
+    let body = if body.is_empty() { "null".to_string() } else { body };
+    ([(axum::http::header::CONTENT_TYPE, "application/json")], body).into_response()
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ScriptureRequest {
-    pin: String,
-    translation: String,
-    #[serde(default)]
-    query: Option<String>,
-    #[serde(default)]
-    book_number: Option<i32>,
-    #[serde(default)]
-    chapter: Option<i32>,
+/// The Bible page as the app last published it.
+async fn bible_state(State(state): State<Arc<ServerState>>, Json(request): Json<Signed>) -> axum::response::Response {
+    if let Err(code) = state.authorize(&request.pin) {
+        return code.into_response();
+    }
+    json_reply(BIBLE_STATE.lock().map(|s| s.clone()).unwrap_or_default())
 }
 
-/// A reference or words typed on the phone, or a chapter to step into.
-async fn find_scripture(
-    State(state): State<Arc<ServerState>>,
-    Json(request): Json<ScriptureRequest>,
-) -> Result<Json<scripture::Lookup>, (StatusCode, String)> {
-    state.authorize(&request.pin).map_err(|code| (code, String::new()))?;
-    let ScriptureRequest { translation, query, book_number, chapter, .. } = request;
-    state
-        .read(move |conn| match (book_number, chapter, query) {
-            (Some(book), Some(chapter), _) => scripture::chapter(conn, &translation, book, chapter),
-            (_, _, Some(query)) if !query.trim().is_empty() => scripture::lookup(conn, &query, &translation),
-            _ => Err("Type a reference like John 3:16, or words from a verse.".into()),
-        })
-        .await
-        .map(Json)
+/// Book names and verse counts for the Book / Ch / V picker.
+async fn bible_books(State(state): State<Arc<ServerState>>, Json(request): Json<Signed>) -> axum::response::Response {
+    if let Err(code) = state.authorize(&request.pin) {
+        return code.into_response();
+    }
+    json_reply(BIBLE_BOOKS.lock().map(|s| s.clone()).unwrap_or_default())
 }
 
-#[derive(Deserialize)]
-struct ShowRequest {
-    pin: String,
-    live: bool,
-    #[serde(flatten)]
-    passage: scripture::Passage,
-}
-
-async fn show_scripture(
-    State(state): State<Arc<ServerState>>,
-    Json(request): Json<ShowRequest>,
-) -> Result<StatusCode, (StatusCode, String)> {
-    state.authorize(&request.pin).map_err(|code| (code, String::new()))?;
-    let passage = request.passage;
-    let verses = state.read(move |conn| scripture::passage(conn, &passage)).await?;
-    if (state.services.show)(&verses, request.live) {
-        Ok(StatusCode::NO_CONTENT)
+/// A Bible page action from the remote: the app does it exactly as if picked on the page.
+async fn bible_action(State(state): State<Arc<ServerState>>, Json(mut request): Json<Value>) -> StatusCode {
+    let pin = request.get("pin").and_then(Value::as_str).unwrap_or_default().to_string();
+    if let Err(code) = state.authorize(&pin) {
+        return code;
+    }
+    let action = request.get("action").and_then(Value::as_str).unwrap_or_default();
+    if !BIBLE_ACTIONS.contains(&action) {
+        return StatusCode::BAD_REQUEST;
+    }
+    if let Some(fields) = request.as_object_mut() {
+        fields.remove("pin");
+    }
+    if (state.services.bible)(&request) {
+        StatusCode::NO_CONTENT
     } else {
-        Err((StatusCode::SERVICE_UNAVAILABLE, "The app did not respond.".into()))
+        StatusCode::SERVICE_UNAVAILABLE
     }
 }
 
@@ -540,8 +522,8 @@ mod tests {
     async fn serves_phones_and_the_remote() {
         let ran = Arc::new(Mutex::new(Vec::<String>::new()));
         let log = ran.clone();
-        let shown = Arc::new(Mutex::new(Vec::<(Vec<String>, bool)>::new()));
-        let show_log = shown.clone();
+        let asked = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let bible_log = asked.clone();
         let app = router(
             "424242".into(),
             Services {
@@ -549,9 +531,8 @@ mod tests {
                     log.lock().unwrap().push(action.to_string());
                     true
                 }),
-                bible: scripture::test_bible(),
-                show: Arc::new(move |verses: &[VerseResult], live: bool| {
-                    show_log.lock().unwrap().push((verses.iter().map(|v| v.reference.clone()).collect(), live));
+                bible: Arc::new(move |request: &Value| {
+                    bible_log.lock().unwrap().push(request.clone());
                     true
                 }),
             },
@@ -564,6 +545,17 @@ mod tests {
         let page = client.get(format!("{base}/")).send().await.unwrap().text().await.unwrap();
         assert!(page.contains("EventSource(\"/events\")"));
         assert!(client.get(format!("{base}/remote")).send().await.unwrap().status().is_success());
+
+        // What makes the remote installable on a phone.
+        let manifest = client.get(format!("{base}/manifest.webmanifest")).send().await.unwrap();
+        assert_eq!(manifest.headers()["content-type"], "application/manifest+json");
+        for icon in ["192.png", "512.png", "maskable-512.png", "apple-touch-icon.png"] {
+            let response = client.get(format!("{base}/icons/{icon}")).send().await.unwrap();
+            assert_eq!(response.headers()["content-type"], "image/png", "{icon}");
+        }
+        assert_eq!(client.get(format!("{base}/icons/other.png")).send().await.unwrap().status(), 404);
+        let worker = client.get(format!("{base}/sw.js")).send().await.unwrap().text().await.unwrap();
+        assert!(worker.contains("/api/"), "the service worker must leave the API alone");
 
         // A phone connecting mid-service gets what is on screen, then each change.
         publish_program(&Some(serde_json::json!({
@@ -593,33 +585,29 @@ mod tests {
         assert_eq!(send("111111", "blackout").await.unwrap().status(), 401);
         assert_eq!(*ran.lock().unwrap(), vec!["next"]);
 
-        // Scripture: translations, a reference, then the chosen verses on air.
+        // The Bible page: the remote is told it changed, fetches it with the PIN, and acts on it.
         let post = |path: &str, body: serde_json::Value| client.post(format!("{base}{path}")).json(&body).send();
-        let translations: serde_json::Value =
-            post("/api/translations", serde_json::json!({ "pin": "424242" })).await.unwrap().json().await.unwrap();
-        assert_eq!(translations[0]["abbreviation"], "KJV");
-        let found: serde_json::Value = post(
-            "/api/scripture",
-            serde_json::json!({ "pin": "424242", "translation": "kjv", "query": "John 3:16" }),
-        )
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-        assert_eq!(found["title"], "John 3");
-        assert_eq!(found["selected"], serde_json::json!([16, 16]));
-        let show = post(
-            "/api/show",
-            serde_json::json!({ "pin": "424242", "live": true, "translation": "kjv", "bookNumber": 43, "chapter": 3, "start": 16, "end": 17 }),
-        )
-        .await
-        .unwrap();
-        assert_eq!(show.status(), 204);
-        assert_eq!(*shown.lock().unwrap(), vec![(vec!["John 3:16".to_string(), "John 3:17".to_string()], true)]);
-        let refused = post("/api/scripture", serde_json::json!({ "pin": "000000", "translation": "kjv", "query": "John 3:16" }))
-            .await
-            .unwrap();
+        let mut rx = UPDATES.subscribe();
+        publish_bible(&serde_json::json!({ "chapter": { "label": "John 3" }, "activeVerse": 16 }));
+        publish_bible(&serde_json::json!({ "chapter": { "label": "John 3" }, "activeVerse": 16 }));
+        let mut bumps = 0;
+        while let Ok(message) = rx.try_recv() {
+            bumps += usize::from(message.contains("\"bible\""));
+        }
+        assert_eq!(bumps, 1, "an unchanged Bible page must not be announced again");
+        let page: serde_json::Value =
+            post("/api/bible/state", serde_json::json!({ "pin": "424242" })).await.unwrap().json().await.unwrap();
+        assert_eq!(page["activeVerse"], 16);
+        publish_bible_books(&serde_json::json!([{ "name": "John", "number": 43, "verses": [51, 25, 36] }]));
+        let books: serde_json::Value =
+            post("/api/bible/books", serde_json::json!({ "pin": "424242" })).await.unwrap().json().await.unwrap();
+        assert_eq!(books[0]["verses"][2], 36);
+        let pick = post("/api/bible", serde_json::json!({ "pin": "424242", "action": "verse", "verse": 17 })).await.unwrap();
+        assert_eq!(pick.status(), 204);
+        assert_eq!(*asked.lock().unwrap(), vec![serde_json::json!({ "action": "verse", "verse": 17 })]);
+        let unknown = post("/api/bible", serde_json::json!({ "pin": "424242", "action": "format-disk" })).await.unwrap();
+        assert_eq!(unknown.status(), 400);
+        let refused = post("/api/bible/state", serde_json::json!({ "pin": "000000" })).await.unwrap();
         assert_eq!(refused.status(), 401);
     }
 

@@ -73,7 +73,7 @@ pub fn lookup_reference(
     keyword_search(conn, query, translation_id, suggestions, &opts)
 }
 
-pub(crate) fn fetch_by_reference(
+fn fetch_by_reference(
     conn: &Connection,
     parsed: &ParsedReference,
     translation_id: Option<&str>,

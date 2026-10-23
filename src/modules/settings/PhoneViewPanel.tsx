@@ -149,6 +149,10 @@ export function PhoneViewPanel() {
                 PIN <span className="font-mono text-base font-semibold tracking-[0.2em] text-[var(--color-foreground)]">{status.pin}</span>
                 <span className="ml-2 text-[10px] text-[var(--color-subtle)]">new each time it is turned on</span>
               </p>
+              <p className="text-[10px] leading-snug text-[var(--color-subtle)]">
+                The remote mirrors the Bible page: whatever is picked there or here shows on both. Operators can add it
+                to their home screen from the phone's browser menu.
+              </p>
             </div>
             <button type="button" disabled={busy} onClick={() => void showQrOnProjector()} className="control-btn text-[11px]">
               Stage the QR code in preview

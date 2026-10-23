@@ -160,6 +160,8 @@ pub fn run() {
             commands::stop_remote_server,
             commands::get_remote_status,
             commands::check_remote_firewall,
+            commands::publish_remote_bible,
+            commands::publish_remote_bible_books,
             commands::open_firewall_settings,
             commands::write_phone_qr_slide,
             commands::set_stage_message,

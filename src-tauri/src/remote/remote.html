@@ -3,85 +3,191 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0b0d12">
-<title>Remote control</title>
+<meta name="theme-color" content="#0b0e14">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="BSP Remote">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icons/192.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<title>Bible Show Pro Remote</title>
 <style>
-  :root { --bg: #0b0d12; --fg: #eef1f6; --muted: #8b93a3; --panel: #151925; --line: #2a3040; --red: #d93a3f; --blue: #2f6fe0; --pick: rgba(47, 111, 224, 0.22); }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.4 system-ui, sans-serif; }
-  body { min-height: 100vh; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); max-width: 560px; margin: 0 auto; }
-  h1 { font-size: 15px; color: var(--muted); font-weight: 600; margin: 4px 0 14px; }
-  h2 { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin: 26px 0 10px; }
-  form { display: grid; gap: 10px; margin-top: 18vh; }
-  #pin { font: 600 28px/1 ui-monospace, Consolas, monospace; letter-spacing: 0.3em; text-align: center; padding: 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); }
-  button { font: 600 17px system-ui, sans-serif; color: #fff; border: 0; border-radius: 14px; padding: 18px 12px; background: var(--panel); }
-  button:active { transform: scale(0.98); }
-  button:disabled { opacity: 0.45; }
-  .primary { background: var(--blue); }
-  .live { background: var(--red); }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .wide { grid-column: 1 / -1; }
-  .now { background: var(--panel); border-radius: 14px; padding: 14px; margin-bottom: 14px; min-height: 64px; }
-  .now small { color: var(--muted); display: block; margin-bottom: 4px; }
-  .message { min-height: 22px; color: #f2c14e; font-size: 14px; text-align: center; margin-top: 10px; }
-  .search { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
-  .search input, .search select { font: 16px system-ui, sans-serif; padding: 13px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); min-width: 0; }
-  .search button { grid-column: 1 / -1; padding: 14px; }
-  .title { font-weight: 700; margin: 14px 0 6px; }
-  .hint { color: var(--muted); font-size: 13px; margin: 0 0 8px; }
-  ol { list-style: none; margin: 0; padding: 0 0 150px; }
-  li { padding: 10px 10px; border-radius: 10px; font: 16px/1.45 Georgia, serif; }
-  li b { font: 700 12px system-ui, sans-serif; color: #f2c14e; margin-right: 6px; }
-  li small { display: block; font: 12px system-ui, sans-serif; color: var(--muted); margin-bottom: 2px; }
-  li.on { background: var(--pick); }
-  .pickbar { position: fixed; left: 0; right: 0; bottom: 0; background: #10141d; border-top: 1px solid var(--line); padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); }
-  .pickbar .inner { max-width: 528px; margin: 0 auto; display: grid; grid-template-columns: auto 1fr 1fr auto; gap: 8px; align-items: center; }
-  .pickbar .label { grid-column: 1 / -1; font-weight: 700; font-size: 15px; }
-  .pickbar button { padding: 14px 10px; font-size: 16px; }
-  .pickbar .step { padding: 14px 16px; }
+  /* The app's own colours (src/index.css), so the remote reads as part of it. */
+  :root {
+    --background: #050608; --surface: #0b0e14; --panel: #121620; --panel-hover: #181c28;
+    --foreground: #f4f6fb; --muted: #8b95a8; --subtle: #5c6578;
+    --primary: #2563eb; --border: #1e2433; --border-light: #2a3142;
+    --live: #ef4444; --warning: #f59e0b; --pick: rgba(37, 99, 235, 0.16);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--background); color: var(--foreground); font: 15px/1.45 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { min-height: 100vh; padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+  button, input, select { font: inherit; color: inherit; }
+  button { cursor: pointer; }
   [hidden] { display: none !important; }
+
+  .topbar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; padding: calc(10px + env(safe-area-inset-top)) 16px 10px; background: rgba(11, 14, 20, 0.94); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+  .brand { font-weight: 700; font-size: 15px; }
+  .brand small { display: block; font-weight: 500; font-size: 11px; color: var(--subtle); }
+  .spacer { flex: 1; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--subtle); flex: none; }
+  .dot.ok { background: #22c55e; }
+  .icon-btn { background: transparent; border: 1px solid var(--border-light); border-radius: 10px; padding: 7px 10px; font-size: 13px; color: var(--muted); }
+
+  main { max-width: 640px; margin: 0 auto; padding: 12px 12px 0; }
+  .onscreen { display: flex; align-items: center; gap: 10px; padding: 12px 14px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+  .onscreen .label { font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--subtle); }
+  .onscreen .value { font-weight: 600; }
+  .badge-live { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 999px; background: rgba(239, 68, 68, 0.14); color: #fca5a5; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; }
+  .badge-live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--live); }
+
+  details.section { border: 1px solid var(--border); border-radius: 14px; background: var(--surface); margin-bottom: 12px; overflow: hidden; }
+  details.section > summary { list-style: none; display: flex; align-items: center; gap: 10px; padding: 14px; font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); cursor: pointer; }
+  details.section > summary::-webkit-details-marker { display: none; }
+  details.section > summary .hint { margin-left: auto; font-size: 11px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--subtle); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55%; }
+  details.section > summary::after { content: "›"; font-size: 18px; line-height: 1; color: var(--subtle); transform: rotate(90deg); transition: transform 0.15s; }
+  details.section:not([open]) > summary::after { transform: rotate(0deg); }
+  .section-body { padding: 0 14px 14px; }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .wide { grid-column: 1 / -1; }
+  .btn { border: 1px solid var(--border-light); border-radius: 10px; background: var(--panel); padding: 13px 10px; font-weight: 600; font-size: 14px; }
+  .btn:active { background: var(--panel-hover); transform: scale(0.985); }
+  .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .btn.live { background: var(--live); border-color: var(--live); color: #fff; }
+  .btn:disabled { opacity: 0.45; }
+
+  .label { display: block; font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--subtle); margin: 14px 0 6px; }
+  .search { position: relative; }
+  .search input { width: 100%; height: 44px; border-radius: 10px; border: 1px solid var(--border-light); background: var(--panel); padding: 0 40px 0 36px; font-size: 15px; }
+  .search input:focus { outline: none; border-color: var(--primary); }
+  .search .glass { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--subtle); font-size: 14px; }
+  .search .clear { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); background: transparent; border: 0; color: var(--subtle); font-size: 18px; padding: 6px 8px; }
+  .picker { display: grid; grid-template-columns: 1fr 72px 72px; gap: 6px; }
+  .picker label span { display: block; font-size: 10px; color: var(--subtle); margin-bottom: 3px; }
+  .picker select { width: 100%; height: 40px; border-radius: 9px; border: 1px solid var(--border-light); background: var(--panel); padding: 0 8px; font-size: 14px; }
+  .go { margin-top: 8px; width: 100%; height: 42px; }
+  .pills { display: flex; flex-wrap: wrap; gap: 6px; }
+  .pill { border: 1px solid var(--border-light); background: var(--panel); border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 600; color: var(--muted); }
+  .pill.on { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .pill.on.second { background: transparent; color: #bfdbfe; border-color: var(--primary); }
+  .note { font-size: 11px; color: var(--subtle); margin: 6px 0 0; }
+  .error { font-size: 12px; color: #fbbf24; margin: 8px 0 0; }
+
+  .list-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 16px 0 8px; }
+  .list-head .title { font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--subtle); }
+  .list-head .meta { font-size: 11px; color: var(--subtle); text-align: right; }
+  .cards { display: grid; gap: 6px; }
+  .card { text-align: left; width: 100%; border: 1px solid transparent; border-radius: 12px; background: transparent; padding: 11px 12px; }
+  .card:active { background: var(--panel); }
+  .card.on { border-color: var(--primary); background: var(--pick); }
+  .card.busy { opacity: 0.6; }
+  .card .ref { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; margin-bottom: 3px; }
+  .card .abbr { border-radius: 5px; background: var(--panel-hover); padding: 1px 6px; font-size: 10px; font-weight: 700; color: var(--subtle); }
+  .card .text { font-size: 14px; color: var(--muted); line-height: 1.5; }
+  .card.on .text { color: var(--foreground); }
+  .empty { padding: 18px 4px; text-align: center; color: var(--subtle); font-size: 13px; }
+
+  .takebar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; background: rgba(11, 14, 20, 0.97); border-top: 1px solid var(--border); padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); }
+  .takebar .inner { max-width: 640px; margin: 0 auto; display: grid; grid-template-columns: 52px 1fr 52px; gap: 8px; align-items: center; }
+  .takebar .staged { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+  .takebar .staged b { color: var(--foreground); }
+  .takebar .btn { height: 48px; padding: 0; }
+
+  .signin { max-width: 380px; margin: 14vh auto 0; padding: 0 20px; display: grid; gap: 12px; text-align: center; }
+  .signin h1 { margin: 0; font-size: 20px; }
+  .signin p { margin: 0; color: var(--muted); font-size: 14px; }
+  .signin input { height: 58px; border-radius: 12px; border: 1px solid var(--border-light); background: var(--panel); text-align: center; font: 600 28px/1 ui-monospace, Consolas, monospace; letter-spacing: 0.3em; }
+  .signin .btn { height: 50px; }
+  .message { min-height: 20px; font-size: 13px; color: #fbbf24; text-align: center; margin: 10px 16px; }
+  .install { margin: 0 0 12px; padding: 12px 14px; border: 1px dashed var(--border-light); border-radius: 12px; font-size: 13px; color: var(--muted); display: flex; gap: 10px; align-items: center; }
+  .install .btn { padding: 8px 12px; font-size: 13px; margin-left: auto; flex: none; }
+  .install .icon-btn { flex: none; padding: 4px 9px; margin-left: auto; }
+  .install .btn:not([hidden]) + .icon-btn { margin-left: 0; }
 </style>
 </head>
 <body>
-<h1>Bible Show Pro · Remote</h1>
 
-<form id="signin">
-  <label for="pin">Enter the PIN shown in the app</label>
-  <input id="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]*" required>
-  <button class="primary" type="submit">Connect</button>
+<header class="topbar">
+  <div class="brand">Bible Show Pro<small>Remote</small></div>
+  <span class="spacer"></span>
+  <span class="dot" id="connection" title="Connection to the app"></span>
+  <button class="icon-btn" id="signout" hidden>Sign out</button>
+</header>
+
+<form class="signin" id="signin">
+  <h1>Connect to the app</h1>
+  <p>Enter the PIN shown in Bible Show Pro, under Settings › Phone View &amp; Remote.</p>
+  <input id="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]*" required aria-label="PIN">
+  <button class="btn primary" type="submit">Connect</button>
 </form>
 
-<section id="controls" hidden>
-  <div class="now"><small>On screen</small><div id="now">—</div></div>
-  <div class="grid">
-    <button data-action="prev">◀ Previous verse</button>
-    <button data-action="next">Next verse ▶</button>
-    <button class="live wide" data-action="go-live">Take preview live</button>
-    <button class="primary wide" data-action="accept-next">Show next suggestion</button>
-    <button data-action="blackout">Black screen</button>
-    <button data-action="clear">Clear</button>
+<main id="app" hidden>
+  <div class="install" id="install" hidden>
+    <span id="install-text">Add this remote to your home screen.</span>
+    <button class="btn primary" id="install-button" hidden>Install</button>
+    <button class="icon-btn" id="install-close" aria-label="Hide">×</button>
   </div>
 
-  <h2>Scripture</h2>
-  <form class="search" id="find" style="margin:0">
-    <input id="query" placeholder="John 3:16, Psaume 23, or words" autocomplete="off" enterkeyhint="search">
-    <select id="translation" aria-label="Translation"></select>
-    <button type="submit">Find</button>
-  </form>
-  <p class="title" id="title" hidden></p>
-  <p class="hint" id="hint" hidden></p>
-  <ol id="verses"></ol>
+  <div class="onscreen">
+    <div>
+      <span class="label">On screen</span>
+      <div class="value" id="now">—</div>
+    </div>
+    <span class="spacer"></span>
+    <span class="badge-live" id="onair" hidden>LIVE</span>
+  </div>
 
-  <button id="signout" style="margin-top:4px;width:100%;background:transparent;color:var(--muted)">Sign out</button>
-</section>
+  <details class="section" data-fold="controls" open>
+    <summary>Live controls</summary>
+    <div class="section-body grid">
+      <button class="btn" data-action="prev">◀ Previous</button>
+      <button class="btn" data-action="next">Next ▶</button>
+      <button class="btn live wide" data-action="go-live">Take preview live</button>
+      <button class="btn primary wide" data-action="accept-next">Show next suggestion</button>
+      <button class="btn" data-action="blackout">Black screen</button>
+      <button class="btn" data-action="clear">Clear</button>
+    </div>
+  </details>
 
-<div class="pickbar" id="pickbar" hidden>
+  <details class="section" data-fold="bible" open>
+    <summary>Bible <span class="hint" id="bible-hint"></span></summary>
+    <div class="section-body">
+      <form class="search" id="search">
+        <span class="glass">⌕</span>
+        <input id="query" placeholder="Search words or passage (e.g. John 3:16)" autocomplete="off" enterkeyhint="search">
+        <button type="button" class="clear" id="clear-query" aria-label="Clear" hidden>×</button>
+      </form>
+
+      <span class="label">Go to passage</span>
+      <div class="picker">
+        <label><span>Book</span><select id="book"></select></label>
+        <label><span>Ch</span><select id="chapter"></select></label>
+        <label><span>V</span><select id="verse"></select></label>
+      </div>
+      <button class="btn primary go" id="go">Go</button>
+
+      <span class="label">Translation</span>
+      <div class="pills" id="pills"></div>
+      <p class="note">Select up to 2 for side-by-side display. Tap a selected one again to remove it.</p>
+      <p class="error" id="bible-error" hidden></p>
+
+      <div class="list-head">
+        <span class="title" id="list-title">Chapter</span>
+        <span class="meta" id="list-meta"></span>
+      </div>
+      <div class="cards" id="cards"><p class="empty">Search or go to a passage.</p></div>
+    </div>
+  </details>
+</main>
+
+<div class="takebar" id="takebar" hidden>
   <div class="inner">
-    <div class="label" id="picked"></div>
-    <button class="step" id="back" aria-label="Previous verse">◀</button>
-    <button class="primary" id="preview">Preview</button>
-    <button class="live" id="show">Show live</button>
-    <button class="step" id="forward" aria-label="Next verse">▶</button>
+    <div class="staged"><span>Staged</span><b id="staged">—</b><span class="spacer"></span><span class="badge-live" id="follows" hidden>SCREEN FOLLOWS</span></div>
+    <button class="btn" id="back" aria-label="Previous verse">◀</button>
+    <button class="btn live" id="take">Go live</button>
+    <button class="btn" id="forward" aria-label="Next verse">▶</button>
   </div>
 </div>
 
@@ -89,212 +195,292 @@
 
 <script>
   const $ = (id) => document.getElementById(id);
-  const message = $("message");
-  let pin = "";
-  try { pin = sessionStorage.getItem("bsp-pin") || ""; } catch {}
+  const store = {
+    get(key) { try { return localStorage.getItem(key); } catch { return null; } },
+    set(key, value) { try { localStorage.setItem(key, value); } catch {} },
+    remove(key) { try { localStorage.removeItem(key); } catch {} },
+  };
+  let pin = store.get("bsp-pin") || "";
+  let books = [];
+  let bible = null;
+  let bibleRevision = -1;
+  let fetching = false;
+  let refetch = false;
+  let lastScrolled = null;
 
+  // ---- Talking to the app ----
   async function call(path, body) {
-    const response = await fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pin, ...body }),
-    });
-    if (response.status === 401) { signOut("Wrong PIN."); return null; }
-    if (response.status === 429) { signOut("Too many wrong PINs. Wait a minute, then try again."); return null; }
-    if (!response.ok) {
-      const text = await response.text();
-      message.textContent = text || "The app did not respond. Is it still open?";
+    let response;
+    try {
+      response = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin, ...body }),
+      });
+    } catch {
+      $("message").textContent = "Cannot reach the app. Is this phone on the same Wi-Fi?";
       return null;
     }
-    message.textContent = "";
+    if (response.status === 401) { signOut("Wrong PIN. The PIN changes each time the remote is turned on."); return null; }
+    if (response.status === 429) { signOut("Too many wrong PINs. Wait a minute, then try again."); return null; }
+    if (!response.ok) { $("message").textContent = "The app did not respond. Is it still open?"; return null; }
+    $("message").textContent = "";
     return response.status === 204 ? true : response.json();
   }
 
-  const send = (action) => call("/api/command", { action });
+  const command = (action) => call("/api/command", { action });
+  const bibleAction = (action, fields) => call("/api/bible", { action, ...fields });
 
+  // ---- Signing in ----
   function signOut(text) {
     pin = "";
-    try { sessionStorage.removeItem("bsp-pin"); } catch {}
-    $("controls").hidden = true;
-    $("pickbar").hidden = true;
+    store.remove("bsp-pin");
+    $("app").hidden = true;
+    $("takebar").hidden = true;
+    $("signout").hidden = true;
     $("signin").hidden = false;
-    message.textContent = text || "";
+    $("message").textContent = text || "";
   }
 
-  async function showControls() {
+  async function enter() {
     $("signin").hidden = true;
-    $("controls").hidden = false;
-    await loadTranslations();
+    $("app").hidden = false;
+    $("signout").hidden = false;
+    const list = await call("/api/bible/books", {});
+    if (Array.isArray(list)) { books = list; fillBooks(); }
+    await loadBible();
   }
 
   $("signin").onsubmit = async (event) => {
     event.preventDefault();
     pin = $("pin").value.trim();
-    if (await send("check")) {
-      try { sessionStorage.setItem("bsp-pin", pin); } catch {}
-      showControls();
+    if (await command("check")) {
+      store.set("bsp-pin", pin);
+      enter();
     }
   };
   $("signout").onclick = () => signOut();
+
+  // ---- Folding: remembered per section on this phone ----
+  for (const section of document.querySelectorAll("details[data-fold]")) {
+    const key = "bsp-fold-" + section.dataset.fold;
+    const saved = store.get(key);
+    if (saved !== null) section.open = saved === "open";
+    section.addEventListener("toggle", () => {
+      store.set(key, section.open ? "open" : "closed");
+      updateTakebar();
+    });
+  }
+
+  // ---- Live controls ----
   for (const button of document.querySelectorAll("[data-action]")) {
     button.onclick = () => {
-      if (navigator.vibrate) navigator.vibrate(15);
-      send(button.dataset.action);
+      if (navigator.vibrate) navigator.vibrate(12);
+      command(button.dataset.action);
     };
   }
 
-  // ---- Scripture ----
-  let translation = "";
-  let results = { verses: [], fromSearch: false };
-  let pick = null; // { bookNumber, book, chapter, start, end }
-  let lastShown = null; // "preview" | "live", so stepping keeps the screen following
+  // ---- The Bible page, mirrored ----
+  const el = (tag, className, text) => {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = text;
+    return node;
+  };
+  const option = (value, label) => { const o = document.createElement("option"); o.value = value; o.textContent = label; return o; };
 
-  async function loadTranslations() {
-    const list = await call("/api/translations", {});
-    if (!list) return;
-    let saved = "";
-    try { saved = localStorage.getItem("bsp-remote-translation") || ""; } catch {}
-    const select = $("translation");
-    select.replaceChildren(...list.map((t) => {
-      const option = document.createElement("option");
-      option.value = t.id;
-      option.textContent = t.abbreviation;
-      option.title = t.name;
-      return option;
-    }));
-    translation = list.some((t) => t.id === saved) ? saved : (list[0] && list[0].id) || "";
-    select.value = translation;
+  function fillBooks() {
+    $("book").replaceChildren(...books.map((b) => option(b.name, b.name)));
+    setPicker("John", 3, 16);
   }
 
-  $("translation").onchange = async (event) => {
-    translation = event.target.value;
-    try { localStorage.setItem("bsp-remote-translation", translation); } catch {}
-    // Same chapter, other wording.
-    if (pick && !results.fromSearch) await openChapter(pick.bookNumber, pick.chapter, pick);
+  function setPicker(name, chapter, verse) {
+    const book = books.find((b) => b.name === name) || books[0];
+    if (!book) return;
+    $("book").value = book.name;
+    $("chapter").replaceChildren(...book.verses.map((_, i) => option(String(i + 1), String(i + 1))));
+    $("chapter").value = String(Math.min(Math.max(1, chapter), book.verses.length));
+    fillVerses(book, Number($("chapter").value), verse);
+  }
+
+  function fillVerses(book, chapter, verse) {
+    const count = book.verses[chapter - 1] || 1;
+    $("verse").replaceChildren(...Array.from({ length: count }, (_, i) => option(String(i + 1), String(i + 1))));
+    $("verse").value = String(Math.min(Math.max(1, verse || 1), count));
+  }
+
+  $("book").onchange = () => setPicker($("book").value, 1, 1);
+  $("chapter").onchange = () => fillVerses(books.find((b) => b.name === $("book").value), Number($("chapter").value), 1);
+  $("go").onclick = () => {
+    bibleAction("open", { book: $("book").value, chapter: Number($("chapter").value), verse: Number($("verse").value) });
   };
 
-  $("find").onsubmit = async (event) => {
+  $("search").onsubmit = (event) => {
     event.preventDefault();
     const query = $("query").value.trim();
     if (!query) return;
     $("query").blur();
-    const found = await call("/api/scripture", { translation, query });
-    if (!found) return;
-    setResults(found);
-    if (found.selected && found.verses[0]) {
-      const v = found.verses[0];
-      choose({ bookNumber: v.bookNumber, book: v.book, chapter: v.chapter, start: found.selected[0], end: found.selected[1] });
-    } else {
-      choose(null);
-    }
+    bibleAction("search", { query });
+  };
+  $("query").oninput = () => { $("clear-query").hidden = !$("query").value; };
+  $("clear-query").onclick = () => { $("query").value = ""; $("clear-query").hidden = true; $("query").focus(); };
+
+  $("back").onclick = () => bibleAction("step", { delta: -1 });
+  $("forward").onclick = () => bibleAction("step", { delta: 1 });
+  $("take").onclick = () => {
+    if (navigator.vibrate) navigator.vibrate(20);
+    bibleAction("live");
   };
 
-  async function openChapter(bookNumber, chapter, keep) {
-    const found = await call("/api/scripture", { translation, bookNumber, chapter });
-    if (!found) return;
-    setResults(found);
-    const first = found.verses[0];
-    choose(keep && first ? { ...keep, book: first.book } : null);
+  async function loadBible() {
+    if (fetching) { refetch = true; return; }
+    fetching = true;
+    const state = await call("/api/bible/state", {});
+    fetching = false;
+    if (state) { bible = state; renderBible(); }
+    if (refetch) { refetch = false; loadBible(); }
   }
 
-  function setResults(found) {
-    results = found;
-    $("title").hidden = false;
-    $("title").textContent = found.verses.length ? found.title : `Nothing found for “${found.title}”`;
-    $("hint").hidden = found.verses.length === 0;
-    $("hint").textContent = found.fromSearch
-      ? "Tap a verse to open its chapter."
-      : "Tap a verse; tap another to choose the verses between.";
-    lastShown = null;
+  function abbreviation(id) {
+    return (bible.translations.find((t) => t.id === id) || {}).abbreviation || "";
   }
 
-  function choose(next) {
-    pick = next;
-    const list = $("verses");
-    list.replaceChildren(...results.verses.map((v) => {
-      const item = document.createElement("li");
-      const on = pick && !results.fromSearch && v.bookNumber === pick.bookNumber && v.chapter === pick.chapter && v.verse >= pick.start && v.verse <= pick.end;
-      if (on) item.className = "on";
-      if (results.fromSearch) {
-        const where = document.createElement("small");
-        where.textContent = `${v.book} ${v.chapter}:${v.verse}`;
-        item.append(where);
-      } else {
-        const number = document.createElement("b");
-        number.textContent = String(v.verse);
-        item.append(number);
-      }
-      item.append(document.createTextNode(v.text));
-      item.onclick = () => tap(v);
-      return item;
+  function renderBible() {
+    if (!bible) return;
+    const selected = bible.selected || [];
+    const labels = selected.map(abbreviation).filter(Boolean).join(" · ");
+
+    // Translation pills, as on the Bible page: 1 = primary, 2 = compare.
+    $("pills").replaceChildren(...bible.translations.map((t) => {
+      const slot = selected.indexOf(t.id);
+      const pill = el("button", "pill" + (slot >= 0 ? " on" : "") + (slot === 1 ? " second" : ""),
+        slot >= 0 ? `${t.abbreviation} ${slot + 1}` : t.abbreviation);
+      pill.type = "button";
+      pill.title = t.name;
+      pill.onclick = () => bibleAction("translation", { id: t.id });
+      return pill;
     }));
-    $("pickbar").hidden = !pick;
-    if (pick) {
-      const range = pick.start === pick.end ? `${pick.start}` : `${pick.start}–${pick.end}`;
-      const abbr = $("translation").selectedOptions[0]?.textContent || "";
-      $("picked").textContent = `${pick.book} ${pick.chapter}:${range} · ${abbr}`;
-      const first = list.querySelector("li.on");
-      if (first) first.scrollIntoView({ block: "center", behavior: "smooth" });
+
+    // The picker and search box follow the app, like the page's own picker does,
+    // except while someone is using them here.
+    const picking = ["book", "chapter", "verse"].includes(document.activeElement && document.activeElement.id);
+    if (bible.chapter && bible.activeVerse != null && !picking) {
+      const book = books.find((b) => b.number === bible.chapter.bookNumber);
+      if (book) setPicker(book.name, bible.chapter.chapter, bible.activeVerse);
     }
-  }
-
-  function tap(v) {
-    if (results.fromSearch) {
-      openChapter(v.bookNumber, v.chapter, { bookNumber: v.bookNumber, book: v.book, chapter: v.chapter, start: v.verse, end: v.verse });
-      return;
+    if (document.activeElement !== $("query")) {
+      $("query").value = bible.query || "";
+      $("clear-query").hidden = !bible.query;
     }
-    lastShown = null;
-    if (pick && pick.start === pick.end && pick.start !== v.verse && pick.chapter === v.chapter) {
-      // A second tap marks the other end of the passage, up to 20 verses.
-      const start = Math.min(pick.start, v.verse);
-      const end = Math.min(Math.max(pick.start, v.verse), start + 19);
-      choose({ ...pick, start, end });
-      return;
+
+    $("bible-error").hidden = !bible.error;
+    $("bible-error").textContent = bible.error || "";
+
+    const cards = [];
+    if (bible.chapter) {
+      const index = bible.chapter.verses.findIndex((v) => v.n === bible.activeVerse);
+      $("list-title").textContent = `Chapter · ${bible.chapter.verses.length}`;
+      $("list-meta").textContent = `${bible.chapter.label}${index >= 0 ? ` · verse ${index + 1} of ${bible.chapter.verses.length}` : ""} · ${labels}`;
+      for (const v of bible.chapter.verses) {
+        const card = el("button", "card" + (v.n === bible.activeVerse ? " on" : ""));
+        card.type = "button";
+        const ref = el("div", "ref", `${bible.chapter.book} ${bible.chapter.chapter}:${v.n}`);
+        ref.append(el("span", "abbr", abbreviation(selected[0])));
+        card.append(ref, el("div", "text", v.text));
+        card.onclick = () => { card.classList.add("busy"); bibleAction("verse", { verse: v.n }); };
+        cards.push(card);
+      }
+    } else if (bible.results.length) {
+      $("list-title").textContent = `Results · ${bible.results.length}`;
+      $("list-meta").textContent = `for “${bible.query}” in ${labels}`;
+      bible.results.forEach((r, i) => {
+        const card = el("button", "card");
+        card.type = "button";
+        const ref = el("div", "ref", r.reference);
+        ref.append(el("span", "abbr", r.translation));
+        card.append(ref, el("div", "text", r.text));
+        card.onclick = () => { card.classList.add("busy"); bibleAction("result", { index: i }); };
+        cards.push(card);
+      });
+    } else {
+      $("list-title").textContent = bible.loading ? "Searching…" : "Chapter";
+      $("list-meta").textContent = labels;
+      cards.push(el("p", "empty", bible.query && !bible.loading ? `Nothing found for “${bible.query}”.` : "Search or go to a passage."));
     }
-    choose({ bookNumber: v.bookNumber, book: v.book, chapter: v.chapter, start: v.verse, end: v.verse });
+    $("cards").replaceChildren(...cards);
+    const active = $("cards").querySelector(".card.on");
+    if (active && bible.activeVerse !== lastScrolled) {
+      lastScrolled = bible.activeVerse;
+      active.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+
+    $("bible-hint").textContent = bible.chapter
+      ? `${bible.chapter.book} ${bible.chapter.chapter}${bible.activeVerse ? ":" + bible.activeVerse : ""} · ${labels}`
+      : labels;
+    $("staged").textContent = bible.staged || "nothing yet";
+    $("follows").hidden = !bible.onAir;
+    $("take").textContent = bible.onAir ? "Go live again" : "Go live";
+    updateTakebar();
+  }
+  function updateTakebar() {
+    const bibleOpen = document.querySelector('details[data-fold="bible"]').open;
+    $("takebar").hidden = !pin || $("app").hidden || !bibleOpen || !bible || !(bible.staged || bible.chapter);
+    const inChapter = Boolean(bible && bible.chapter);
+    $("back").disabled = !inChapter;
+    $("forward").disabled = !inChapter;
+    $("take").disabled = !(bible && bible.staged);
   }
 
-  async function show(mode) {
-    if (!pick) return;
-    if (navigator.vibrate) navigator.vibrate(15);
-    const ok = await call("/api/show", {
-      live: mode === "live",
-      translation,
-      bookNumber: pick.bookNumber,
-      chapter: pick.chapter,
-      start: pick.start,
-      end: pick.end,
-    });
-    if (ok) lastShown = mode;
-  }
-
-  $("preview").onclick = () => show("preview");
-  $("show").onclick = () => show("live");
-
-  // Step the chosen verses through the chapter; once shown, the screen follows.
-  function step(delta) {
-    if (!pick || results.fromSearch) return;
-    const size = pick.end - pick.start + 1;
-    const last = results.verses.length ? results.verses[results.verses.length - 1].verse : pick.end;
-    const start = Math.max(1, Math.min(pick.start + delta * size, last - size + 1));
-    if (start === pick.start) return;
-    const mode = lastShown;
-    choose({ ...pick, start, end: start + size - 1 });
-    if (mode) show(mode);
-  }
-  $("back").onclick = () => step(-1);
-  $("forward").onclick = () => step(1);
-
-  if (pin) send("check").then((ok) => ok && showControls());
-
-  const now = $("now");
+  // ---- Live updates ----
   const events = new EventSource("/events");
-  events.onmessage = (event) => {
-    const view = JSON.parse(event.data).view;
-    if (!view || view.kind === "idle") now.textContent = "Nothing on screen";
-    else now.textContent = [view.reference || view.title, view.translation].filter(Boolean).join(" · ") || "On screen";
+  events.onopen = () => $("connection").classList.add("ok");
+  events.onerror = () => { $("connection").classList.remove("ok"); $("now").textContent = "Reconnecting…"; };
+  events.onmessage = (message) => {
+    const live = JSON.parse(message.data);
+    const view = live.view;
+    $("now").textContent = !view || view.kind === "idle"
+      ? "Nothing on screen"
+      : [view.reference || view.title, view.translation].filter(Boolean).join(" · ") || "On screen";
+    $("onair").hidden = !view || view.kind === "idle";
+    if (pin && live.bible !== bibleRevision) {
+      bibleRevision = live.bible;
+      loadBible();
+    }
   };
-  events.onerror = () => { now.textContent = "Reconnecting…"; };
+
+  // ---- Installing on the phone ----
+  let installPrompt = null;
+  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+  if ("serviceWorker" in navigator && window.isSecureContext) {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  }
+  window.addEventListener("beforeinstallprompt", (event) => {
+    event.preventDefault();
+    installPrompt = event;
+    $("install").hidden = standalone || store.get("bsp-install-dismissed") === "yes";
+    $("install-button").hidden = false;
+    $("install-text").textContent = "Install the remote as an app on this phone.";
+  });
+  $("install-button").onclick = async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    await installPrompt.userChoice;
+    installPrompt = null;
+    $("install").hidden = true;
+  };
+  if (!standalone && store.get("bsp-install-dismissed") !== "yes") {
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    $("install-text").textContent = ios
+      ? "Install: tap Share, then “Add to Home Screen”."
+      : "Install: open the browser menu ⋮, then “Add to Home screen” or “Install app”.";
+    $("install").hidden = false;
+  }
+  $("install-close").onclick = () => {
+    store.set("bsp-install-dismissed", "yes");
+    $("install").hidden = true;
+  };
+
+  if (pin) command("check").then((ok) => ok && enter());
 </script>
 </body>
 </html>
