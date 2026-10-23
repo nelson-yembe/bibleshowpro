@@ -56,6 +56,32 @@ jobs:
       - name: Build installer
         run: npm run tauri:build
 
+      # The installer is only uploaded if the built app transcribes a known clip correctly
+      # and fast enough. An unoptimized whisper.cpp takes 7-9x longer, well past the limit.
+      - name: Cache benchmark model
+        uses: actions/cache@v4
+        with:
+          path: ~/whisper-models
+          key: ggml-base.en-a03779c8
+
+      - name: Benchmark the offline engine
+        shell: pwsh
+        run: |
+          $model = Join-Path $HOME "whisper-models/ggml-base.en.bin"
+          if (-not (Test-Path $model)) {
+            New-Item -ItemType Directory -Force (Split-Path $model) | Out-Null
+            Invoke-WebRequest https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin -OutFile $model
+          }
+          if ((Get-FileHash $model -Algorithm SHA256).Hash -ne "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002") {
+            Remove-Item $model
+            throw "The benchmark model download is corrupt."
+          }
+          ./scripts/whisper-benchmark.ps1 `
+            -Exe src-tauri/target/release/bible-show-pro.exe `
+            -Model $model `
+            -SpeechDetector src-tauri/resources/ggml-silero-v6.2.0.bin `
+            -MaxSeconds 8
+
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
