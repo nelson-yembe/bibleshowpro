@@ -293,6 +293,18 @@ pub async fn read_sermon_notes(path: String) -> Result<Vec<crate::bible::notes::
     .map_err(|e| e.to_string())?
 }
 
+/// Verses of `book_number` `chapter` that were just read or paraphrased, best first.
+#[tauri::command]
+pub fn match_passage_reading(
+    state: State<AppState>,
+    heard: String,
+    book_number: i32,
+    chapter: i32,
+) -> Result<Vec<crate::bible::reading::ReadingMatch>, String> {
+    let db = lock_db(state.db.lock().map_err(|e| e.to_string())?);
+    db.with_conn(|conn| crate::bible::reading::match_reading(conn, &heard, book_number, chapter))
+}
+
 /// Scripture references in notes pasted as text.
 #[tauri::command]
 pub fn find_sermon_references(text: String) -> Vec<crate::bible::notes::NotesReference> {

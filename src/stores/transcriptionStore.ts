@@ -704,17 +704,48 @@ async function runSegmentScan(
 
   const existingReferences = activeSuggestions(get()).map((s) => s.reference);
 
+  const context = resolveDetectionContext(get());
   const detected = await detectScriptureFromText(cleaned, translationId, {
     paraphraseEnabled: get().paraphraseEnabled,
     existingReferences,
     allowRepeatReference: true,
-    context: resolveDetectionContext(get()),
+    context,
   });
+  if (!detected.some((d) => d.detectionType === "explicit" || d.detectionType === "inferred")) {
+    const reading = await readingFromPassage(cleaned, context, translationId);
+    detected.push(...reading.filter((r) => !detected.some((d) => d.reference === r.reference)));
+  }
   // Final transcript text — safe to auto-go-live for high-confidence explicit refs.
   await mergeDetections(detected, segmentId, get, set, {
     allowRepeatReference: true,
     allowAutoLive: true,
   });
+}
+
+/**
+ * A verse of the passage being preached, read or paraphrased without its number. It waits
+ * for the operator like any paraphrase; only the number makes a reference explicit.
+ */
+async function readingFromPassage(
+  text: string,
+  context: DetectionContext | undefined,
+  translationId: string,
+): Promise<Omit<ScriptureSuggestion, "id" | "segmentId" | "status" | "createdAt">[]> {
+  if (!context?.chapter) return [];
+  try {
+    const [best] = await api.matchPassageReading(text, context.bookNumber, context.chapter);
+    if (!best) return [];
+    const built = await buildSuggestionFromReference(
+      `${context.bookName} ${context.chapter}:${best.verse}`,
+      text,
+      translationId,
+      "paraphrase",
+      Math.min(0.9, best.score),
+    );
+    return built ? [built] : [];
+  } catch {
+    return [];
+  }
 }
 
 async function runContextScan(

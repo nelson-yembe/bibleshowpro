@@ -8,6 +8,7 @@ pub mod install;
 pub mod notes;
 pub mod open_formats;
 pub mod parser;
+pub mod reading;
 pub mod search;
 pub mod search_query;
 pub mod spoken_book;

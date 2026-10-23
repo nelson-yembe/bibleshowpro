@@ -369,6 +369,13 @@ export const api = {
   getRemoteStatus: () => tauriInvoke<RemoteStatus>("get_remote_status"),
   writePhoneQrSlide: () => tauriInvoke<string>("write_phone_qr_slide"),
   matchHeardSong: (heard: string) => tauriInvoke<HeardSong[]>("match_heard_song", { heard }),
+  /** Verses of one chapter that `heard` reads from, in any installed translation. */
+  matchPassageReading: (heard: string, bookNumber: number, chapter: number) =>
+    tauriInvoke<{ verse: number; score: number; translationId: string }[]>("match_passage_reading", {
+      heard,
+      bookNumber,
+      chapter,
+    }),
   translateCaption: (text: string, source: string | null, target: string) =>
     tauriInvoke<string>("translate_caption", { text, source, target }),
   closeOutputWindow: () => tauriInvoke<void>("close_output_window"),

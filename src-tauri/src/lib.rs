@@ -103,6 +103,7 @@ pub fn run() {
             commands::bible::import_bible_files,
             commands::bible::read_sermon_notes,
             commands::bible::find_sermon_references,
+            commands::bible::match_passage_reading,
             commands::bible::delete_bible_translation,
             commands::bible::set_default_bible_translation,
             commands::bible::get_bible_setup_status,
