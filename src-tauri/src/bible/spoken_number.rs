@@ -72,30 +72,8 @@ fn parse_number(tokens: &[NumWord], i: usize) -> Option<(i64, usize)> {
     match first {
         NumWord::Unit(u) => {
             idx += 1;
-            // "<unit> hundred [tens] [unit]" / "<unit> hundred [teen]"
             if matches!(tokens.get(idx), Some(NumWord::Hundred)) {
-                idx += 1;
-                let mut value = u * 100;
-                match tokens.get(idx) {
-                    Some(NumWord::Ten(t)) => {
-                        value += t;
-                        idx += 1;
-                        if let Some(NumWord::Unit(u2)) = tokens.get(idx) {
-                            value += u2;
-                            idx += 1;
-                        }
-                    }
-                    Some(NumWord::Teen(t)) => {
-                        value += t;
-                        idx += 1;
-                    }
-                    Some(NumWord::Unit(u2)) => {
-                        value += u2;
-                        idx += 1;
-                    }
-                    _ => {}
-                }
-                Some((value, idx))
+                Some(hundreds(u, tokens, idx + 1))
             } else {
                 Some((u, idx))
             }
@@ -110,8 +88,30 @@ fn parse_number(tokens: &[NumWord], i: usize) -> Option<(i64, usize)> {
                 Some((t, idx))
             }
         }
-        NumWord::Hundred => None,
+        // "a hundred and fifty"
+        NumWord::Hundred => Some(hundreds(1, tokens, idx + 1)),
     }
+}
+
+/// "<unit> hundred [tens] [unit]" / "<unit> hundred [teen]", from just past "hundred".
+fn hundreds(unit: i64, tokens: &[NumWord], mut idx: usize) -> (i64, usize) {
+    let mut value = unit * 100;
+    match tokens.get(idx) {
+        Some(NumWord::Ten(t)) => {
+            value += t;
+            idx += 1;
+            if let Some(NumWord::Unit(u)) = tokens.get(idx) {
+                value += u;
+                idx += 1;
+            }
+        }
+        Some(NumWord::Teen(t)) | Some(NumWord::Unit(t)) => {
+            value += t;
+            idx += 1;
+        }
+        _ => {}
+    }
+    (value, idx)
 }
 
 /// Replace spoken number words in `text` with digits, folding compounds and
@@ -150,6 +150,15 @@ pub fn normalize_spoken_numbers(text: &str) -> String {
             if let Some(nw) = classify(raw_tokens[i]) {
                 run.push(nw);
                 i += 1;
+            } else if raw_tokens[i] == "and"
+                && run.last() == Some(&NumWord::Hundred)
+                && raw_tokens
+                    .get(i + 1)
+                    .and_then(|next| classify(next))
+                    .is_some_and(|next| next != NumWord::Hundred)
+            {
+                // "one hundred and nineteen" is one number.
+                i += 1;
             } else {
                 break;
             }
@@ -163,22 +172,9 @@ pub fn normalize_spoken_numbers(text: &str) -> String {
 
         // Fold the run into one or more integers.
         let mut j = 0;
-        let mut produced = false;
-        while j < run.len() {
-            if let Some((value, next)) = parse_number(&run, j) {
-                out.push(value.to_string());
-                j = next;
-                produced = true;
-            } else {
-                j += 1;
-            }
-        }
-
-        // A lone "hundred" with nothing parseable: keep the original words.
-        if !produced {
-            for k in run_start..i {
-                out.push(raw_tokens[k].to_string());
-            }
+        while let Some((value, next)) = parse_number(&run, j) {
+            out.push(value.to_string());
+            j = next;
         }
     }
 
@@ -408,6 +404,9 @@ mod tests {
     fn handles_hundreds() {
         assert_eq!(norm("one hundred nineteen"), "119");
         assert_eq!(norm("one hundred twenty one"), "121");
+        assert_eq!(norm("one hundred and nineteen verse one hundred and five"), "119 verse 105");
+        assert_eq!(norm("a hundred and fifty"), "a 150");
+        assert_eq!(norm("one hundred and then some"), "100 and then some");
     }
 
     #[test]

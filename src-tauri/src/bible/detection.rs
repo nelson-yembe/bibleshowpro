@@ -384,8 +384,10 @@ fn preprocess_spoken_text(text: &str) -> PreprocessResult {
         "the bible ",
         "bible ",
     ];
+    let mut announced = false;
     for filler in fillers {
         if let Some(rest) = s.strip_prefix(filler) {
+            announced = filler.starts_with("turn") || filler == "go to ";
             s = rest.to_string();
             break;
         }
@@ -434,6 +436,14 @@ fn preprocess_spoken_text(text: &str) -> PreprocessResult {
 
     // Phonetic book confusion only — these must not auto-project.
     let before_confusion = s.clone();
+    // "Turn to some 23": straight after "turn to", "some" can only be "Psalm".
+    if announced {
+        if let Some(rest) = s.strip_prefix("some ") {
+            if rest.starts_with(|c: char| c.is_ascii_digit()) {
+                s = format!("psalms {rest}");
+            }
+        }
+    }
     s = apply_speech_confusion_aliases(&s);
     s = repair_book_that_or_after_chapter(&s);
     let speech_repaired = s != before_confusion;
@@ -620,6 +630,7 @@ fn apply_speech_confusion_aliases(text: &str) -> String {
             (format!(r"(?i)\brelationship\b{cue}"), "revelation"),
             (format!(r"(?i)\bmarrakesh\b{cue}"), "malachi"),
             (format!(r"(?i)\bmalakai\b{cue}"), "malachi"),
+            (format!(r"(?i)\bfilipinos?\b{cue}"), "philippians"),
             // "Go with evils. 11/1" → Hebrews 11:1
             (format!(r"(?i)\bevil(?:s)?\b{cue}"), "hebrews"),
             (format!(r"(?i)\bhebr(?:ew|ews)?\b{cue}"), "hebrews"),
