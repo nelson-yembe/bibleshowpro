@@ -5,7 +5,9 @@ import { cn } from "@/lib/utils";
 import { useBibleVersionsStore } from "@/stores/bibleVersionsStore";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { StatusBadge } from "@/components/ui/pill";
-import type { CatalogEntryView } from "@/lib/tauri";
+import { api, type CatalogEntryView, type OpenBibleMeta, type OpenBiblePreview } from "@/lib/tauri";
+import { BIBLE_FILE_ACCEPT, fileStem, readBibleFile } from "@/lib/bibleFiles";
+import { OpenBibleImportForm } from "@/modules/settings/OpenBibleImportForm";
 
 function formatSize(bytes?: number | null) {
   if (!bytes) return null;
@@ -21,11 +23,13 @@ export function BibleVersionsPanel({ embedded = false }: { embedded?: boolean } 
     loadCatalog,
     downloadTranslation,
     importFromFile,
+    importOpenFiles,
     deleteTranslation,
     setDefaultTranslation,
   } = useBibleVersionsStore();
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState<{ files: string[]; preview: OpenBiblePreview } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const installed = catalog.filter((c) => c.installed && c.verse_count > 1000);
@@ -47,14 +51,32 @@ export function BibleVersionsPanel({ embedded = false }: { embedded?: boolean } 
     }
   };
 
-  const handleImportFile = async (file: File) => {
+  const handleImportFiles = async (picked: File[]) => {
     setError(null);
     setMessage(null);
+    setPending(null);
     try {
-      const json = await file.text();
-      const msg = await importFromFile(json);
-      setMessage(msg);
-      await loadCatalog();
+      if (picked.length === 1 && /\.json$/i.test(picked[0].name)) {
+        const msg = await importFromFile(await picked[0].text());
+        setMessage(msg);
+        await loadCatalog();
+        return;
+      }
+      // XML and USFM: show what the files hold and let the operator fix the listing first.
+      const files = await Promise.all(picked.map(readBibleFile));
+      const preview = await api.previewBibleFiles(files, fileStem(picked[0].name));
+      setPending({ files, preview });
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const confirmImport = async (meta: OpenBibleMeta) => {
+    if (!pending) return;
+    setError(null);
+    try {
+      setMessage(await importOpenFiles(pending.files, meta));
+      setPending(null);
     } catch (e) {
       setError(String(e));
     }
@@ -66,7 +88,7 @@ export function BibleVersionsPanel({ embedded = false }: { embedded?: boolean } 
         <>
           <h2 className="text-sm font-semibold">Bible Versions</h2>
           <p className="mt-1 text-xs text-[var(--color-subtle)]">
-            Download public-domain translations or import licensed Bibles from a JSON file.
+            Download public-domain translations or import licensed Bibles from a file (XML, USFM or JSON).
           </p>
         </>
       )}
@@ -173,14 +195,13 @@ export function BibleVersionsPanel({ embedded = false }: { embedded?: boolean } 
           dense
           id="bible-import"
           title="Import licensed translation"
-          description="Bring your own licensed JSON (ESV, NIV, etc.)"
+          description="Zefania, OSIS, OpenSong or USFM files, or Bible Show Pro JSON"
           icon={<FileUp className="h-4 w-4" />}
         >
           <p className="mb-2 text-[10px] leading-relaxed text-[var(--color-subtle)]">
-            Modern translations (ESV, NIV, MSG, The Passion Translation, etc.) require your own licensed
-            JSON export in Bible Show Pro format. Use the sample at{" "}
-            <code className="text-[var(--color-foreground)]">database/seed/kjv-sample.json</code> as a
-            template.
+            Import a Bible you are licensed to use: a Zefania, OSIS, OpenSong or holy-bible XML file, the USFM files
+            of a translation (select them all at once), or a Bible Show Pro JSON file. You can check the name and
+            abbreviation before anything is imported.
           </p>
           {licensedCatalog.length > 0 && (
             <div className="mb-3 flex flex-wrap gap-1.5">
@@ -203,11 +224,12 @@ export function BibleVersionsPanel({ embedded = false }: { embedded?: boolean } 
           <input
             ref={fileRef}
             type="file"
-            accept=".json,application/json"
+            accept={BIBLE_FILE_ACCEPT}
+            multiple
             className="hidden"
             onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) void handleImportFile(file);
+              const picked = Array.from(e.target.files ?? []);
+              if (picked.length > 0) void handleImportFiles(picked);
               e.target.value = "";
             }}
           />
@@ -218,8 +240,18 @@ export function BibleVersionsPanel({ embedded = false }: { embedded?: boolean } 
             className="flex items-center gap-2 rounded-lg border border-[var(--color-border-light)] px-4 py-2 text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
           >
             <Upload className="h-3.5 w-3.5" />
-            Import JSON file…
+            Import Bible file…
           </button>
+          {pending && (
+            <OpenBibleImportForm
+              key={pending.preview.name + pending.preview.verseCount}
+              preview={pending.preview}
+              fileCount={pending.files.length}
+              importing={importing}
+              onImport={(meta) => void confirmImport(meta)}
+              onCancel={() => setPending(null)}
+            />
+          )}
         </CollapsibleSection>
       </div>
     </div>

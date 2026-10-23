@@ -4,6 +4,7 @@ import {
   api,
   type BibleImportProgress,
   type CatalogEntryView,
+  type OpenBibleMeta,
   type TranslationInfo,
 } from "@/lib/tauri";
 import { useBibleStore } from "@/stores/bibleStore";
@@ -16,6 +17,8 @@ interface BibleVersionsState {
   installCorePackages: () => Promise<string>;
   downloadTranslation: (id: string) => Promise<string>;
   importFromFile: (json: string, setDefault?: boolean) => Promise<string>;
+  /** Zefania, OSIS, OpenSong or USFM files, after the operator has confirmed the details. */
+  importOpenFiles: (files: string[], meta: OpenBibleMeta) => Promise<string>;
   deleteTranslation: (id: string) => Promise<void>;
   setDefaultTranslation: (id: string) => Promise<void>;
   refreshTranslations: () => Promise<TranslationInfo[]>;
@@ -70,6 +73,18 @@ export const useBibleVersionsStore = create<BibleVersionsState>((set, get) => ({
     set({ importing: true, importProgress: null });
     try {
       const result = await api.importBibleJson(json, setDefault);
+      await get().loadCatalog();
+      await useBibleStoreRefresh();
+      return result.message;
+    } finally {
+      set({ importing: false });
+    }
+  },
+
+  importOpenFiles: async (files, meta) => {
+    set({ importing: true, importProgress: null });
+    try {
+      const result = await api.importBibleFiles(files, meta, false);
       await get().loadCatalog();
       await useBibleStoreRefresh();
       return result.message;

@@ -4,6 +4,7 @@ pub mod convert;
 pub mod detection;
 pub mod import;
 pub mod install;
+pub mod open_formats;
 pub mod parser;
 pub mod search;
 pub mod search_query;

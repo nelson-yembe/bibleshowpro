@@ -94,6 +94,8 @@ pub fn run() {
             commands::bible::get_bible_catalog,
             commands::bible::download_bible_translation,
             commands::bible::import_bible_json,
+            commands::bible::preview_bible_files,
+            commands::bible::import_bible_files,
             commands::bible::delete_bible_translation,
             commands::bible::set_default_bible_translation,
             commands::bible::get_bible_setup_status,

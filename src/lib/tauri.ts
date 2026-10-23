@@ -35,6 +35,25 @@ export interface BibleImportResult {
   message: string;
 }
 
+/** What an XML or USFM Bible file holds, read before anything is imported. */
+export interface OpenBiblePreview {
+  format: string;
+  name: string;
+  abbreviation: string;
+  language: string;
+  copyright: string | null;
+  bookCount: number;
+  verseCount: number;
+  warnings: string[];
+}
+
+export interface OpenBibleMeta {
+  name: string;
+  abbreviation: string;
+  language: string;
+  copyright: string | null;
+}
+
 export interface BibleSetupStatus {
   kjv_verse_count: number;
   needs_full_bible: boolean;
@@ -178,6 +197,10 @@ export const api = {
     tauriInvoke<BibleImportResult>("download_bible_translation", { translationId }),
   importBibleJson: (json: string, setDefault?: boolean) =>
     tauriInvoke<BibleImportResult>("import_bible_json", { json, setDefault }),
+  previewBibleFiles: (files: string[], fileName?: string) =>
+    tauriInvoke<OpenBiblePreview>("preview_bible_files", { files, fileName }),
+  importBibleFiles: (files: string[], meta: OpenBibleMeta, setDefault?: boolean) =>
+    tauriInvoke<BibleImportResult>("import_bible_files", { files, meta, setDefault }),
   deleteBibleTranslation: (translationId: string) =>
     tauriInvoke<void>("delete_bible_translation", { translationId }),
   setDefaultBibleTranslation: (translationId: string) =>

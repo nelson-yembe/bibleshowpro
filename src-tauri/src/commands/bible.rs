@@ -236,3 +236,47 @@ pub fn import_bible_json(
         message: format!("Imported {} ({} verses)", stats.abbreviation, stats.verse_count),
     })
 }
+
+fn installed_translation_ids(conn: &Connection) -> Result<Vec<String>, String> {
+    let mut stmt = conn
+        .prepare("SELECT id FROM bible_translations")
+        .map_err(|e| e.to_string())?;
+    let ids = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(ids)
+}
+
+/// Read Zefania, OSIS, OpenSong or USFM files and say what they hold, without importing.
+#[tauri::command]
+pub fn preview_bible_files(
+    state: State<AppState>,
+    files: Vec<String>,
+    file_name: Option<String>,
+) -> Result<crate::bible::open_formats::OpenBiblePreview, String> {
+    let parsed = crate::bible::open_formats::parse_files(&files)?;
+    let db = lock_db(state.db.lock().map_err(|e| e.to_string())?);
+    let existing = db.with_conn(installed_translation_ids)?;
+    Ok(crate::bible::open_formats::preview(&parsed, &existing, file_name.as_deref()))
+}
+
+#[tauri::command]
+pub fn import_bible_files(
+    state: State<AppState>,
+    files: Vec<String>,
+    meta: crate::bible::open_formats::BibleMeta,
+    set_default: Option<bool>,
+) -> Result<ImportResult, String> {
+    let parsed = crate::bible::open_formats::parse_files(&files)?;
+    let payload = crate::bible::open_formats::to_payload(parsed, &meta)?;
+    let db = lock_db(state.db.lock().map_err(|e| e.to_string())?);
+    let stats = db.with_conn(|conn| import_payload(conn, &payload, set_default.unwrap_or(false)))?;
+    Ok(ImportResult {
+        translation_id: stats.translation_id,
+        abbreviation: stats.abbreviation.clone(),
+        verse_count: stats.verse_count,
+        message: format!("Imported {} ({} verses)", stats.abbreviation, stats.verse_count),
+    })
+}
