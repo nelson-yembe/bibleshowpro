@@ -99,31 +99,71 @@ pub fn listen_for_captions(app: &AppHandle) {
 pub struct RemoteStatus {
     pub running: bool,
     pub port: u16,
-    /// Phone view address on each church network this PC is on; the first is the likeliest.
-    pub phone_urls: Vec<String>,
+    /// Phone view address on each network this PC is on, the church Wi-Fi or router first.
+    pub addresses: Vec<NetworkAddress>,
     pub pin: Option<String>,
-    /// QR code for the first phone address.
+    /// QR code for the first address.
     pub qr_svg: Option<String>,
 }
 
-/// Private IPv4 addresses phones on the same network can reach.
-fn lan_addresses() -> Vec<Ipv4Addr> {
-    let mut found: Vec<Ipv4Addr> = if_addrs::get_if_addrs()
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkAddress {
+    pub url: String,
+    /// Windows' name for the adapter ("Wi-Fi", "Ethernet"), so the operator can tell them apart.
+    pub adapter: String,
+}
+
+/// Adapters phones can never reach: virtual switches for VMs, containers and capture tools.
+fn is_virtual_adapter(name: &str) -> bool {
+    let name = name.to_lowercase();
+    ["vethernet", "hyper-v", "virtualbox", "vmware", "wsl", "docker", "loopback", "npcap", "tap-"]
+        .iter()
+        .any(|virtual_name| name.contains(virtual_name))
+}
+
+/// The address Windows would send from to reach the internet: the adapter with the default
+/// route, which is the church network. No packet is sent.
+fn primary_address() -> Option<Ipv4Addr> {
+    let socket = std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
+    socket.connect((Ipv4Addr::new(8, 8, 8, 8), 80)).ok()?;
+    match socket.local_addr().ok()?.ip() {
+        IpAddr::V4(ip) if ip.is_private() => Some(ip),
+        _ => None,
+    }
+}
+
+/// Private addresses phones on the same network can reach: the default-route adapter first,
+/// then real adapters, then this PC's own hotspot (phones joined to it can use that one).
+fn order_addresses(found: Vec<(Ipv4Addr, String)>, primary: Option<Ipv4Addr>) -> Vec<(Ipv4Addr, String)> {
+    let mut usable: Vec<(Ipv4Addr, String)> = found
+        .into_iter()
+        .filter(|(ip, name)| ip.is_private() && !ip.is_loopback() && !is_virtual_adapter(name))
+        .collect();
+    usable.sort_by_key(|(ip, name)| {
+        if Some(*ip) == primary {
+            0
+        } else if name.starts_with("Local Area Connection*") {
+            // Windows' mobile hotspot and Wi-Fi Direct adapters.
+            2
+        } else {
+            1
+        }
+    });
+    usable.dedup_by(|a, b| a.0 == b.0);
+    usable
+}
+
+fn lan_addresses() -> Vec<(Ipv4Addr, String)> {
+    let found = if_addrs::get_if_addrs()
         .unwrap_or_default()
         .into_iter()
         .filter_map(|iface| match iface.ip() {
-            IpAddr::V4(ip) if ip.is_private() && !ip.is_loopback() => Some(ip),
+            IpAddr::V4(ip) => Some((ip, iface.name)),
             _ => None,
         })
         .collect();
-    // Home and church routers hand out 192.168.x.x; virtual adapters favour 172.x.
-    found.sort_by_key(|ip| match ip.octets()[0] {
-        192 => 0,
-        10 => 1,
-        _ => 2,
-    });
-    found.dedup();
-    found
+    order_addresses(found, primary_address())
 }
 
 pub fn status() -> RemoteStatus {
@@ -131,12 +171,15 @@ pub fn status() -> RemoteStatus {
     let running = server.as_ref().and_then(|s| s.as_ref().map(|r| (r.port, r.pin.clone())));
     match running {
         Some((port, pin)) => {
-            let phone_urls: Vec<String> = lan_addresses().iter().map(|ip| format!("http://{ip}:{port}/")).collect();
-            let qr_svg = phone_urls.first().and_then(|url| qr_svg(url, None).ok());
+            let addresses: Vec<NetworkAddress> = lan_addresses()
+                .into_iter()
+                .map(|(ip, adapter)| NetworkAddress { url: format!("http://{ip}:{port}/"), adapter })
+                .collect();
+            let qr_svg = addresses.first().and_then(|a| qr_svg(&a.url, None).ok());
             RemoteStatus {
                 running: true,
                 port,
-                phone_urls,
+                addresses,
                 pin: Some(pin),
                 qr_svg,
             }
@@ -144,11 +187,76 @@ pub fn status() -> RemoteStatus {
         None => RemoteStatus {
             running: false,
             port: DEFAULT_PORT,
-            phone_urls: Vec::new(),
+            addresses: Vec::new(),
             pin: None,
             qr_svg: None,
         },
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FirewallStatus {
+    /// Windows' profile for the network phones connect through: "Private", "Public" or "Domain".
+    pub profile: String,
+    pub allowed: bool,
+}
+
+/// Whether Windows Firewall lets phones on the primary network reach this app. Asked of
+/// PowerShell because the firewall cmdlets answer in enum names, not translated text.
+/// `None` when it cannot be told (no network, another firewall, no PowerShell).
+#[cfg(windows)]
+pub fn firewall_status() -> Option<FirewallStatus> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let ip = lan_addresses().first()?.0;
+    let exe = std::env::current_exe().ok()?.to_string_lossy().replace('\'', "''");
+    let script = FIREWALL_SCRIPT.replace("{exe}", &exe).replace("{ip}", &ip.to_string());
+    // Encoded, so no command-line quoting can strip the script's own quotes.
+    let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, utf16);
+    let output = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &encoded])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    serde_json::from_str(String::from_utf8_lossy(&output.stdout).trim()).ok()
+}
+
+#[cfg(not(windows))]
+pub fn firewall_status() -> Option<FirewallStatus> {
+    None
+}
+
+/// Inbound rules for this exe that apply to the network's profile; a block rule wins.
+#[cfg(windows)]
+const FIREWALL_SCRIPT: &str = r#"$ErrorActionPreference = 'Stop'
+$exe = '{exe}'
+$index = (Get-NetIPAddress -IPAddress '{ip}' -AddressFamily IPv4).InterfaceIndex
+$category = "$((Get-NetConnectionProfile -InterfaceIndex $index).NetworkCategory)"
+$name = if ($category -eq 'DomainAuthenticated') { 'Domain' } else { $category }
+$fw = Get-NetFirewallProfile -Name $name
+$allowed = $true
+if ("$($fw.Enabled)" -eq 'True') {
+  $rules = @(Get-NetFirewallApplicationFilter | Where-Object { $_.Program -eq $exe } | Get-NetFirewallRule |
+    Where-Object { "$($_.Enabled)" -eq 'True' -and "$($_.Direction)" -eq 'Inbound' -and ("$($_.Profile)" -eq 'Any' -or "$($_.Profile)" -match $name) })
+  $allow = @($rules | Where-Object { "$($_.Action)" -eq 'Allow' }).Count -gt 0
+  $block = @($rules | Where-Object { "$($_.Action)" -eq 'Block' }).Count -gt 0
+  $allowed = (-not $block) -and ($allow -or "$($fw.DefaultInboundAction)" -eq 'Allow')
+}
+@{ profile = $name; allowed = $allowed } | ConvertTo-Json -Compress"#;
+
+/// Windows' "Allow an app through firewall" page, where the operator ticks Private.
+pub fn open_firewall_settings() -> Result<(), String> {
+    std::process::Command::new("control.exe")
+        .args(["/name", "Microsoft.WindowsFirewall", "/page", "pageConfigureApps"])
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Could not open Windows Firewall settings: {e}"))
 }
 
 fn new_pin() -> String {
@@ -368,6 +476,36 @@ mod tests {
         assert_eq!(guard.check("123456"), Err(()));
         *guard.failed.lock().unwrap() = (0, Some(Instant::now() - Duration::from_secs(1)));
         assert_eq!(guard.check(" 123456 "), Ok(true));
+    }
+
+    #[test]
+    fn puts_the_church_network_first_and_drops_virtual_adapters() {
+        let found = vec![
+            (Ipv4Addr::new(172, 17, 176, 1), "vEthernet (Default Switch)".to_string()),
+            (Ipv4Addr::new(169, 254, 63, 19), "Bluetooth Network Connection".to_string()),
+            (Ipv4Addr::new(192, 168, 137, 1), "Local Area Connection* 2".to_string()),
+            (Ipv4Addr::new(172, 20, 196, 254), "Wi-Fi".to_string()),
+            (Ipv4Addr::new(127, 0, 0, 1), "Loopback Pseudo-Interface 1".to_string()),
+        ];
+        let ordered = order_addresses(found, Some(Ipv4Addr::new(172, 20, 196, 254)));
+        let names: Vec<&str> = ordered.iter().map(|(_, name)| name.as_str()).collect();
+        assert_eq!(names, vec!["Wi-Fi", "Local Area Connection* 2"]);
+    }
+
+    #[test]
+    fn without_a_default_route_a_real_adapter_still_comes_before_the_hotspot() {
+        let found = vec![
+            (Ipv4Addr::new(192, 168, 137, 1), "Local Area Connection* 2".to_string()),
+            (Ipv4Addr::new(10, 0, 0, 12), "Ethernet".to_string()),
+        ];
+        assert_eq!(order_addresses(found, None)[0].1, "Ethernet");
+    }
+
+    /// Reads this PC's real firewall; run with `cargo test firewall -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn reads_this_pcs_firewall() {
+        println!("{:?} {:?}", lan_addresses(), firewall_status());
     }
 
     #[test]

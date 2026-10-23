@@ -72,9 +72,16 @@ export interface HeardSong {
 export interface RemoteStatus {
   running: boolean;
   port: number;
-  phoneUrls: string[];
+  /** One per network this PC is on, the church Wi-Fi or router first. */
+  addresses: { url: string; adapter: string }[];
   pin: string | null;
   qrSvg: string | null;
+}
+
+/** Whether Windows Firewall lets phones on that network reach the app. */
+export interface FirewallStatus {
+  profile: string;
+  allowed: boolean;
 }
 
 export interface OpenBibleMeta {
@@ -367,6 +374,8 @@ export const api = {
   startRemoteServer: (port?: number) => tauriInvoke<RemoteStatus>("start_remote_server", { port }),
   stopRemoteServer: () => tauriInvoke<RemoteStatus>("stop_remote_server"),
   getRemoteStatus: () => tauriInvoke<RemoteStatus>("get_remote_status"),
+  checkRemoteFirewall: () => tauriInvoke<FirewallStatus | null>("check_remote_firewall"),
+  openFirewallSettings: () => tauriInvoke<void>("open_firewall_settings"),
   writePhoneQrSlide: () => tauriInvoke<string>("write_phone_qr_slide"),
   matchHeardSong: (heard: string) => tauriInvoke<HeardSong[]>("match_heard_song", { heard }),
   /** Verses of one chapter that `heard` reads from, in any installed translation. */

@@ -609,13 +609,25 @@ pub fn get_remote_status() -> crate::remote::RemoteStatus {
     crate::remote::status()
 }
 
+/// Whether Windows Firewall lets phones reach the server; slow (PowerShell), so asked apart.
+#[tauri::command]
+pub async fn check_remote_firewall() -> Option<crate::remote::FirewallStatus> {
+    tauri::async_runtime::spawn_blocking(crate::remote::firewall_status).await.ok().flatten()
+}
+
+#[tauri::command]
+pub fn open_firewall_settings() -> Result<(), String> {
+    crate::remote::open_firewall_settings()
+}
+
 /// A projector slide with the phone view's QR code; returns the image path.
 #[tauri::command]
 pub fn write_phone_qr_slide(app: AppHandle) -> Result<String, String> {
     let url = crate::remote::status()
-        .phone_urls
+        .addresses
         .into_iter()
         .next()
+        .map(|a| a.url)
         .ok_or("Turn on the phone view first; no church network address was found.")?;
     let svg = crate::remote::qr_svg(&url, Some("Follow along on your phone"))?;
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;

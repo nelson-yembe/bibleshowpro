@@ -159,6 +159,8 @@ pub fn run() {
             commands::start_remote_server,
             commands::stop_remote_server,
             commands::get_remote_status,
+            commands::check_remote_firewall,
+            commands::open_firewall_settings,
             commands::write_phone_qr_slide,
             commands::set_stage_message,
             commands::get_stage_state,
