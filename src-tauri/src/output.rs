@@ -28,6 +28,7 @@ pub fn stored_preview() -> Option<Value> {
 
 pub fn emit_preview_update(app: &AppHandle, scene: Option<Value>) -> Result<(), String> {
     store_preview(scene.clone());
+    crate::stage::forward_preview(app, &scene);
     if app.get_webview_window("ndi-preview").is_some() {
         app.emit_to("ndi-preview", "preview-update", &scene)
             .map_err(|e| e.to_string())?;
@@ -186,7 +187,7 @@ pub async fn close_output_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-const AUXILIARY_WINDOW_LABELS: &[&str] = &["output", "ndi-preview"];
+const AUXILIARY_WINDOW_LABELS: &[&str] = &["output", "ndi-preview", crate::stage::STAGE_LABEL];
 
 /// Close projector/NDI windows and stop streaming when the app is exiting.
 pub fn shutdown_all(app: &AppHandle) {

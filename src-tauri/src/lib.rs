@@ -7,6 +7,7 @@ pub mod ndi;
 pub mod output;
 pub mod service;
 pub mod songs;
+pub mod stage;
 pub mod transcription;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -134,6 +135,10 @@ pub fn run() {
             commands::close_output_window,
             commands::refresh_output_window,
             commands::list_displays,
+            commands::open_stage_display,
+            commands::close_stage_display,
+            commands::set_stage_message,
+            commands::get_stage_state,
             commands::get_output_status,
             commands::push_program_update,
             commands::get_program_output,

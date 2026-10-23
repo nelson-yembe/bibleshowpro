@@ -24,6 +24,7 @@ export default defineConfig(async () => ({
       input: {
         main: path.resolve(__dirname, "index.html"),
         output: path.resolve(__dirname, "output.html"),
+        stage: path.resolve(__dirname, "stage.html"),
       },
     },
   },

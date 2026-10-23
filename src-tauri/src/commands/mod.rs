@@ -528,6 +528,26 @@ pub async fn refresh_output_window(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn open_stage_display(app: AppHandle, display_id: Option<String>) -> Result<(), String> {
+    crate::stage::open(&app, display_id)
+}
+
+#[tauri::command]
+pub fn close_stage_display(app: AppHandle) {
+    crate::stage::close(&app);
+}
+
+#[tauri::command]
+pub fn set_stage_message(app: AppHandle, message: String) {
+    crate::stage::set_message(&app, message);
+}
+
+#[tauri::command]
+pub fn get_stage_state(app: AppHandle) -> crate::stage::StageState {
+    crate::stage::state(&app)
+}
+
+#[tauri::command]
 pub fn list_displays(app: AppHandle) -> Result<Vec<crate::display::DisplayInfo>, String> {
     crate::display::list_displays(&app)
 }

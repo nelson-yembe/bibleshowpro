@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Zap } from "lucide-react";
 import { SceneRenderer } from "@/components/presentation/SceneRenderer";
 import { ServiceQueueStrip } from "@/components/presentation/ServiceQueueStrip";
+import { StageDisplayControls } from "@/components/presentation/StageDisplayControls";
 import { CountdownPlaybackControls } from "@/components/presentation/CountdownPlaybackControls";
 import { VideoPlaybackControls } from "@/components/presentation/VideoPlaybackControls";
 import type { DisplayOptions } from "@/components/presentation/displayOptions";
@@ -251,6 +252,8 @@ export function LiveControlsPanel({ displayOptions }: LiveControlsPanelProps) {
       <div className="border-t border-[var(--color-border)] p-4">
         <ServiceQueueStrip />
       </div>
+
+      <StageDisplayControls />
 
       <div className="border-t border-[var(--color-border)] p-4">
         <div className="mb-2 flex items-center justify-between gap-2">
