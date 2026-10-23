@@ -560,6 +560,39 @@ pub fn list_side_screens(app: AppHandle) -> Vec<String> {
     crate::screens::open_side_screens(&app)
 }
 
+/// Serve the phone view and remote control on the church network.
+#[tauri::command]
+pub async fn start_remote_server(app: AppHandle, port: Option<u16>) -> Result<crate::remote::RemoteStatus, String> {
+    crate::remote::start(app, port.unwrap_or(crate::remote::DEFAULT_PORT)).await
+}
+
+#[tauri::command]
+pub fn stop_remote_server() -> crate::remote::RemoteStatus {
+    crate::remote::stop();
+    crate::remote::status()
+}
+
+#[tauri::command]
+pub fn get_remote_status() -> crate::remote::RemoteStatus {
+    crate::remote::status()
+}
+
+/// A projector slide with the phone view's QR code; returns the image path.
+#[tauri::command]
+pub fn write_phone_qr_slide(app: AppHandle) -> Result<String, String> {
+    let url = crate::remote::status()
+        .phone_urls
+        .into_iter()
+        .next()
+        .ok_or("Turn on the phone view first; no church network address was found.")?;
+    let svg = crate::remote::qr_svg(&url, Some("Follow along on your phone"))?;
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("phone-view-qr.svg");
+    std::fs::write(&path, svg).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
 #[tauri::command]
 pub fn set_stage_message(app: AppHandle, message: String) {
     crate::stage::set_message(&app, message);

@@ -44,6 +44,7 @@ pub fn replay_stored_preview(app: &AppHandle) {
 
 pub fn emit_program_update(app: &AppHandle, scene: Option<Value>) -> Result<(), String> {
     store_program(scene.clone());
+    crate::remote::publish_program(&scene);
     app.emit("program-update", &scene)
         .map_err(|e| e.to_string())?;
     if app.get_webview_window("output").is_some() {
@@ -198,6 +199,7 @@ pub fn shutdown_all(app: &AppHandle) {
     }
 
     crate::screens::close_side_screens(app);
+    crate::remote::stop();
     crate::keep_awake::set_output_active(false);
     crate::keep_awake::set_presentation_active(false);
 

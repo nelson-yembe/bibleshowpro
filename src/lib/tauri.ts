@@ -58,6 +58,15 @@ export interface NotesReference {
   context: string;
 }
 
+/** The church-network server for phones. */
+export interface RemoteStatus {
+  running: boolean;
+  port: number;
+  phoneUrls: string[];
+  pin: string | null;
+  qrSvg: string | null;
+}
+
 export interface OpenBibleMeta {
   name: string;
   abbreviation: string;
@@ -345,6 +354,10 @@ export const api = {
   openSideScreen: (displayId: string) => tauriInvoke<void>("open_side_screen", { displayId }),
   closeSideScreen: (displayId: string) => tauriInvoke<void>("close_side_screen", { displayId }),
   listSideScreens: () => tauriInvoke<string[]>("list_side_screens"),
+  startRemoteServer: (port?: number) => tauriInvoke<RemoteStatus>("start_remote_server", { port }),
+  stopRemoteServer: () => tauriInvoke<RemoteStatus>("stop_remote_server"),
+  getRemoteStatus: () => tauriInvoke<RemoteStatus>("get_remote_status"),
+  writePhoneQrSlide: () => tauriInvoke<string>("write_phone_qr_slide"),
   closeOutputWindow: () => tauriInvoke<void>("close_output_window"),
   refreshOutputWindow: () => tauriInvoke<void>("refresh_output_window"),
   listDisplays: () => tauriInvoke<DisplayInfo[]>("list_displays"),

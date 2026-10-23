@@ -5,6 +5,7 @@ pub mod display;
 pub mod keep_awake;
 pub mod ndi;
 pub mod output;
+pub mod remote;
 pub mod screens;
 pub mod secrets;
 pub mod service;
@@ -59,6 +60,7 @@ pub fn run() {
             }
 
             output::start_display_watcher(app.handle().clone());
+            remote::listen_for_captions(app.handle());
 
             let output_ready_app = app.handle().clone();
             app.handle().listen("output-ready", move |_| {
@@ -147,6 +149,10 @@ pub fn run() {
             commands::open_side_screen,
             commands::close_side_screen,
             commands::list_side_screens,
+            commands::start_remote_server,
+            commands::stop_remote_server,
+            commands::get_remote_status,
+            commands::write_phone_qr_slide,
             commands::set_stage_message,
             commands::get_stage_state,
             commands::get_output_status,

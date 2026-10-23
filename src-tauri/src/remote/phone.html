@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d12">
+<title>Live scripture</title>
+<style>
+  :root { --bg: #0b0d12; --fg: #eef1f6; --muted: #8b93a3; --accent: #f2c14e; --panel: #151925; --size: 20px; }
+  :root.light { --bg: #fbfaf7; --fg: #1b1d22; --muted: #6a6f7a; --accent: #9a6b00; --panel: #efece6; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); }
+  body { font: var(--size)/1.6 Georgia, "Times New Roman", serif; min-height: 100vh; display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: 8px; padding: 10px 16px; font: 13px/1.2 system-ui, sans-serif; color: var(--muted); position: sticky; top: 0; background: var(--bg); }
+  header .dot { width: 8px; height: 8px; border-radius: 50%; background: #e5484d; }
+  header.offline .dot { background: var(--muted); }
+  header .spacer { flex: 1; }
+  header button { font: 600 13px system-ui, sans-serif; color: var(--fg); background: var(--panel); border: 0; border-radius: 8px; padding: 7px 11px; }
+  header button[aria-pressed="false"] { color: var(--muted); }
+  main { flex: 1; padding: 8px 20px 120px; max-width: 760px; width: 100%; margin: 0 auto; }
+  .reference { font: 700 1.15em/1.3 system-ui, sans-serif; margin: 12px 0 2px; }
+  .translation { font: 13px system-ui, sans-serif; color: var(--muted); margin-bottom: 14px; }
+  .verse { margin: 0 0 0.7em; }
+  .verse sup { font: 700 0.6em system-ui, sans-serif; color: var(--accent); margin-right: 4px; }
+  .lines p { margin: 0 0 0.35em; }
+  .comparison { margin-top: 1.2em; padding-top: 1em; border-top: 1px solid var(--panel); }
+  .idle { color: var(--muted); font: 16px/1.5 system-ui, sans-serif; text-align: center; margin-top: 30vh; }
+  .caption { position: fixed; left: 0; right: 0; bottom: 0; padding: 14px 20px calc(14px + env(safe-area-inset-bottom)); background: var(--panel); font: 17px/1.45 system-ui, sans-serif; }
+  .caption[hidden] { display: none; }
+</style>
+</head>
+<body>
+<header id="bar" class="offline">
+  <span class="dot"></span><span id="state">Connecting…</span>
+  <span class="spacer"></span>
+  <button id="smaller" aria-label="Smaller text">A−</button>
+  <button id="larger" aria-label="Larger text">A+</button>
+  <button id="captions" aria-pressed="true">CC</button>
+  <button id="theme" aria-label="Light or dark">◐</button>
+</header>
+<main id="main"><p class="idle">Connecting to the church…</p></main>
+<div class="caption" id="caption" hidden></div>
+<script>
+  const store = {
+    get(key, fallback) { try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; } },
+    set(key, value) { try { localStorage.setItem(key, value); } catch {} },
+  };
+  const root = document.documentElement;
+  let size = Number(store.get("bsp-size", "20")) || 20;
+  let showCaptions = store.get("bsp-captions", "on") === "on";
+  let last = null;
+
+  const applySize = () => root.style.setProperty("--size", size + "px");
+  const applyTheme = () => root.classList.toggle("light", store.get("bsp-theme", "dark") === "light");
+  applySize();
+  applyTheme();
+
+  document.getElementById("smaller").onclick = () => { size = Math.max(14, size - 2); store.set("bsp-size", size); applySize(); };
+  document.getElementById("larger").onclick = () => { size = Math.min(40, size + 2); store.set("bsp-size", size); applySize(); };
+  document.getElementById("theme").onclick = () => {
+    store.set("bsp-theme", root.classList.contains("light") ? "dark" : "light");
+    applyTheme();
+  };
+  const captionsButton = document.getElementById("captions");
+  captionsButton.setAttribute("aria-pressed", String(showCaptions));
+  captionsButton.onclick = () => {
+    showCaptions = !showCaptions;
+    store.set("bsp-captions", showCaptions ? "on" : "off");
+    captionsButton.setAttribute("aria-pressed", String(showCaptions));
+    if (last) renderCaption(last.caption);
+  };
+
+  const el = (tag, className, text) => {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = text;
+    return node;
+  };
+
+  function render(view) {
+    const main = document.getElementById("main");
+    main.replaceChildren();
+    if (!view || view.kind === "idle") {
+      main.append(el("p", "idle", "Nothing on the screen right now."));
+      return;
+    }
+    if (view.kind === "countdown") {
+      main.append(el("p", "idle", view.title || "Starting soon"));
+      return;
+    }
+    if (view.reference) main.append(el("div", "reference", view.reference));
+    if (view.title) main.append(el("div", "reference", view.title));
+    if (view.translation) main.append(el("div", "translation", view.translation));
+    for (const verse of view.verses || []) {
+      const p = el("p", "verse");
+      p.append(el("sup", null, String(verse.n)), document.createTextNode(verse.text));
+      main.append(p);
+    }
+    if (view.lines && view.lines.length) {
+      const lines = el("div", "lines");
+      for (const line of view.lines) lines.append(el("p", null, line));
+      main.append(lines);
+    }
+    if (view.comparison) {
+      const block = el("div", "comparison");
+      if (view.comparison.translation) block.append(el("div", "translation", view.comparison.translation));
+      block.append(el("p", null, view.comparison.text));
+      main.append(block);
+    }
+    window.scrollTo({ top: 0 });
+  }
+
+  function renderCaption(text) {
+    const caption = document.getElementById("caption");
+    caption.hidden = !(showCaptions && text);
+    caption.textContent = text || "";
+  }
+
+  const bar = document.getElementById("bar");
+  const state = document.getElementById("state");
+  const events = new EventSource("/events");
+  events.onopen = () => { bar.classList.remove("offline"); state.textContent = "Live"; };
+  events.onerror = () => { bar.classList.add("offline"); state.textContent = "Reconnecting…"; };
+  events.onmessage = (message) => {
+    const live = JSON.parse(message.data);
+    const viewChanged = !last || JSON.stringify(last.view) !== JSON.stringify(live.view);
+    last = live;
+    if (viewChanged) render(live.view);
+    renderCaption(live.caption);
+  };
+</script>
+</body>
+</html>

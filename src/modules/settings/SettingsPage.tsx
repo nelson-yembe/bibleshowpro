@@ -12,6 +12,7 @@ import {
   AudioLines,
   Captions,
   MonitorSpeaker,
+  Smartphone,
 } from "lucide-react";
 import { useLocation } from "react-router-dom";
 import { TopBar } from "@/components/layout/TopBar";
@@ -21,6 +22,7 @@ import { TranscriptionEnginePanel } from "@/modules/settings/TranscriptionEngine
 import { ListenAudioPanel } from "@/modules/settings/ListenAudioPanel";
 import { CaptionSettingsPanel } from "@/modules/settings/CaptionSettingsPanel";
 import { ScreensPanel } from "@/modules/settings/ScreensPanel";
+import { PhoneViewPanel } from "@/modules/settings/PhoneViewPanel";
 import { CollapsibleSection, type CollapsibleSignal } from "@/components/ui/CollapsibleSection";
 import { StatusBadge } from "@/components/ui/pill";
 import { downloadTextFile } from "@/lib/utils";
@@ -81,6 +83,17 @@ export function SettingsPage() {
             reveal={target === "screens"}
           >
             <ScreensPanel />
+          </CollapsibleSection>
+
+          <CollapsibleSection
+            id="phone-view"
+            title="Phone View & Remote"
+            description="The live verse on the congregation's phones; drive the screen from yours"
+            icon={<Smartphone className="h-4 w-4" />}
+            signal={signal}
+            reveal={target === "phone-view"}
+          >
+            <PhoneViewPanel />
           </CollapsibleSection>
 
           <CollapsibleSection

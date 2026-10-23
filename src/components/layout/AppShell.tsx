@@ -4,7 +4,7 @@ import { StatusBar } from "@/components/layout/StatusBar";
 import { AppToast } from "@/components/ui/AppToast";
 import { LiveControlsPanel } from "@/components/presentation/LiveControlsPanel";
 import { ShortcutSheet } from "@/components/layout/ShortcutSheet";
-import { useLiveKeyboard } from "@/hooks/useLiveKeyboard";
+import { useLiveKeyboard, useRemoteCommands } from "@/hooks/useLiveKeyboard";
 import { useLiveDisplayStore } from "@/stores/liveDisplayStore";
 
 const LIVE_DOCK_ROUTES = ["/", "/bible", "/service", "/media", "/songs", "/listen"];
@@ -17,6 +17,7 @@ export function AppShell() {
   const displayOptions = useLiveDisplayStore((s) => s.displayOptions);
 
   useLiveKeyboard(pathname);
+  useRemoteCommands();
 
   return (
     <div className="flex h-screen overflow-hidden bg-[var(--color-background)]">

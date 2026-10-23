@@ -30,7 +30,7 @@ chrono = { version = "0.4", features = ["serde"] }
 regex = "1"
 once_cell = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread", "time", "sync"] }
+tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread", "time", "sync", "net"] }
 oximedia-ndi = "0.1.7"
 xcap = "0.0.14"
 parking_lot = "0.12.5"
@@ -43,6 +43,10 @@ keyring = { version = "3.6", features = ["windows-native"] }
 quick-xml = "0.39"
 zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 pdf-extract = "0.12.1"
+axum = "0.8"
+futures-util = "0.3"
+qrcode = { version = "0.14", default-features = false }
+if-addrs = "0.15"
 
 # Local fork of oximedia-ndi 0.1.7 patching a bug where the mDNS SRV host name
 # was built as `format!("{ip}.local.").replace('.', "-")`, mangling the required
