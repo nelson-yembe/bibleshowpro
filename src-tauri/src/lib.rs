@@ -5,6 +5,7 @@ pub mod display;
 pub mod keep_awake;
 pub mod ndi;
 pub mod output;
+pub mod secrets;
 pub mod service;
 pub mod songs;
 pub mod stage;
