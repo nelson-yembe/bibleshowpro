@@ -99,9 +99,14 @@ pub fn start(app: AppHandle, device_name: Option<String>, target_rate: u32, fram
         .spawn(move || run(app, id, device, target_rate, frames, thread_stop, ready_tx))
         .map_err(|e| e.to_string())?;
 
-    let info = ready_rx
-        .recv_timeout(Duration::from_secs(5))
-        .map_err(|_| "The microphone did not start in time.".to_string())??;
+    let info = match ready_rx.recv_timeout(Duration::from_secs(5)) {
+        Ok(started) => started?,
+        Err(_) => {
+            // It may still start later; make sure it stops straight away if it does.
+            stop.store(true, Ordering::Relaxed);
+            return Err("The microphone did not start in time.".to_string());
+        }
+    };
     CAPTURES
         .lock()
         .map_err(|e| e.to_string())?
