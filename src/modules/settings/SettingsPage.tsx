@@ -29,6 +29,7 @@ import { downloadTextFile } from "@/lib/utils";
 import { api } from "@/lib/tauri";
 import { useBibleVersionsStore } from "@/stores/bibleVersionsStore";
 import { useNdiStore } from "@/stores/ndiStore";
+import { isUsableVersion } from "@/lib/bibleVersions";
 
 export function SettingsPage() {
   const [restoreJson, setRestoreJson] = useState("");
@@ -39,7 +40,7 @@ export function SettingsPage() {
   const ndiRunning = useNdiStore((s) => s.status?.running ?? false);
   const ndiSaving = useNdiStore((s) => s.saving);
   const installedCount = useBibleVersionsStore(
-    (s) => s.catalog.filter((c) => c.installed && c.verse_count > 1000).length,
+    (s) => s.catalog.filter(isUsableVersion).length,
   );
 
   useEffect(() => {

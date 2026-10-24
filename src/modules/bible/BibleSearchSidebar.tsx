@@ -5,11 +5,10 @@ import { ChapterResultsPanel } from "@/modules/bible/ChapterResultsPanel";
 import { PassagePicker } from "@/modules/bible/PassagePicker";
 import { cn } from "@/lib/utils";
 import { goToBiblePassage, runBibleSearch } from "@/lib/bibleSession";
+import { isUsableVersion } from "@/lib/bibleVersions";
 import type { CatalogEntryView, VerseResult } from "@/lib/tauri";
 import { useBibleStore } from "@/stores/bibleStore";
 import { useBibleVersionsStore } from "@/stores/bibleVersionsStore";
-
-const MIN_INSTALLED_VERSES = 1000;
 
 export interface BibleSearchSidebarProps {
   selectedVerseId: number | null;
@@ -63,9 +62,7 @@ export const BibleSearchSidebar = memo(function BibleSearchSidebar({
   }, [selectedTranslationIds, translations, selectedAbbr]);
 
   const installedTranslations = useMemo((): CatalogEntryView[] => {
-    const fromCatalog = catalog.filter(
-      (entry) => entry.installed && entry.verse_count >= MIN_INSTALLED_VERSES,
-    );
+    const fromCatalog = catalog.filter(isUsableVersion);
     if (fromCatalog.length > 0) return fromCatalog;
 
     return translations.map((t) => ({

@@ -50,8 +50,15 @@ fn emit_progress(app: &AppHandle, event: ImportProgressEvent) {
     let _ = app.emit("bible-import-progress", event);
 }
 
-fn catalog_view(conn: &Connection, entry: CatalogEntry) -> Result<CatalogEntryView, String> {
+/// The translation the operator chose as default, from the database (not the catalog).
+fn default_translation_id(conn: &Connection) -> Option<String> {
+    conn.query_row("SELECT id FROM bible_translations WHERE is_default = 1 LIMIT 1", [], |row| row.get(0))
+        .ok()
+}
+
+fn catalog_view(conn: &Connection, entry: CatalogEntry, default_id: Option<&str>) -> Result<CatalogEntryView, String> {
     let verse_count = verse_count_for_translation(conn, &entry.id).unwrap_or(0);
+    let is_default = default_id.map_or(entry.is_default, |id| id == entry.id);
     Ok(CatalogEntryView {
         id: entry.id,
         name: entry.name,
@@ -62,22 +69,79 @@ fn catalog_view(conn: &Connection, entry: CatalogEntry) -> Result<CatalogEntryVi
         source_format: entry.source_format,
         download_url: entry.download_url,
         size_bytes: entry.size_bytes,
-        is_default: entry.is_default,
+        is_default,
         install_method: entry.install_method,
         installed: verse_count >= FULL_BIBLE_MIN_VERSES,
         verse_count,
     })
 }
 
+/// Translations imported under their own id (a JSON, Zefania, OSIS or USFM file), which the
+/// built-in catalog does not know. Any verse makes one usable: a New Testament or a
+/// translation still in progress is complete as imported.
+fn imported_views(conn: &Connection, known: &[String], default_id: Option<&str>) -> Result<Vec<CatalogEntryView>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT t.id, t.name, t.abbreviation, t.language, COALESCE(t.copyright, ''),
+                    (SELECT COUNT(*) FROM bible_verses v WHERE v.translation_id = t.id)
+             FROM bible_translations t
+             ORDER BY t.abbreviation",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+    let mut views = Vec::new();
+    for row in rows {
+        let (id, name, abbreviation, language, copyright, verse_count) = row.map_err(|e| e.to_string())?;
+        if known.contains(&id) || verse_count == 0 {
+            continue;
+        }
+        views.push(CatalogEntryView {
+            is_default: default_id == Some(id.as_str()),
+            id,
+            name,
+            abbreviation,
+            language,
+            copyright,
+            license: String::new(),
+            source_format: String::new(),
+            download_url: None,
+            size_bytes: None,
+            install_method: "imported".to_string(),
+            installed: true,
+            verse_count,
+        });
+    }
+    Ok(views)
+}
+
 #[tauri::command]
 pub fn get_bible_catalog(state: State<AppState>) -> Result<Vec<CatalogEntryView>, String> {
     let db = lock_db(state.db.lock().map_err(|e| e.to_string())?);
-    db.with_conn(|conn| {
-        load_catalog()?
-            .into_iter()
-            .map(|entry| catalog_view(conn, entry))
-            .collect()
-    })
+    db.with_conn(catalog_with_imports)
+}
+
+/// The built-in catalog, then every translation imported under an id of its own.
+fn catalog_with_imports(conn: &Connection) -> Result<Vec<CatalogEntryView>, String> {
+    let default_id = default_translation_id(conn);
+    let catalog = load_catalog()?;
+    let known: Vec<String> = catalog.iter().map(|entry| entry.id.clone()).collect();
+    let mut views = catalog
+        .into_iter()
+        .map(|entry| catalog_view(conn, entry, default_id.as_deref()))
+        .collect::<Result<Vec<_>, _>>()?;
+    views.extend(imported_views(conn, &known, default_id.as_deref())?);
+    Ok(views)
 }
 
 #[tauri::command]
@@ -309,4 +373,62 @@ pub fn match_passage_reading(
 #[tauri::command]
 pub fn find_sermon_references(text: String) -> Vec<crate::bible::notes::NotesReference> {
     crate::bible::notes::find_references(&text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn library() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE bible_translations (id TEXT PRIMARY KEY, name TEXT, abbreviation TEXT, language TEXT, copyright TEXT, is_default INTEGER);
+             CREATE TABLE bible_verses (translation_id TEXT, book_number INTEGER, chapter INTEGER, verse INTEGER, text TEXT);
+             INSERT INTO bible_translations VALUES
+               ('kjv', 'King James Version', 'KJV', 'en', 'Public Domain', 0),
+               ('tpt2025', 'The Passion Translation (2025)', 'TPT', 'en', 'Passion & Fire Ministries', 1),
+               ('tlb1971', 'The Living Bible (1971)', 'TLB', 'en', NULL, 0),
+               ('empty', 'Failed import', 'EMP', 'en', '', 0);
+             INSERT INTO bible_verses VALUES ('kjv', 43, 3, 16, 'For God so loved'), ('tpt2025', 43, 3, 16, 'For here is'), ('tlb1971', 43, 3, 16, 'For God loved');",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn lists_translations_imported_under_their_own_id() {
+        let views = catalog_with_imports(&library()).unwrap();
+        let imported: Vec<&str> = views.iter().filter(|v| v.install_method == "imported").map(|v| v.abbreviation.as_str()).collect();
+        // A translation with no verses was not really imported; the catalog's own ids are not repeated.
+        assert_eq!(imported, vec!["TLB", "TPT"]);
+        let tpt = views.iter().find(|v| v.id == "tpt2025").unwrap();
+        assert!(tpt.installed, "a partial Bible imported from a file is usable");
+        assert_eq!(tpt.copyright, "Passion & Fire Ministries");
+        assert_eq!(views.iter().find(|v| v.id == "tlb1971").unwrap().copyright, "");
+    }
+
+    /// Against the app's real database: `BSP_DB_FILE=<path to bible-show-pro.db> cargo test catalog`.
+    #[test]
+    fn every_installed_translation_is_listed_once() {
+        let Ok(path) = std::env::var("BSP_DB_FILE") else { return };
+        let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let views = catalog_with_imports(&conn).unwrap();
+        let mut stmt = conn
+            .prepare("SELECT t.id FROM bible_translations t WHERE EXISTS (SELECT 1 FROM bible_verses v WHERE v.translation_id = t.id)")
+            .unwrap();
+        let ids: Vec<String> = stmt.query_map([], |row| row.get(0)).unwrap().map(Result::unwrap).collect();
+        for id in &ids {
+            let listed: Vec<&CatalogEntryView> = views.iter().filter(|v| &v.id == id).collect();
+            assert_eq!(listed.len(), 1, "{id} must be listed once");
+            let v = listed[0];
+            println!("{:8} {:>6} verses  {:9} installed={}", v.abbreviation, v.verse_count, v.install_method, v.installed);
+        }
+    }
+
+    #[test]
+    fn the_default_comes_from_the_database() {
+        let views = catalog_with_imports(&library()).unwrap();
+        let defaults: Vec<&str> = views.iter().filter(|v| v.is_default).map(|v| v.id.as_str()).collect();
+        assert_eq!(defaults, vec!["tpt2025"]);
+    }
 }

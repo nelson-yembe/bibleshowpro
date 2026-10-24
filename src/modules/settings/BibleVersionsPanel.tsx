@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { Download, Star, Trash2, Upload, CheckCircle2, CloudDownload, FileUp } from "lucide-react";
 import { groupCatalogByLanguage } from "@/lib/bibleLanguages";
+import { FULL_BIBLE_VERSES, isUsableVersion } from "@/lib/bibleVersions";
 import { cn } from "@/lib/utils";
 import { useBibleVersionsStore } from "@/stores/bibleVersionsStore";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
@@ -32,7 +33,7 @@ export function BibleVersionsPanel({ embedded = false }: { embedded?: boolean } 
   const [pending, setPending] = useState<{ files: string[]; preview: OpenBiblePreview } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const installed = catalog.filter((c) => c.installed && c.verse_count > 1000);
+  const installed = catalog.filter(isUsableVersion);
   const availableDownload = catalog.filter(
     (c) => c.install_method === "download" && (!c.installed || c.verse_count <= 1000),
   );
@@ -303,7 +304,9 @@ function VersionRow({
   onSetDefault: () => void;
   onDelete?: () => void;
 }) {
-  const isFull = entry.verse_count >= 30_000;
+  const isFull = entry.verse_count >= FULL_BIBLE_VERSES;
+  // A file import is as complete as the file; only a catalog download can be "incomplete".
+  const imported = entry.install_method === "imported";
   return (
     <div className="flex items-center justify-between gap-3 rounded-lg border border-[var(--color-border-light)] bg-[var(--color-surface)] px-3 py-2.5">
       <div className="min-w-0">
@@ -317,9 +320,16 @@ function VersionRow({
             </span>
           )}
         </div>
-        <p className={cn("text-[10px]", isFull ? "text-[var(--color-subtle)]" : "text-amber-400")}>
-          {isFull
-            ? `${entry.verse_count.toLocaleString()} verses · ${entry.copyright}`
+        <p className={cn("text-[10px]", isFull || imported ? "text-[var(--color-subtle)]" : "text-amber-400")}>
+          {isFull || imported
+            ? [
+                `${entry.verse_count.toLocaleString()} verses`,
+                imported && !isFull ? "partial Bible" : null,
+                imported ? "imported" : null,
+                entry.copyright || null,
+              ]
+                .filter(Boolean)
+                .join(" · ")
             : `Incomplete (${entry.verse_count} verses) — download again for full Bible`}
         </p>
       </div>

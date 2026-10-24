@@ -23,7 +23,8 @@ export interface CatalogEntryView {
   download_url?: string | null;
   size_bytes?: number | null;
   is_default: boolean;
-  install_method: "download" | "import" | string;
+  /** "download" and "import" are catalog entries; "imported" is a file imported under its own id. */
+  install_method: "download" | "import" | "imported" | string;
   installed: boolean;
   verse_count: number;
 }
